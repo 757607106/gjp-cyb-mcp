@@ -1,0 +1,39 @@
+{
+  "products": [
+    {
+      "ptypeid": "P001",
+      "pusercode": "SP001",
+      "pfullname": "马铃薯",
+      "unit": "斤",
+      "stock": 120,
+      "price": 2.5,
+      "aliases": ["洋芋"]
+    },
+    {
+      "ptypeid": "P002",
+      "pusercode": "SP002",
+      "pfullname": "番茄",
+      "unit": "斤",
+      "stock": 80,
+      "price": 3.2,
+      "aliases": ["西红柿"]
+    },
+    {
+      "ptypeid": "P003",
+      "pusercode": "SP003",
+      "pfullname": "百事可乐",
+      "unit": "瓶",
+      "stock": 20,
+      "price": 4.0
+    },
+    {
+      "ptypeid": "P004",
+      "pusercode": "SP004",
+      "pfullname": "可口可乐",
+      "unit": "瓶",
+      "stock": 30,
+      "price": 4.0,
+      "aliases": ["可门可乐"]
+    }
+  ]
+}
