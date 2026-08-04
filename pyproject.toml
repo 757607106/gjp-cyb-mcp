@@ -11,11 +11,7 @@ requires-python = ">=3.11"
 dependencies = [
     "agentscope==2.0.5",
     "mcp>=1.28,<2",
-    "opentelemetry-api>=1.30,<2",
-    "opentelemetry-exporter-otlp-proto-http>=1.30,<2",
-    "opentelemetry-sdk>=1.30,<2",
     "pydantic>=2.10,<3",
-    "rich>=13,<16",
     "starlette>=0.41,<1",
     "uvicorn>=0.30,<1",
 ]
@@ -27,13 +23,9 @@ dev = [
     "ruff>=0.12,<1",
 ]
 
-[project.scripts]
-gjp-cli = "gjp_cli.cli:main"
-
 [tool.hatch.build.targets.wheel]
 packages = [
     "src/erp_billing",
-    "src/gjp_cli",
     "src/gjp_common",
 ]
 

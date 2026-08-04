@@ -38,7 +38,6 @@
 ```text
 src/
 ├── erp_billing/  # 开单 Runtime、ToolSet、Port、Adapter、Prompt、MCP 与领域代码
-├── gjp_cli/      # 本地 CLI、Agent 装配和 test/live 验证服务
 └── gjp_common/   # 上下文、连接、MCP、配置、路径与日志
 ```
 
@@ -55,7 +54,7 @@ Agent 与 MCP 的唯一工具来源。生产服务不构建模型，只通过
 - 禁止过度设计，逻辑清晰易维护。
 - 遇到设计问题应重构，不以兼容分支或临时补丁掩盖问题。
 - 业务逻辑和测试逻辑严格分开，不遗留无关代码或文件。
-- 模型构建与 Agent 装配只放在 `gjp_cli`，生产 MCP 不构建模型。
+- 生产 MCP 不构建模型，模型构建与 Agent 装配由对接方 AI 平台负责。
 
 ### 文档与文件组织
 
@@ -72,15 +71,10 @@ Agent 与 MCP 的唯一工具来源。生产服务不构建模型，只通过
 - `docs/architecture/product-matching-algorithm.md` — 商品匹配算法
 - `docs/deployment/capability-deployment.md` — 鉴权与会话隔离约定
 - `docs/deployment/billing-mcp-service-deployment.md` — 开单服务部署
-- `docs/deployment/local-ngrok-mcp-guide.md` — 本地 ngrok 接入
 
 ## 本地开发
 
 ```bash
 uv sync --extra dev
 uv run pytest -q
-uv run python -m gjp_cli demo
-uv run python -m gjp_cli doctor
 ```
-
-`gjp_cli` 只用于本地验证，不进入生产部署。

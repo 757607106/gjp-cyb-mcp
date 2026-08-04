@@ -103,7 +103,7 @@ class ProductCatalog:
         ]
         if not products:
             raise DomainError(
-                "ERP_LIVE_PRODUCT_EMPTY",
+                "erp_live_product_empty",
                 "当前账号没有返回可用于开单的商品",
             )
         return cls(products=products, aliases=dict(aliases), categories=dict(categories or {}))
@@ -111,7 +111,7 @@ class ProductCatalog:
     def require_product(self, product_id: str) -> Product:
         product = self.by_id.get(product_id)
         if product is None:
-            raise DomainError("ERP_PRODUCT_NOT_FOUND", "商品不存在：%s" % product_id)
+            raise DomainError("erp_product_not_found", "商品不存在：%s" % product_id)
         return product
 
     def equivalent_names(self, value: str) -> tuple[str, ...]:
@@ -192,14 +192,14 @@ def _load_products(path: Path) -> list[Product]:
     try:
         parsed = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
-        raise DomainError("ERP_PRODUCT_CATALOG_NOT_FOUND", "商品目录不存在：%s" % path) from exc
+        raise DomainError("erp_product_catalog_not_found", "商品目录不存在：%s" % path) from exc
     except json.JSONDecodeError as exc:
-        raise DomainError("ERP_PRODUCT_CATALOG_INVALID", "商品目录不是合法 JSON：%s" % path) from exc
+        raise DomainError("erp_product_catalog_invalid", "商品目录不是合法 JSON：%s" % path) from exc
     rows = _extract_rows(parsed)
     products = [Product.from_mapping(item) for item in rows if isinstance(item, dict)]
     products = [item for item in products if item.name or item.code or item.barcode]
     if not products:
-        raise DomainError("ERP_PRODUCT_CATALOG_INVALID", "商品目录中没有可用商品：%s" % path)
+        raise DomainError("erp_product_catalog_invalid", "商品目录中没有可用商品：%s" % path)
     return products
 
 
@@ -223,9 +223,9 @@ def _load_aliases(path: Path) -> dict[str, str]:
     try:
         parsed = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
-        raise DomainError("ERP_ALIAS_FILE_NOT_FOUND", "别名文件不存在：%s" % path) from exc
+        raise DomainError("erp_alias_file_not_found", "别名文件不存在：%s" % path) from exc
     except json.JSONDecodeError as exc:
-        raise DomainError("ERP_ALIAS_FILE_INVALID", "别名文件不是合法 JSON：%s" % path) from exc
+        raise DomainError("erp_alias_file_invalid", "别名文件不是合法 JSON：%s" % path) from exc
     if isinstance(parsed, dict):
         source = parsed.get("aliases", parsed)
         if isinstance(source, dict):
@@ -238,7 +238,7 @@ def _load_aliases(path: Path) -> dict[str, str]:
             return _alias_rows(source)
     if isinstance(parsed, list):
         return _alias_rows(parsed)
-    raise DomainError("ERP_ALIAS_FILE_INVALID", "别名文件必须是对象或数组：%s" % path)
+    raise DomainError("erp_alias_file_invalid", "别名文件必须是对象或数组：%s" % path)
 
 
 def _load_categories(path: Path) -> dict[str, list[str]]:
@@ -246,17 +246,17 @@ def _load_categories(path: Path) -> dict[str, list[str]]:
         parsed = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
         raise DomainError(
-            "ERP_CATEGORY_FILE_NOT_FOUND",
+            "erp_category_file_not_found",
             "品类词文件不存在：%s" % path,
         ) from exc
     except json.JSONDecodeError as exc:
         raise DomainError(
-            "ERP_CATEGORY_FILE_INVALID",
+            "erp_category_file_invalid",
             "品类词文件不是合法 JSON：%s" % path,
         ) from exc
     if not isinstance(parsed, dict):
         raise DomainError(
-            "ERP_CATEGORY_FILE_INVALID",
+            "erp_category_file_invalid",
             "品类词文件必须是对象：%s" % path,
         )
     categories: dict[str, list[str]] = {}

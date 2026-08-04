@@ -59,7 +59,6 @@ flowchart TB
 | `gjp_common.context` | 保存无凭据的租户、账号、会话和 scopes |
 | `gjp_common.connections` | 校验固定 ERP 地址，并按会话解析 Bearer |
 | `erp_billing` | 资料查询、商品匹配、销售单预览和写入 |
-| `gjp_cli` | Token-only 本地 Agent 和验证服务，不进入生产部署 |
 
 ## 3. MCP 单次调用
 

@@ -25,8 +25,8 @@
 6. 第三方平台携带的 MCP Bearer 只用于识别租户、账号和会话；云创业版上游
    Bearer 只保存在服务端连接存储中。两类 Bearer 不复用，也不进入 Tool Schema、
    模型上下文或工具结果。
-7. `gjp_cli` 只提供已有上游 Token 登记，不提供账号密码或验证码登录，也不接受
-   动态 ERP URL；生产 MCP 不提供上游 Token 登记入口。
+7. 生产 MCP 不提供上游 Token 登记入口，不提供账号密码或验证码登录，也不接受
+   动态 ERP URL。
 8. 每个 `(tenant_id, account_id, session_id)` 使用隔离的 `BillingToolSet`、
    `ErpBillingSession` 和内存商品目录。
 9. 业务必填项是客户、出库仓库、经手人、录单日期和商品明细；备注可选。

@@ -2,7 +2,6 @@
 
 本文件只包含所有业务 Agent 共用的工具基础设施，不包含任何业务特定逻辑。
 业务特定的工具入参 schema 放在各自业务模块的 tools.py 中。
-链路追踪由 AgentScope 内置 TracingMiddleware 负责，配置见 tracing_config.py。
 """
 
 from collections.abc import Callable

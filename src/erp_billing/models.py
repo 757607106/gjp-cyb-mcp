@@ -145,17 +145,17 @@ class Product:
         return payload
 
     def core_fields(self) -> dict[str, Any]:
-        """返回工具输出统一使用的商品核心字段：ptypeid、pfullname、unit。
+        """返回工具输出统一使用的商品核心字段：product_id、product_name、unit。
 
-        imageUrls 仅在商品有图片时附带，无图片时不出现该键。
+        image_urls 仅在商品有图片时附带，无图片时不出现该键。
         """
         fields: dict[str, Any] = {
-            "ptypeid": self.product_id,
-            "pfullname": self.name,
+            "product_id": self.product_id,
+            "product_name": self.name,
             "unit": self.unit,
         }
         if self.image_urls:
-            fields["imageUrls"] = list(self.image_urls)
+            fields["image_urls"] = list(self.image_urls)
         return fields
 
 
@@ -230,7 +230,7 @@ class BillingDraft:
                             best_candidate.product,
                             line.order_line,
                         ),
-                        "similarProducts": [
+                        "similar_products": [
                             _billing_product_fields(
                                 candidate.product,
                                 line.order_line,
@@ -246,9 +246,9 @@ class BillingDraft:
             )
 
         return {
-            "confirmedProducts": confirmed_products,
-            "recommendedProducts": recommended_products,
-            "unmatchedProducts": unmatched_products,
+            "confirmed_products": confirmed_products,
+            "recommended_products": recommended_products,
+            "unmatched_products": unmatched_products,
         }
 
 
@@ -258,21 +258,21 @@ def _billing_product_fields(
 ) -> dict[str, Any]:
     """构建开单和推荐商品共用的最小字段集合，商品字段统一经由 core_fields。
 
-    lineId 始终出现在输出中，使调用方无需猜测 confirmed_products 的键格式。
+    line_id 始终出现在输出中，使调用方无需猜测 confirmed_products 的键格式。
     """
     if product is not None:
         fields = dict(product.core_fields())
-        if not fields["pfullname"]:
-            fields["pfullname"] = order_line.requested_name
+        if not fields["product_name"]:
+            fields["product_name"] = order_line.requested_name
         if not fields["unit"]:
             fields["unit"] = order_line.unit
     else:
         fields = {
-            "ptypeid": None,
-            "pfullname": order_line.requested_name,
+            "product_id": None,
+            "product_name": order_line.requested_name,
             "unit": order_line.unit,
         }
-    fields["lineId"] = order_line.line_id
+    fields["line_id"] = order_line.line_id
     fields["quantity"] = order_line.quantity
     return fields
 

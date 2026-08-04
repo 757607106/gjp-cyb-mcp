@@ -8,8 +8,8 @@
 ERP_BILLING_BASE_URL=https://test-ai.yuncyb.com/aicyberp-api
 ```
 
-该 URL 在进程启动时校验并固定，不从租户会话、MCP Header、Tool 参数或 CLI
-请求读取。Adapter 只允许源码中定义的相对路径。
+该 URL 在进程启动时校验并固定，不从租户会话、MCP Header 或 Tool 参数
+读取。Adapter 只允许源码中定义的相对路径。
 
 ## 生产装配
 
@@ -42,12 +42,6 @@ api = ErpAuthenticatedHttpAdapter(http)
 - 写单还必须有当前 `preview_id`、用户明确确认和唯一 `idempotency_key`。
 - 单进程会话内防重只适合验证；多 worker 或多副本使用 Redis/数据库或 ERP 网关
   提供共享幂等。
-
-## CLI 边界
-
-`gjp_cli.billing_validation` 发布 `/mcp` 与 `/sse`，MCP 客户端直接使用
-ERP JWT 作为 Bearer Token。它不提供账号、密码或验证码登录，也不接受
-动态 URL。生产 MCP 应由对接方实现 JWT/OAuth2 验签。
 
 ## 安全要求
 

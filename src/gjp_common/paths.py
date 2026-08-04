@@ -22,7 +22,7 @@ def discover_project_root(start: Optional[PathValue] = None) -> Path:
     if explicit:
         root = Path(explicit).expanduser().resolve()
         if not _is_project_root(root):
-            raise DomainError("PROJECT_ROOT_INVALID", "GJP_PROJECT_ROOT 不是有效项目根目录：%s" % root)
+            raise DomainError("project_root_invalid", "GJP_PROJECT_ROOT 不是有效项目根目录：%s" % root)
         return root
 
     current = Path(start).expanduser().resolve() if start is not None else Path.cwd().resolve()
@@ -34,7 +34,7 @@ def discover_project_root(start: Optional[PathValue] = None) -> Path:
         if _is_project_root(candidate):
             return candidate
     raise DomainError(
-        "PROJECT_ROOT_NOT_FOUND",
+        "project_root_not_found",
         "无法定位项目根目录；请设置 GJP_PROJECT_ROOT",
     )
 
@@ -67,9 +67,9 @@ def read_json(path: Path) -> Dict[str, Any]:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
-        raise DomainError("FILE_NOT_FOUND", "文件不存在：%s" % path) from exc
+        raise DomainError("file_not_found", "文件不存在：%s" % path) from exc
     except json.JSONDecodeError as exc:
-        raise DomainError("JSON_INVALID", "文件不是合法 JSON：%s" % path) from exc
+        raise DomainError("json_invalid", "文件不是合法 JSON：%s" % path) from exc
     if not isinstance(value, dict):
-        raise DomainError("JSON_INVALID", "JSON 顶层必须是对象：%s" % path)
+        raise DomainError("json_invalid", "JSON 顶层必须是对象：%s" % path)
     return value

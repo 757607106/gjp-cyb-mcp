@@ -49,7 +49,7 @@ def _read_local_env() -> Dict[str, str]:
         try:
             lines = path.read_text(encoding="utf-8").splitlines()
         except OSError as exc:
-            raise DomainError("MODEL_CONFIG_INVALID", "无法读取本地环境文件：%s" % path) from exc
+            raise DomainError("model_config_invalid", "无法读取本地环境文件：%s" % path) from exc
         for raw_line in lines:
             line = raw_line.strip()
             if not line or line.startswith("#"):

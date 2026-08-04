@@ -13,7 +13,7 @@ from .config import _read_local_env
 
 LOGGER_NAME = "gjp_common"
 # 统一挂载 handler 的包命名空间；只含本项目业务包，不接管第三方 SDK 的协议层日志
-PACKAGE_LOGGERS = ("gjp_common", "gjp_cli", "erp_billing")
+PACKAGE_LOGGERS = ("gjp_common", "erp_billing")
 # 凭据原文转储开关：独立于日志级别，仅本地调试开启
 CREDENTIAL_DUMP_ENV = "GJP_DEBUG_DUMP_CREDENTIALS"
 # 单条日志中业务参数与响应体的最大字符数，避免长文本淹没终端

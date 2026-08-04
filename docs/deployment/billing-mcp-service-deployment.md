@@ -12,28 +12,36 @@ MCP 客户端直接使用 ERP JWT 作为 Bearer Token，无需换票。
 ERP URL 是固定部署配置：
 
 ```zsh
-cd /Users/pusonglin/gjp-cyb-mcp
 export ERP_BILLING_BASE_URL=https://test-ai.yuncyb.com/aicyberp-api
 export ERP_BILLING_TIMEOUT_SECONDS=30
-export MCP_VALIDATION_TOKEN_TTL_HOURS=1
-
-uv run uvicorn gjp_cli.billing_validation:app \
-  --host 0.0.0.0 \
-  --port 8102
 ```
 
-验证服务没有账号密码或验证码入口，也不需要换票。在另一个终端直接启动 CLI，
-按提示粘贴 ERP Token（输入不回显，既可粘贴 `Bearer ...`，也可粘贴裸 JWT，
-回车提交），CLI 直接把 ERP JWT 作为 MCP Bearer 使用：
+仓库自带可运行入口 `erp_billing.app:app`：直接从 MCP Bearer 中的 ERP JWT
+解析身份，按 `(tenant, account, session)` 隔离 ToolSet，并把同一个 JWT 注入
+ERP API 调用。
 
 ```zsh
-cd /Users/pusonglin/gjp-cyb-mcp
-uv run python -m gjp_cli mcp-chat
+uv run uvicorn erp_billing.app:app --host 0.0.0.0 --port 8102
 ```
 
-CLI 直接把 ERP JWT 作为 MCP Bearer 传给 MCP 服务，服务端从 JWT payload
+生产如需接入自有会话存储或 JWT/OAuth2 验签，可自行实现
+`McpIdentityResolver` 与 `McpToolSetResolver`，再用
+`create_billing_mcp_service()` 装配 Starlette 应用：
+
+```python
+from erp_billing.mcp_service import create_billing_mcp_service
+
+app = create_billing_mcp_service(
+    schema_toolset=billing_toolset,
+    identity_resolver=identity_resolver,
+    toolset_resolver=toolset_resolver,
+)
+```
+
+MCP 客户端把 ERP JWT 直接作为 Bearer Token 传给 MCP 服务，服务端从 JWT payload
 解析 tenantId、loginId 构造 InvocationContext，并把同一个 JWT 用于
-ERP API 调用。业务 URL 始终来自 `ERP_BILLING_BASE_URL`。
+ERP API 调用。业务 URL 始终来自 `ERP_BILLING_BASE_URL`。生产 MCP 应由
+对接方实现 JWT/OAuth2 验签。
 
 ## 工具
 
@@ -41,20 +49,20 @@ ERP API 调用。业务 URL 始终来自 `ERP_BILLING_BASE_URL`。
 |---|---|---|
 | `sync_products` | `billing:read` | 替换当前 Session 内存商品目录 |
 | `search_products` | `billing:read` | 无 |
-| `search_sales_order_options` | `billing:read` | 无 |
-| `prepare_sales_order` | `billing:read` | 保存会话内不可变预览 |
+| `search_billing_references` | `billing:read` | 无 |
+| `preview_sales_order` | `billing:read` | 保存会话内不可变预览 |
 | `submit_sales_order` | `billing:write` | `POST /sales/orders` |
 
 ## 完整销售单契约
 
 业务必填：客户、出库仓库、经手人、录单日期、商品明细。备注可选且最多 200 字。
-系统字段 `id=0` 与 `saveType` 由工具生成，映射为草稿 `0`、预收 `1`、正式 `2`。
+系统字段 `id=0` 与 `save_type` 由工具生成，映射为草稿 `0`、预收 `1`、正式 `2`。
 
 准备示例：
 
 ```json
 {
-  "name": "prepare_sales_order",
+  "name": "preview_sales_order",
   "arguments": {
     "order_text": "土豆5斤，牛肉2斤",
     "customer": "客户甲",
@@ -68,8 +76,8 @@ ERP API 调用。业务 URL 始终来自 `ERP_BILLING_BASE_URL`。
 }
 ```
 
-工具返回 `missingRequiredFields`、`needsConfirmation`、`unitWarnings`、三个商品匹配
-数组以及 `readyToSubmit`。只有就绪时才返回 `previewId` 和 `preview`。
+工具返回 `missing_required_fields`、`needs_confirmation`、`unit_warnings`、三个商品匹配
+数组以及 `ready_to_submit`。只有就绪时才返回 `preview_id` 和 `preview`。
 
 用户看到当前预览并明确确认后提交：
 
@@ -84,7 +92,7 @@ ERP API 调用。业务 URL 始终来自 `ERP_BILLING_BASE_URL`。
 }
 ```
 
-成功响应含 `submitted=true` 和 `orderId`。相同幂等键重试返回第一次结果；同一键
+成功响应含 `submitted=true` 和 `order_id`。相同幂等键重试返回第一次结果；同一键
 用于不同预览会被拒绝。
 
 ## 生产接入

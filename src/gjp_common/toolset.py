@@ -51,7 +51,7 @@ class AgentScopeToolSet:
         ]
 
     def local_tools(self) -> list[ToolBase]:
-        """供受信任的本地参考 CLI 使用完整工具集。"""
+        """完整工具集，包含未对 MCP 发布的宿主工具。"""
         return list(self._tools)
 
     def executable_tools(self) -> list[ToolBase]:
@@ -84,13 +84,3 @@ class AgentScopeToolSet:
     def error_response(error: DomainError) -> dict[str, Any]:
         """构造工具错误响应。"""
         return {"ok": False, "error": {"code": error.code, "message": error.message}}
-
-
-class LocalToolProvider:
-    """把同一 ToolSet 的本地投影提供给参考 CLI。"""
-
-    def __init__(self, toolset: AgentScopeToolSet) -> None:
-        self._toolset = toolset
-
-    def tools(self) -> list[ToolBase]:
-        return self._toolset.local_tools()

@@ -20,13 +20,13 @@ flowchart LR
 
     Agent --> Sync["sync_products"]
     Agent --> Search["search_products"]
-    Agent --> Options["search_sales_order_options"]
-    Agent --> Draft["prepare_sales_order"]
+    Agent --> Options["search_billing_references"]
+    Agent --> Draft["preview_sales_order"]
     Agent --> Submit["submit_sales_order"]
-    Agent --> Detail["get_sales_order_detail"]
+    Agent --> Detail["get_sales_order"]
     Agent --> ListOrders["list_sales_orders"]
     Agent --> Void["void_sales_order"]
-    Agent --> Modify["modify_sales_order"]
+    Agent --> Modify["update_sales_order"]
 
     Sync --> Port["BillingApiPort"]
     Sync --> Catalog["当前 Session 的租户隔离内存商品目录"]
@@ -45,7 +45,7 @@ flowchart LR
 ```
 
 MCP 不接收音频、图片、附件、文件路径或媒体 URL，也不提供 ASR/OCR。即使
-`source` 是 `voice` 或 `image`，`prepare_sales_order` 接收的仍然是前端整理后的文本。
+`source` 是 `voice` 或 `image`，`preview_sales_order` 接收的仍然是前端整理后的文本。
 
 ## 2. 身份与 API 边界
 
@@ -114,20 +114,20 @@ Adapter 按 20 条一页自动翻页；响应由 `normalize_live_product_rows()`
 
 | 工具 | 输入 | 职责 | 主要输出 |
 |---|---|---|---|
-| `sync_products` | `limit?` | 从当前 ERP 账号同步商品并替换当前 Session 的内存目录 | `catalogVersion`、`productCount`、`sampleProducts` |
-| `list_products` | `page?`、`page_size?` | 分页列出当前会话商品目录中的所有商品；目录为空时自动同步 | `page`、`pageSize`、`total`、`products` |
+| `sync_products` | `limit?` | 从当前 ERP 账号同步商品并替换当前 Session 的内存目录 | `catalog_version`、`product_count`、`sample_products` |
+| `list_products` | `page?`、`page_size?` | 分页列出当前会话商品目录中的所有商品；目录为空时自动同步 | `page`、`page_size`、`total`、`products` |
 | `search_products` | `keyword`、`limit?` | 按 ID、编号、条码、名称、同义词组和模糊相似度查询已有商品 | 唯一商品或顶层 `recommendations` |
-| `search_sales_order_options` | `option_type`、`keyword?`、`limit?` | 查询客户、出库仓库或经手人候选 | 可用基础资料最小字段 |
-| `prepare_sales_order` | 完整销售单业务字段、`save_type`、`confirmed_products?`、`partial?` | 校验必填项、解析基础资料、匹配商品并保存不可变预览 | 缺失项、候选、商品数组、`previewId` |
-| `submit_sales_order` | `preview_id`、`idempotency_key`、`confirmed_by_user` | 明确确认后调用真实写单接口 | `orderId`、保存类型、幂等重放标志 |
-| `get_sales_order_detail` | `order_id` | 查询销售单详情，含商品明细、收款记录和状态 | `order`（完整 SalesOrderVO） |
-| `list_sales_orders` | `page_num?`、`page_size?`、`sort_by?`、`order_type?`、`start_date?`、`end_date?`、`status?`、`payment_status?`、`return_status?`、`order_no?`、`customer_id?` | 分页查询销售单列表，支持录单日常和客户查询 | `page`、`pageSize`、`total`、`orders` |
-| `void_sales_order` | `order_id`、`confirmed_by_user` | 用户确认后作废销售单，不可恢复 | `voided`、`orderId` |
-| `modify_sales_order` | `order_id`、`order_date`、`handler_id`、`items`、`customer_id?`、`warehouse_id?`、`save_type?`、`remark?`、`confirmed_by_user` | 用户确认后修改已存在销售单；建议先查详情 | `modified`、`orderId` |
+| `search_billing_references` | `reference_type`、`keyword?`、`limit?` | 查询客户、出库仓库或经手人候选 | 可用基础资料最小字段 |
+| `preview_sales_order` | 完整销售单业务字段、`save_type`、`confirmed_products?`、`partial?` | 校验必填项、解析基础资料、匹配商品并保存不可变预览 | 缺失项、候选、商品数组、`preview_id` |
+| `submit_sales_order` | `preview_id`、`idempotency_key`、`confirmed_by_user` | 明确确认后调用真实写单接口 | `order_id`、保存类型、幂等重放标志 |
+| `get_sales_order` | `order_id` | 查询销售单详情，含商品明细、收款记录和状态 | `order`（完整 SalesOrderVO） |
+| `list_sales_orders` | `page?`、`page_size?`、`sort_by?`、`order_type?`、`start_date?`、`end_date?`、`status?`、`payment_status?`、`return_status?`、`order_no?`、`customer_id?` | 分页查询销售单列表，支持录单日常和客户查询 | `page`、`page_size`、`total`、`orders` |
+| `void_sales_order` | `order_id`、`confirmed_by_user` | 用户确认后作废销售单，不可恢复 | `voided`、`order_id` |
+| `update_sales_order` | `order_id`、`order_date`、`handler_id`、`items`、`customer_id?`、`warehouse_id?`、`save_type?`、`remark?`、`confirmed_by_user` | 用户确认后修改已存在销售单；建议先查详情 | `modified`、`order_id` |
 
 十个工具的返回值都是 MCP 结构化 JSON 内容。`submit_sales_order`、
-`void_sales_order` 和 `modify_sales_order` 具有 ERP 写副作用，要求 `billing:write`、
-明确用户确认；`submit_sales_order` 额外要求幂等键。`get_sales_order_detail` 和
+`void_sales_order` 和 `update_sales_order` 具有 ERP 写副作用，要求 `billing:write`、
+明确用户确认；`submit_sales_order` 额外要求幂等键。`get_sales_order` 和
 `list_sales_orders` 是只读操作，要求 `billing:read`。服务不维护可逐行修改的文件草稿，
 但会在隔离 Session 中短期保存不可变提交预览和成功幂等结果。
 
@@ -148,14 +148,14 @@ Adapter 按 20 条一页自动翻页；响应由 `normalize_live_product_rows()`
 ```json
 {
   "ok": true,
-  "catalogVersion": "2026-07-27T10:00:00+00:00",
-  "productCount": 1250
+  "catalog_version": "2026-07-27T10:00:00+00:00",
+  "product_count": 1250
 }
 ```
 
-`search_products` 和 `prepare_sales_order` 都只使用当前 Session 已加载的内存目录。
+`search_products` 和 `preview_sales_order` 都只使用当前 Session 已加载的内存目录。
 `search_products` 在目录为空时返回错误并提示先调用 `sync_products`；
-`prepare_sales_order` 在目录为空时自动执行一次同步（与 `sync_products` 相同的鉴权和
+`preview_sales_order` 在目录为空时自动执行一次同步（与 `sync_products` 相同的鉴权和
 归一化流程）后再匹配，避免“先报错、再由模型补调 `sync_products`”的额外模型
 往返；自动同步失败时直接返回底层错误。Session 释放后，同步得到的商品目录
 随之释放，不提供运行时商品目录文件。
@@ -204,7 +204,7 @@ Adapter 按 20 条一页自动翻页；响应由 `normalize_live_product_rows()`
 ```
 
 匹配只选择 ERP 目录中真实存在的商品。标准名仅用于解释同义关系，不会替换 ERP
-商品的 `productId`、名称、编号或单位。如果组内只命中一个 ERP 商品，可以自动
+商品的 `product_id`、名称、编号或单位。如果组内只命中一个 ERP 商品，可以自动
 匹配；如果 ERP 同时存在多个组内商品，则全部进入推荐列表，由用户确认。
 
 上述“组内命中”指 `alias_exact`：ERP 商品名精确等于组内某个名称。当 ERP 商品
@@ -280,7 +280,7 @@ ERP 目录中只有部位级商品（"牛腱子""牛肉-牛腩"），没有单�
   "status": "matched",
   "matchType": "alias_exact",
   "product": {
-    "productId": "P001",
+    "product_id": "P001",
     "code": "0001",
     "name": "土豆",
     "unit": "斤",
@@ -310,7 +310,7 @@ ERP 目录中只有部位级商品（"牛腱子""牛肉-牛腩"），没有单�
       "score": 0.88,
       "matchType": "category_contains",
       "reason": "品类词包含匹配，仅供推荐",
-      "productId": "P501",
+      "product_id": "P501",
       "code": "000501",
       "name": "牛肉-牛皮",
       "unit": "斤",
@@ -326,7 +326,7 @@ ERP 目录中只有部位级商品（"牛腱子""牛肉-牛腩"），没有单�
 
 ## 7. 从完整文本重建草稿
 
-首次开单和每轮修改都调用 `prepare_sales_order`。前端或对话层必须先把增量表达整理成
+首次开单和每轮修改都调用 `preview_sales_order`。前端或对话层必须先把增量表达整理成
 当前订单的完整文本，服务端不依赖上一轮草稿做增量修改。
 
 ```text
@@ -335,7 +335,7 @@ ERP 目录中只有部位级商品（"牛腱子""牛肉-牛腩"），没有单�
 下一次 order_text：牛肉20斤，土豆5斤，西红柿3斤
 ```
 
-`prepare_sales_order` 内部先解析完整文本为订单行，再做商品匹配。解析规则：
+`preview_sales_order` 内部先解析完整文本为订单行，再做商品匹配。解析规则：
 
 - **分隔符**：换行、逗号（中英文）、分号（中英文），以及"数字+单位"后的空格
   （如 `鸡蛋21个 牛肉10斤` 拆为两行）。数量前置模式（如 `来5斤 洋芋`）中的
@@ -366,41 +366,41 @@ ERP 目录中只有部位级商品（"牛腱子""牛肉-牛腩"），没有单�
 成功响应的商品匹配部分只保留开单商品字段，并按结果分成三个顶层数组；此外还
 返回必填缺失项、基础资料解析、单位警告、提交就绪状态和可选预览：
 
-- `confirmedProducts`：唯一精准匹配或用户已确认的商品。
-- `recommendedProducts`：存在候选但尚未确认的商品；匹配度最高者在外层，其余
-  候选放入 `similarProducts`。
-- `unmatchedProducts`：完全没有候选的订单商品。
+- `confirmed_products`：唯一精准匹配或用户已确认的商品。
+- `recommended_products`：存在候选但尚未确认的商品；匹配度最高者在外层，其余
+  候选放入 `similar_products`。
+- `unmatched_products`：完全没有候选的订单商品。
 
 ```json
 {
-  "confirmedProducts": [
+  "confirmed_products": [
     {
-      "ptypeid": "P001",
-      "pfullname": "土豆",
+      "product_id": "P001",
+      "product_name": "土豆",
       "unit": "斤",
       "quantity": 5
     }
   ],
-  "recommendedProducts": [
+  "recommended_products": [
     {
-      "ptypeid": "P501",
-      "pfullname": "牛肉-牛皮",
+      "product_id": "P501",
+      "product_name": "牛肉-牛皮",
       "unit": "斤",
       "quantity": 10,
-      "similarProducts": [
+      "similar_products": [
         {
-          "ptypeid": "P502",
-          "pfullname": "牛肉-牛蹄",
+          "product_id": "P502",
+          "product_name": "牛肉-牛蹄",
           "unit": "斤",
           "quantity": 10
         }
       ]
     }
   ],
-  "unmatchedProducts": [
+  "unmatched_products": [
     {
-      "ptypeid": null,
-      "pfullname": "未知商品",
+      "product_id": null,
+      "product_name": "未知商品",
       "unit": "箱",
       "quantity": 2
     }
@@ -408,16 +408,16 @@ ERP 目录中只有部位级商品（"牛腱子""牛肉-牛腩"），没有单�
 }
 ```
 
-商品对象只允许 `ptypeid`、`pfullname`、`unit`、`quantity` 四个商品字段。
+商品对象只允许 `product_id`、`product_name`、`unit`、`quantity` 四个商品字段。
 不再返回 `ok`、草稿元数据、原始文本、匹配状态、分数、原因、编号、条码、价格或
-库存。没有候选的订单行不会被丢弃：它会进入 `unmatchedProducts`，`ptypeid`
-为 `null`，`pfullname`、`unit` 和 `quantity` 使用用户输入。
+库存。没有候选的订单行不会被丢弃：它会进入 `unmatched_products`，`product_id`
+为 `null`，`product_name`、`unit` 和 `quantity` 使用用户输入。
 
 ## 8. 前端确认推荐商品
 
-用户改选推荐商品后，调用方根据完整订单文本中的订单行编号生成 `lineId`，把稳定
-的 `ptypeid` 连同当前完整订单文本再次提交给 `prepare_sales_order`。`confirmed_products`
-格式为 JSON 数组，每个元素包含 `lineId` 和 `productId`：
+用户改选推荐商品后，调用方根据完整订单文本中的订单行编号生成 `line_id`，把稳定
+的 `product_id` 连同当前完整订单文本再次提交给 `preview_sales_order`。`confirmed_products`
+格式为 JSON 数组，每个元素包含 `line_id` 和 `product_id`：
 
 ```json
 {
@@ -428,26 +428,26 @@ ERP 目录中只有部位级商品（"牛腱子""牛肉-牛腩"），没有单�
   "order_date": "2026-08-04",
   "source": "text",
   "confirmed_products": [
-    {"lineId": "L001", "productId": "P502"}
+    {"line_id": "L001", "product_id": "P502"}
   ]
 }
 ```
 
 `confirmed_products` 也接受 `dict[str, str]` 格式（向后兼容）和 JSON 字符串（容错）。
-对 `unmatchedProducts` 中无候选的行，同样可通过 `confirmed_products` 手动指定 ERP 商品 ID。
+对 `unmatched_products` 中无候选的行，同样可通过 `confirmed_products` 手动指定 ERP 商品 ID。
 
 当部分商品无法匹配且用户同意只提交已匹配商品时，可传 `partial=true` 生成只含
 已匹配商品的部分预览；未匹配行被跳过，不出现在预览中。
 
 服务端会从文本重新解析和匹配，然后逐项校验：
 
-1. `lineId` 必须存在于本次完整文本生成的订单行。
-2. `productId` 必须存在于当前租户商品目录。
-3. 该商品必须属于该行本次重新计算出的精确结果或推荐候选；但 `unmatchedProducts`
+1. `line_id` 必须存在于本次完整文本生成的订单行。
+2. `product_id` 必须存在于当前租户商品目录。
+3. 该商品必须属于该行本次重新计算出的精确结果或推荐候选；但 `unmatched_products`
    中无候选的行允许从全目录手动指定商品。
 
-校验通过后，用户选择的商品进入 `confirmedProducts`，不再出现在
-`recommendedProducts`。前端修改商品名称、删除或重排订单行后，必须根据最新的
+校验通过后，用户选择的商品进入 `confirmed_products`，不再出现在
+`recommended_products`。前端修改商品名称、删除或重排订单行后，必须根据最新的
 完整订单文本重新生成行号；失效或跨行的旧确认不会被静默接受。
 
 这一步只生成不可变预览，不代表已写入 ERP，也不会生成 JSON 文件。前端或 Agent
@@ -460,7 +460,7 @@ ERP 目录中只有部位级商品（"牛腱子""牛肉-牛腩"），没有单�
 - `ERP_BILLING_PRODUCT_CATALOG`、`alias_path` 和 `category_path` 如有配置，仅作为服务端只读输入；
   模型和前端不能提供主机文件路径。
 - Adapter 只调用源码中固定的相对路径。
-- 商品只能来自当前目录；模型不能编造 `productId`、编号、条码、单位或价格。
+- 商品只能来自当前目录；模型不能编造 `product_id`、编号、条码、单位或价格。
 - `confirmed_products` 必须重新通过当前目录和当前匹配结果校验。
 - Bearer、Cookie 和业务 Token 不写入日志、商品目录或工具结果。
 - 开单服务独立部署，并使用专属域名、认证配置和 Session 存储。

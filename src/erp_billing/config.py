@@ -21,10 +21,10 @@ def _float_env(name: str, default: float, minimum: float, maximum: float) -> flo
     try:
         parsed = float(value)
     except ValueError as exc:
-        raise DomainError("ERP_BILLING_CONFIG_INVALID", "%s 必须是数字" % name) from exc
+        raise DomainError("erp_billing_config_invalid", "%s 必须是数字" % name) from exc
     if parsed < minimum or parsed > maximum:
         raise DomainError(
-            "ERP_BILLING_CONFIG_INVALID",
+            "erp_billing_config_invalid",
             "%s 必须在 %.2f 到 %.2f 之间" % (name, minimum, maximum),
         )
     return parsed
@@ -36,7 +36,7 @@ def _bool_env(name: str, default: bool) -> bool:
         return True
     if value in {"0", "false", "no", "off"}:
         return False
-    raise DomainError("ERP_BILLING_CONFIG_INVALID", "%s 必须是 true 或 false" % name)
+    raise DomainError("erp_billing_config_invalid", "%s 必须是 true 或 false" % name)
 
 
 @dataclass(frozen=True)

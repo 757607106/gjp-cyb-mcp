@@ -25,8 +25,8 @@ flowchart LR
 
 | 数据 | 模型可见 | Tool Schema 可见 | 存放位置 |
 |---|---:|---:|---|
-| 当前订单完整文本 | 是 | 是 | Agent / `prepare_sales_order` 参数 |
-| 客户、仓库、经手人、录单日期、备注 | 是 | 是 | `prepare_sales_order` 参数 |
+| 当前订单完整文本 | 是 | 是 | Agent / `preview_sales_order` 参数 |
+| 客户、仓库、经手人、录单日期、备注 | 是 | 是 | `preview_sales_order` 参数 |
 | `preview_id` / `idempotency_key` / 确认标志 | 是 | 是 | `submit_sales_order` 参数 |
 | `tenant_id` / `account_id` / `session_id` | 否 | 否 | `InvocationContext` |
 | MCP JWT / OAuth2 | 否 | 否 | 网关或认证层 |
@@ -60,7 +60,7 @@ flowchart LR
 5. Adapter 只调用源码中固定的 ERP 相对路径。
 6. `ErpBillingSession.replace_products()` 原子替换当前会话的内存目录。
 
-`prepare_sales_order` 发现商品目录为空时也会自动同步一次。商品目录不写入仓库文件或
+`preview_sales_order` 发现商品目录为空时也会自动同步一次。商品目录不写入仓库文件或
 共享进程级缓存。
 
 ## 4. 查询、预览与提交
@@ -72,9 +72,9 @@ flowchart LR
 - `unmatched`：没有候选。
 
 销售单业务必填项为客户、出库仓库、经手人、录单日期和商品明细；备注可选且最多
-200 字。`id=0` 与 `saveType` 是接口必填但由工具内部管理，不由客户填写。
+200 字。`id=0` 与 `save_type` 是接口必填但由工具内部管理，不由客户填写。
 
-`prepare_sales_order` 每次从当前订单完整文本重新计算并解析基础资料：
+`preview_sales_order` 每次从当前订单完整文本重新计算并解析基础资料：
 
 ```json
 {
@@ -86,19 +86,19 @@ flowchart LR
   "remark": "下午送达",
   "source": "text",
   "confirmed_products": [
-    {"lineId": "L001", "productId": "P-BEEF-1"}
+    {"line_id": "L001", "product_id": "P-BEEF-1"}
   ]
 }
 ```
 
-输出同时包含 `missingRequiredFields`、`referenceResolutions`、
-`needsConfirmation`、`unitWarnings`、三个商品匹配数组以及 `readyToSubmit`。
+输出同时包含 `missing_required_fields`、`reference_resolutions`、
+`needs_confirmation`、`unit_warnings`、三个商品匹配数组以及 `ready_to_submit`。
 基础资料和商品全部唯一确定且单位一致时，工具保存不可变 API Payload，并返回
-`previewId` 与可展示的 `preview`。
+`preview_id` 与可展示的 `preview`。
 
 `submit_sales_order(preview_id, idempotency_key, confirmed_by_user)` 校验
 `billing:write`。只有 `confirmed_by_user=true` 才调用 `POST /sales/orders`；成功后
-同一会话复用幂等结果。`saveType` 映射为草稿 `0`、预收 `1`、正式 `2`。
+同一会话复用幂等结果。`save_type` 映射为草稿 `0`、预收 `1`、正式 `2`。
 
 ## 5. 安全与隔离
 

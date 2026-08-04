@@ -28,7 +28,7 @@ class InvocationContext:
     def require_scope(self, scope: str) -> None:
         """由能力层做最后一道权限检查。"""
         if scope not in self.scopes:
-            raise DomainError("CAPABILITY_FORBIDDEN", "当前调用方缺少权限：%s" % scope)
+            raise DomainError("capability_forbidden", "当前调用方缺少权限：%s" % scope)
 
 
 class InvocationContextStore:
@@ -43,7 +43,7 @@ class InvocationContextStore:
     def get(self) -> InvocationContext:
         context = self._current.get()
         if context is None:
-            raise DomainError("INVOCATION_CONTEXT_REQUIRED", "当前请求缺少已认证的业务上下文")
+            raise DomainError("invocation_context_required", "当前请求缺少已认证的业务上下文")
         return context
 
     @contextmanager

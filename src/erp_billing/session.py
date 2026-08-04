@@ -107,7 +107,7 @@ class ErpBillingSession:
         try:
             catalog = ProductCatalog.from_settings(settings)
         except DomainError as exc:
-            if not allow_missing_catalog or exc.code != "ERP_PRODUCT_CATALOG_NOT_FOUND":
+            if not allow_missing_catalog or exc.code != "erp_product_catalog_not_found":
                 raise
             settings = replace(settings, product_catalog_path=None)
             catalog = ProductCatalog.from_settings(settings)
@@ -127,7 +127,7 @@ class ErpBillingSession:
         try:
             if not keywords:
                 raise DomainError(
-                    "ERP_PRODUCT_QUERY_EMPTY",
+                    "erp_product_query_empty",
                     "请至少输入一个商品名称、编号或条码",
                 )
             self._require_catalog()
@@ -141,7 +141,7 @@ class ErpBillingSession:
             error = (
                 exc
                 if isinstance(exc, DomainError)
-                else DomainError("ERP_PRODUCT_LIMIT_INVALID", "limit 必须是整数")
+                else DomainError("erp_product_limit_invalid", "limit 必须是整数")
             )
             return self._error(error)
 
@@ -150,7 +150,7 @@ class ErpBillingSession:
         query = keyword.strip()
         if not query:
             raise DomainError(
-                "ERP_PRODUCT_QUERY_EMPTY",
+                "erp_product_query_empty",
                 "商品名称、编号或条码不能为空",
             )
         selected, recommendations = self.matcher.resolve(
@@ -192,8 +192,8 @@ class ErpBillingSession:
     ) -> BillingDraft:
         """从完整订单文本重建草稿，并校验前端确认的候选商品。
 
-        confirmed_products 接受三种格式，内部统一归一为 {lineId: productId}：
-        - list[dict]：[{"lineId": "L001", "productId": "P001"}]（推荐格式）
+        confirmed_products 接受三种格式，内部统一归一为 {line_id: product_id}：
+        - list[dict]：[{"line_id": "L001", "product_id": "P001"}]（推荐格式）
         - dict[str, str]：{"L001": "P001"}（向后兼容）
         - str：JSON 文本（容错，LLM 可能误传字符串）
         """
@@ -201,19 +201,19 @@ class ErpBillingSession:
         normalized_source = source.strip().casefold()
         if normalized_source not in {"text", "voice", "image"}:
             raise DomainError(
-                "ERP_ORDER_SOURCE_INVALID",
+                "erp_order_source_invalid",
                 "source 必须是 text、voice 或 image",
             )
         lines = parse_order_text(text)
         if not lines:
-            raise DomainError("ERP_ORDER_TEXT_EMPTY", "未识别到商品行")
+            raise DomainError("erp_order_text_empty", "未识别到商品行")
 
         confirmations = _normalize_confirmed_products(confirmed_products)
         valid_line_ids = {line.line_id for line in lines}
         unknown_line_ids = sorted(set(confirmations).difference(valid_line_ids))
         if unknown_line_ids:
             raise DomainError(
-                "ERP_CONFIRMED_LINE_NOT_FOUND",
+                "erp_confirmed_line_not_found",
                 "确认商品对应的订单行不存在：%s；有效行 ID 为 %s"
                 % ("、".join(unknown_line_ids), "、".join(sorted(valid_line_ids))),
             )
@@ -261,7 +261,7 @@ class ErpBillingSession:
             allowed_ids.add(line.product.product_id)
         if product_id not in allowed_ids:
             raise DomainError(
-                "ERP_CONFIRMED_PRODUCT_NOT_RECOMMENDED",
+                "erp_confirmed_product_not_recommended",
                 "商品 %s 不属于第%d行的匹配结果"
                 % (product_id, line.order_line.line_no),
             )
@@ -303,7 +303,7 @@ class ErpBillingSession:
     def _require_catalog(self) -> None:
         if not self.catalog.products:
             raise DomainError(
-                "ERP_PRODUCT_CATALOG_EMPTY",
+                "erp_product_catalog_empty",
                 "当前没有商品目录，请先调用 sync_products",
             )
 
@@ -339,7 +339,7 @@ class ErpBillingSession:
         stored = self._prepared_sales_orders.get(preview_id.strip())
         if stored is None:
             raise DomainError(
-                "ERP_SALES_ORDER_PREVIEW_NOT_FOUND",
+                "erp_sales_order_preview_not_found",
                 "销售单预览不存在或已失效，请重新生成预览",
             )
         return deepcopy(stored[0]), deepcopy(stored[1])
@@ -392,10 +392,10 @@ def parse_order_text(text: str) -> list[OrderLine]:
 def _normalize_confirmed_products(
     raw: list[dict[str, str]] | dict[str, str] | str | None,
 ) -> dict[str, str]:
-    """将各种 confirmed_products 输入格式统一为 {lineId: productId} 字典。
+    """将各种 confirmed_products 输入格式统一为 {line_id: product_id} 字典。
 
     支持 list[dict]、dict[str, str] 和 JSON 字符串三种输入；
-    list 格式每个元素须包含 lineId 和 productId（或 ptypeid）键。
+    list 格式每个元素须包含 line_id 和 product_id（或 ptypeid）键。
     """
     if raw is None:
         return {}
@@ -407,7 +407,7 @@ def _normalize_confirmed_products(
             raw = json.loads(stripped)
         except json.JSONDecodeError as exc:
             raise DomainError(
-                "ERP_CONFIRMED_PRODUCTS_INVALID",
+                "erp_confirmed_products_invalid",
                 "confirmed_products 不是有效的 JSON 对象或数组",
             ) from exc
     if isinstance(raw, list):
@@ -416,18 +416,18 @@ def _normalize_confirmed_products(
             if not isinstance(item, dict):
                 continue
             line_id = str(
-                item.get("lineId") or item.get("line_id") or ""
+                item.get("line_id") or item.get("lineId") or ""
             ).strip()
             product_id = str(
-                item.get("productId")
-                or item.get("product_id")
+                item.get("product_id")
+                or item.get("productId")
                 or item.get("ptypeid")
                 or ""
             ).strip()
             if not line_id or not product_id:
                 raise DomainError(
-                    "ERP_CONFIRMED_PRODUCT_INVALID",
-                    "confirmed_products 的 lineId 和 productId 不能为空",
+                    "erp_confirmed_product_invalid",
+                    "confirmed_products 的 line_id 和 product_id 不能为空",
                 )
             result[line_id] = product_id
         return result
@@ -438,13 +438,13 @@ def _normalize_confirmed_products(
             product_id = str(raw_product_id).strip()
             if not line_id or not product_id:
                 raise DomainError(
-                    "ERP_CONFIRMED_PRODUCT_INVALID",
-                    "confirmed_products 的 lineId 和 productId 不能为空",
+                    "erp_confirmed_product_invalid",
+                    "confirmed_products 的 line_id 和 product_id 不能为空",
                 )
             result[line_id] = product_id
         return result
     raise DomainError(
-        "ERP_CONFIRMED_PRODUCTS_INVALID",
+        "erp_confirmed_products_invalid",
         "confirmed_products 必须是 JSON 对象或数组",
     )
 

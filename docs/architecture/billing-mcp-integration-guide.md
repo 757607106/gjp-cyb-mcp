@@ -29,7 +29,7 @@ sequenceDiagram
     participant E as 固定 URL ERP API
 
     U->>A: 商品与销售单信息
-    A->>M: prepare_sales_order + MCP Bearer
+    A->>M: preview_sales_order + MCP Bearer
     M->>C: 按 InvocationContext 解析 ERP Bearer
     M->>E: GET 商品/客户/仓库/职员
     E-->>M: 当前账号真实数据
@@ -38,7 +38,7 @@ sequenceDiagram
     U->>A: 明确确认
     A->>M: submit_sales_order
     M->>E: POST /sales/orders
-    E-->>M: orderId
+    E-->>M: order_id
     M-->>A: submitted=true
 ```
 
@@ -48,12 +48,12 @@ sequenceDiagram
 |---|---|
 | `sync_products` | 主动刷新隔离会话商品目录 |
 | `search_products` | 独立查商品；模糊结果只推荐 |
-| `search_sales_order_options` | `option_type` 为 customer/warehouse/handler |
-| `prepare_sales_order` | 校验完整销售单并生成不可变预览 |
+| `search_billing_references` | `reference_type` 为 customer/warehouse/handler |
+| `preview_sales_order` | 校验完整销售单并生成不可变预览 |
 | `submit_sales_order` | 明确确认后真实写单 |
 
 业务必填项：客户、出库仓库、经手人、录单日期和商品明细。备注可选。接口技术字段
-`id=0`、`saveType=0/1/2` 由工具内部生成。
+`id=0`、`save_type=0/1/2` 由工具内部生成。
 
 准备调用示例：
 
@@ -73,12 +73,12 @@ sequenceDiagram
 
 Agent 根据返回值处理：
 
-- `missingRequiredFields`：继续追问必填项。
-- `needsConfirmation`：展示客户/仓库/经手人候选，不自行选择。
-- `recommendedProducts`：展示商品候选，确认后重调完整准备请求。
-- `unmatchedProducts`：请用户修改名称或检查 ERP 商品。
-- `unitWarnings`：请用户按 ERP 单位重新确认数量，不猜测换算。
-- `readyToSubmit=true`：展示 `preview` 并询问是否确认提交。
+- `missing_required_fields`：继续追问必填项。
+- `needs_confirmation`：展示客户/仓库/经手人候选，不自行选择。
+- `recommended_products`：展示商品候选，确认后重调完整准备请求。
+- `unmatched_products`：请用户修改名称或检查 ERP 商品。
+- `unit_warnings`：请用户按 ERP 单位重新确认数量，不猜测换算。
+- `ready_to_submit=true`：展示 `preview` 并询问是否确认提交。
 
 提交调用示例：
 
@@ -136,28 +136,6 @@ http = BusinessAuthenticatedJsonClient(
     credential_provider=BillingCredentialProvider(),
 )
 ```
-
-## CLI 验证
-
-CLI 不采集账号、密码或验证码，只登记已有 ERP Token：
-
-终端 1：
-
-```zsh
-cd /Users/pusonglin/gjp-cyb-mcp
-export ERP_BILLING_BASE_URL=https://test-ai.yuncyb.com/aicyberp-api
-uv run uvicorn gjp_cli.billing_validation:app --host 0.0.0.0 --port 8102
-```
-
-终端 2（启动后按提示粘贴，输入不回显，可粘贴 `Bearer ...` 或裸 JWT）：
-
-```zsh
-cd /Users/pusonglin/gjp-cyb-mcp
-uv run python -m gjp_cli mcp-chat
-```
-
-CLI 验证应用直接使用 ERP JWT 作为 MCP Bearer，无需换票。生产 MCP 应由
-对接方实现 JWT/OAuth2 验签。
 
 ## 安全检查
 

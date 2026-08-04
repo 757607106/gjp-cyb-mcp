@@ -103,10 +103,10 @@ class ErpAuthenticatedHttpAdapter:
     def _ensure_success(data: dict) -> dict:
         code = str(data.get("code") or "")
         if code == "A10006":
-            raise DomainError("BUSINESS_REAUTH_REQUIRED", "当前业务系统授权已失效")
+            raise DomainError("business_reauth_required", "当前业务系统授权已失效")
         if code != "A00000":
             raise DomainError(
-                "ERP_LIVE_REQUEST_FAILED",
+                "erp_live_request_failed",
                 str(data.get("message") or "ERP 接口失败"),
             )
         return data
@@ -137,10 +137,10 @@ class ErpAuthenticatedHttpAdapter:
             )
             page = data.get("data")
             if not isinstance(page, dict):
-                raise DomainError("ERP_LIVE_RESPONSE_INVALID", "ERP 商品分页数据不是对象")
+                raise DomainError("erp_live_response_invalid", "ERP 商品分页数据不是对象")
             page_rows = page.get("list")
             if not isinstance(page_rows, list):
-                raise DomainError("ERP_LIVE_RESPONSE_INVALID", "ERP 商品列表不是数组")
+                raise DomainError("erp_live_response_invalid", "ERP 商品列表不是数组")
             total = _non_negative_int(page.get("total"), "ERP 商品总数无效")
             rows.extend(page_rows)
             if (
@@ -214,10 +214,10 @@ class ErpAuthenticatedHttpAdapter:
         data = self._get(context, path, params)
         page = data.get("data")
         if not isinstance(page, dict):
-            raise DomainError("ERP_LIVE_RESPONSE_INVALID", "ERP 基础资料分页数据不是对象")
+            raise DomainError("erp_live_response_invalid", "ERP 基础资料分页数据不是对象")
         rows = page.get("list")
         if not isinstance(rows, list):
-            raise DomainError("ERP_LIVE_RESPONSE_INVALID", "ERP 基础资料列表不是数组")
+            raise DomainError("erp_live_response_invalid", "ERP 基础资料列表不是数组")
         options = tuple(
             option
             for row in rows
@@ -235,7 +235,7 @@ class ErpAuthenticatedHttpAdapter:
         order_id = str(data.get("data") or "").strip()
         if not order_id:
             raise DomainError(
-                "ERP_LIVE_RESPONSE_INVALID",
+                "erp_live_response_invalid",
                 "ERP 新增销售单成功但未返回单据 ID",
             )
         return BillingSalesOrderResult(order_id=order_id)
@@ -253,7 +253,7 @@ class ErpAuthenticatedHttpAdapter:
         order = data.get("data")
         if not isinstance(order, dict):
             raise DomainError(
-                "ERP_LIVE_RESPONSE_INVALID",
+                "erp_live_response_invalid",
                 "ERP 销售单详情数据不是对象",
             )
         return BillingSalesOrderDetailResult(order=order)
@@ -300,13 +300,13 @@ class ErpAuthenticatedHttpAdapter:
         page = data.get("data")
         if not isinstance(page, dict):
             raise DomainError(
-                "ERP_LIVE_RESPONSE_INVALID",
+                "erp_live_response_invalid",
                 "ERP 销售单分页数据不是对象",
             )
         rows = page.get("list")
         if not isinstance(rows, list):
             raise DomainError(
-                "ERP_LIVE_RESPONSE_INVALID",
+                "erp_live_response_invalid",
                 "ERP 销售单列表不是数组",
             )
         return BillingSalesOrderPageResult(
@@ -407,7 +407,7 @@ class BusinessAuthenticatedJsonClient:
         if credential.kind == "bearer":
             headers["Authorization"] = "Bearer " + credential.value
         else:
-            raise DomainError("BILLING_API_UNAUTHORIZED", "当前开单会话的鉴权类型无效")
+            raise DomainError("billing_api_unauthorized", "当前开单会话的鉴权类型无效")
         url = business_api_url(self._base_url, path)
         if params:
             url += "?" + urllib.parse.urlencode(params, doseq=True)
@@ -437,13 +437,13 @@ class BusinessAuthenticatedJsonClient:
                 body = response.read().decode("utf-8-sig")
         except urllib.error.HTTPError as exc:
             if exc.code in {401, 403}:
-                raise DomainError("BUSINESS_REAUTH_REQUIRED", "当前业务系统授权已失效") from exc
+                raise DomainError("business_reauth_required", "当前业务系统授权已失效") from exc
             raise DomainError(
-                "ERP_LIVE_REQUEST_FAILED",
+                "erp_live_request_failed",
                 "ERP 接口返回 HTTP %s" % exc.code,
             ) from exc
         except (urllib.error.URLError, socket.timeout, TimeoutError) as exc:
-            raise DomainError("BUSINESS_UPSTREAM_UNAVAILABLE", "当前业务系统不可用或请求超时") from exc
+            raise DomainError("business_upstream_unavailable", "当前业务系统不可用或请求超时") from exc
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(
                 "ERP 请求完成 url=%s elapsed=%dms body=%s",
@@ -454,9 +454,9 @@ class BusinessAuthenticatedJsonClient:
         try:
             data = json.loads(body)
         except json.JSONDecodeError as exc:
-            raise DomainError("ERP_LIVE_RESPONSE_INVALID", "ERP 接口返回的不是 JSON") from exc
+            raise DomainError("erp_live_response_invalid", "ERP 接口返回的不是 JSON") from exc
         if not isinstance(data, dict):
-            raise DomainError("ERP_LIVE_RESPONSE_INVALID", "ERP 接口响应顶层不是对象")
+            raise DomainError("erp_live_response_invalid", "ERP 接口响应顶层不是对象")
         return data
 
 
@@ -465,7 +465,7 @@ class UnavailableBillingApi:
 
     @staticmethod
     def _raise() -> NoReturn:
-        raise DomainError("BILLING_API_NOT_CONFIGURED", "开单服务尚未注入已鉴权 BillingApiPort")
+        raise DomainError("billing_api_not_configured", "开单服务尚未注入已鉴权 BillingApiPort")
 
     def fetch_products(
         self,
@@ -549,13 +549,13 @@ class UnavailableBillingApi:
 def _non_negative_int(value: object, message: str) -> int:
     """解析上游分页数字，拒绝缺失、布尔值和负数。"""
     if isinstance(value, bool):
-        raise DomainError("ERP_LIVE_RESPONSE_INVALID", message)
+        raise DomainError("erp_live_response_invalid", message)
     try:
         parsed = int(value)  # type: ignore[arg-type]
     except (TypeError, ValueError) as exc:
-        raise DomainError("ERP_LIVE_RESPONSE_INVALID", message) from exc
+        raise DomainError("erp_live_response_invalid", message) from exc
     if parsed < 0:
-        raise DomainError("ERP_LIVE_RESPONSE_INVALID", message)
+        raise DomainError("erp_live_response_invalid", message)
     return parsed
 
 
@@ -564,7 +564,7 @@ def _path_segment(value: str) -> str:
     cleaned = str(value or "").strip()
     if not cleaned or "/" in cleaned:
         raise DomainError(
-            "ERP_SALES_ORDER_ID_INVALID",
+            "erp_sales_order_id_invalid",
             "销售单 ID 不能为空且不能包含斜杠",
         )
     return cleaned
@@ -580,7 +580,7 @@ def _reference_option(row: dict[str, object]) -> dict[str, object] | None:
         "id": option_id,
         "code": str(row.get("code") or "").strip(),
         "name": name,
-        "isDefault": bool(row.get("isDefault")),
+        "is_default": bool(row.get("isDefault")),
     }
 
 
