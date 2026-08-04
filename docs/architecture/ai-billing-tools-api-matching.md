@@ -23,6 +23,10 @@ flowchart LR
     Agent --> Options["search_sales_order_options"]
     Agent --> Draft["prepare_sales_order"]
     Agent --> Submit["submit_sales_order"]
+    Agent --> Detail["get_sales_order_detail"]
+    Agent --> ListOrders["list_sales_orders"]
+    Agent --> Void["void_sales_order"]
+    Agent --> Modify["modify_sales_order"]
 
     Sync --> Port["BillingApiPort"]
     Sync --> Catalog["当前 Session 的租户隔离内存商品目录"]
@@ -33,6 +37,10 @@ flowchart LR
     Options --> Port
     Draft --> Port
     Submit --> Port
+    Detail --> Port
+    ListOrders --> Port
+    Void --> Port
+    Modify --> Port
     Port --> ERP["当前租户 ERP 商品 / 基础资料 / 销售单 API"]
 ```
 
@@ -58,7 +66,7 @@ ERP 地址由部署环境 `ERP_BILLING_BASE_URL` 固定；只有上游 Bearer �
 根据 `InvocationContext` 注入。URL 和两类 Bearer 均不进入工具参数、模型上下文
 或工具结果。
 
-`BillingApiPort` 只保留完整销售单所需的固定接口：
+`BillingApiPort` 只保留完整销售单流程所需的固定接口：
 
 ```python
 fetch_products(context, limit=None) -> BillingProductSnapshot
@@ -66,16 +74,24 @@ search_customers(context, keyword, limit=10) -> BillingReferenceSnapshot
 search_warehouses(context, keyword, limit=10) -> BillingReferenceSnapshot
 search_staff(context, keyword, limit=10) -> BillingReferenceSnapshot
 create_sales_order(context, payload) -> BillingSalesOrderResult
+get_sales_order_detail(context, order_id) -> BillingSalesOrderDetailResult
+search_sales_orders(context, ...) -> BillingSalesOrderPageResult
+void_sales_order(context, order_id) -> None
+update_sales_order(context, order_id, payload) -> BillingSalesOrderResult
 ```
 
-Adapter 使用固定相对路径调用云创业版商品目录接口：
+Adapter 使用固定相对路径调用云创业版商品目录与销售单接口：
 
 ```text
-GET /product/page?pageNum=1&pageSize=20&status=1
-GET /customer/page?pageNum=1&pageSize=10&status=1&keyword=...
-GET /warehouse/page?pageNum=1&pageSize=10&status=1&keyword=...
-GET /staff/page?pageNum=1&pageSize=10&status=1&keyword=...
+GET  /product/page?pageNum=1&pageSize=20&status=1
+GET  /customer/page?pageNum=1&pageSize=10&status=1&keyword=...
+GET  /warehouse/page?pageNum=1&pageSize=10&status=1&keyword=...
+GET  /staff/page?pageNum=1&pageSize=10&status=1&keyword=...
 POST /sales/orders
+GET  /sales/orders/{id}
+GET  /sales/orders/page?pageNum=1&pageSize=20&sortBy=updateTime&orderType=desc
+PUT  /sales/orders/{id}/void
+PUT  /sales/orders/{id}
 ```
 
 接口顶层成功码为 `A00000`，商品数组位于 `data.list`，总数位于 `data.total`。
@@ -94,7 +110,7 @@ Adapter 按 20 条一页自动翻页；响应由 `normalize_live_product_rows()`
 
 ## 3. 对外工具
 
-开单 Agent 和远程 MCP 发布以下六个工具：
+开单 Agent 和远程 MCP 发布以下十个工具：
 
 | 工具 | 输入 | 职责 | 主要输出 |
 |---|---|---|---|
@@ -104,11 +120,16 @@ Adapter 按 20 条一页自动翻页；响应由 `normalize_live_product_rows()`
 | `search_sales_order_options` | `option_type`、`keyword?`、`limit?` | 查询客户、出库仓库或经手人候选 | 可用基础资料最小字段 |
 | `prepare_sales_order` | 完整销售单业务字段、`save_type`、`confirmed_products?`、`partial?` | 校验必填项、解析基础资料、匹配商品并保存不可变预览 | 缺失项、候选、商品数组、`previewId` |
 | `submit_sales_order` | `preview_id`、`idempotency_key`、`confirmed_by_user` | 明确确认后调用真实写单接口 | `orderId`、保存类型、幂等重放标志 |
+| `get_sales_order_detail` | `order_id` | 查询销售单详情，含商品明细、收款记录和状态 | `order`（完整 SalesOrderVO） |
+| `list_sales_orders` | `page_num?`、`page_size?`、`sort_by?`、`order_type?`、`start_date?`、`end_date?`、`status?`、`payment_status?`、`return_status?`、`order_no?`、`customer_id?` | 分页查询销售单列表，支持录单日常和客户查询 | `page`、`pageSize`、`total`、`orders` |
+| `void_sales_order` | `order_id`、`confirmed_by_user` | 用户确认后作废销售单，不可恢复 | `voided`、`orderId` |
+| `modify_sales_order` | `order_id`、`order_date`、`handler_id`、`items`、`customer_id?`、`warehouse_id?`、`save_type?`、`remark?`、`confirmed_by_user` | 用户确认后修改已存在销售单；建议先查详情 | `modified`、`orderId` |
 
-六个工具的返回值都是 MCP 结构化 JSON 内容。服务不维护可逐行修改的文件草稿，
-但会在隔离 Session 中短期保存不可变提交预览和成功幂等结果。只有
-`submit_sales_order` 具有 ERP 写副作用，并要求 `billing:write`、明确用户确认和
-幂等键。
+十个工具的返回值都是 MCP 结构化 JSON 内容。`submit_sales_order`、
+`void_sales_order` 和 `modify_sales_order` 具有 ERP 写副作用，要求 `billing:write`、
+明确用户确认；`submit_sales_order` 额外要求幂等键。`get_sales_order_detail` 和
+`list_sales_orders` 是只读操作，要求 `billing:read`。服务不维护可逐行修改的文件草稿，
+但会在隔离 Session 中短期保存不可变提交预览和成功幂等结果。
 
 ## 4. 商品目录同步
 

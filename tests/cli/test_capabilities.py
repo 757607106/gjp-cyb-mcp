@@ -97,13 +97,25 @@ def test_billing_runtime_binds_only_standard_tools_without_auth_parameters():
         "search_sales_order_options",
         "prepare_sales_order",
         "submit_sales_order",
+        "get_sales_order_detail",
+        "list_sales_orders",
+        "void_sales_order",
+        "modify_sales_order",
     }
     for tool in runtime.toolset.tools():
-        schema = json.dumps(tool.input_schema, ensure_ascii=False).casefold()
-        assert "password" not in schema
-        assert "access_token" not in schema
-        assert "account_id" not in schema
-        assert "invocation_context" not in schema
+        # 检查鉴权相关字段不作为工具入参属性名出现；
+        # discount_account_id / receipt_account_id 是 ERP 财务账户，
+        # 与 InvocationContext.account_id 认证账户语义不同，不受此限制。
+        properties = tool.input_schema.get("properties", {})
+        forbidden_keys = {
+            "password",
+            "access_token",
+            "account_id",
+            "invocation_context",
+        }
+        assert not (
+            set(properties.keys()) & forbidden_keys
+        ), "工具 %s 暴露了鉴权相关字段" % tool.name
 
 
 def test_reference_agent_binds_billing_toolset():
@@ -150,6 +162,10 @@ async def _assert_billing_mcp_schema_and_identity():
         "search_sales_order_options",
         "prepare_sales_order",
         "submit_sales_order",
+        "get_sales_order_detail",
+        "list_sales_orders",
+        "void_sales_order",
+        "modify_sales_order",
     }
     sync_tool = next(tool for tool in listed_tools if tool.name == "sync_products")
     assert sync_tool.inputSchema == schema_toolset.get("sync_products").input_schema

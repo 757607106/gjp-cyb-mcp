@@ -94,6 +94,10 @@ def test_billing_validation_accepts_erp_jwt_directly(tmp_path):
             "search_sales_order_options",
             "prepare_sales_order",
             "submit_sales_order",
+            "get_sales_order_detail",
+            "list_sales_orders",
+            "void_sales_order",
+            "modify_sales_order",
         }
         schema = json.dumps(listed.json(), ensure_ascii=False).casefold()
         assert "password" not in schema

@@ -17,6 +17,8 @@ from erp_billing.models import Product
 from erp_billing.ports import (
     BillingProductSnapshot,
     BillingReferenceSnapshot,
+    BillingSalesOrderDetailResult,
+    BillingSalesOrderPageResult,
     BillingSalesOrderResult,
 )
 from erp_billing.session import ErpBillingSession, parse_order_text
@@ -924,6 +926,10 @@ def test_billing_toolset_exposes_complete_sales_order_tools(tmp_path):
         "search_sales_order_options",
         "prepare_sales_order",
         "submit_sales_order",
+        "get_sales_order_detail",
+        "list_sales_orders",
+        "void_sales_order",
+        "modify_sales_order",
     }
     assert toolset.get("sync_products").is_read_only is False
     assert toolset.get("list_products").is_read_only is True
@@ -931,6 +937,10 @@ def test_billing_toolset_exposes_complete_sales_order_tools(tmp_path):
     assert toolset.get("search_sales_order_options").is_read_only is True
     assert toolset.get("prepare_sales_order").is_read_only is True
     assert toolset.get("submit_sales_order").is_read_only is False
+    assert toolset.get("get_sales_order_detail").is_read_only is True
+    assert toolset.get("list_sales_orders").is_read_only is True
+    assert toolset.get("void_sales_order").is_read_only is False
+    assert toolset.get("modify_sales_order").is_read_only is False
     for tool in toolset.local_tools():
         schema_text = json.dumps(tool.input_schema, ensure_ascii=False)
         assert "output_path" not in schema_text
@@ -1196,6 +1206,77 @@ class CompleteSalesOrderApi:
     def create_sales_order(self, context, payload):
         self.created_payloads.append(payload)
         return BillingSalesOrderResult(order_id="SO-20260804-1")
+
+    @staticmethod
+    def get_sales_order_detail(context, order_id):
+        return BillingSalesOrderDetailResult(
+            order={
+                "id": order_id,
+                "orderNo": "SO20260804001",
+                "orderDate": "2026-08-04",
+                "customerId": "CUS-1",
+                "customerName": "客户甲",
+                "warehouseId": "WH-1",
+                "warehouseName": "一号仓",
+                "handlerId": "STAFF-1",
+                "handlerName": "张三",
+                "status": 2,
+                "statusName": "已生效",
+                "totalAmount": 7.0,
+                "items": [
+                    {
+                        "productId": "P001",
+                        "productName": "土豆",
+                        "unit": "斤",
+                        "quantity": 2,
+                        "unitPrice": 3.5,
+                        "amount": 7.0,
+                    },
+                ],
+            },
+        )
+
+    @staticmethod
+    def search_sales_orders(
+        context,
+        *,
+        page_num=1,
+        page_size=20,
+        sort_by="",
+        order_type="",
+        start_date="",
+        end_date="",
+        status=None,
+        payment_status=None,
+        return_status=None,
+        order_no="",
+        customer_id="",
+    ):
+        return BillingSalesOrderPageResult(
+            total=1,
+            page_num=page_num,
+            page_size=page_size,
+            orders=(
+                {
+                    "id": "208457406331712307",
+                    "orderNo": "SO20260804001",
+                    "orderDate": "2026-08-04",
+                    "customerName": "客户甲",
+                    "status": 2,
+                    "statusName": "已生效",
+                    "totalAmount": 7.0,
+                },
+            ),
+        )
+
+    def void_sales_order(self, context, order_id):
+        self.voided_order_ids = getattr(self, "voided_order_ids", [])
+        self.voided_order_ids.append(order_id)
+
+    def update_sales_order(self, context, order_id, payload):
+        self.updated_payloads = getattr(self, "updated_payloads", [])
+        self.updated_payloads.append((order_id, payload))
+        return BillingSalesOrderResult(order_id=order_id)
 
 
 def test_prepare_sales_order_distinguishes_required_optional_and_system_fields(tmp_path):
@@ -1853,6 +1934,24 @@ def test_tool_outputs_validate_against_output_schema(tmp_path):
         def create_sales_order(self, context, payload):
             return CompleteSalesOrderApi().create_sales_order(context, payload)
 
+        @staticmethod
+        def get_sales_order_detail(context, order_id):
+            return CompleteSalesOrderApi.get_sales_order_detail(context, order_id)
+
+        @staticmethod
+        def search_sales_orders(context, **kwargs):
+            return CompleteSalesOrderApi.search_sales_orders(context, **kwargs)
+
+        @staticmethod
+        def void_sales_order(context, order_id):
+            CompleteSalesOrderApi().void_sales_order(context, order_id)
+
+        @staticmethod
+        def update_sales_order(context, order_id, payload):
+            return CompleteSalesOrderApi().update_sales_order(
+                context, order_id, payload,
+            )
+
     toolset = _billing_toolset(session, BillingApi())
     by_name = {tool.name: tool for tool in toolset.local_tools()}
 
@@ -1897,3 +1996,332 @@ def test_tool_outputs_validate_against_output_schema(tmp_path):
     )
     jsonschema.validate(rejected, by_name["submit_sales_order"].output_schema)
     assert rejected["ok"] is False
+
+    detail = toolset.get_sales_order_detail(order_id="208457406331712307")
+    jsonschema.validate(detail, by_name["get_sales_order_detail"].output_schema)
+    assert detail["order"]["orderNo"] == "SO20260804001"
+
+    orders = toolset.list_sales_orders(
+        start_date="2026-07-04",
+        end_date="2026-08-04",
+        sort_by="updateTime",
+        order_type="desc",
+    )
+    jsonschema.validate(orders, by_name["list_sales_orders"].output_schema)
+    assert orders["total"] == 1
+
+    voided = toolset.void_sales_order(
+        order_id="208457406331712307",
+        confirmed_by_user=True,
+    )
+    jsonschema.validate(voided, by_name["void_sales_order"].output_schema)
+
+    modified = toolset.modify_sales_order(
+        order_id="208457406331712307",
+        order_date="2026-08-04",
+        handler_id="STAFF-1",
+        items=[{"productId": "P001", "quantity": 3}],
+        confirmed_by_user=True,
+    )
+    jsonschema.validate(modified, by_name["modify_sales_order"].output_schema)
+
+
+# ---------------------------------------------------------------------------
+# 销售单详情 / 列表 / 作废 / 修改 测试
+# ---------------------------------------------------------------------------
+
+
+def test_get_sales_order_detail_returns_order(tmp_path):
+    """get_sales_order_detail 应返回 ERP 销售单详情。"""
+    session = _session(
+        tmp_path,
+        [{"ptypeid": "P001", "pfullname": "土豆", "unit": "斤"}],
+    )
+    toolset = _billing_toolset(session, CompleteSalesOrderApi())
+
+    result = toolset.get_sales_order_detail(order_id="208457406331712307")
+
+    assert result["ok"] is True
+    assert result["order"]["id"] == "208457406331712307"
+    assert result["order"]["orderNo"] == "SO20260804001"
+    assert result["order"]["items"][0]["productName"] == "土豆"
+
+
+def test_get_sales_order_detail_returns_error_when_api_not_configured(tmp_path):
+    """未注入 Adapter 时 get_sales_order_detail 应返回明确错误。"""
+    session = _session(
+        tmp_path,
+        [{"ptypeid": "P001", "pfullname": "土豆", "unit": "斤"}],
+    )
+    toolset = _billing_toolset(session)
+
+    result = toolset.get_sales_order_detail(order_id="208457406331712307")
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "BILLING_API_NOT_CONFIGURED"
+
+
+def test_list_sales_orders_with_date_range_and_status(tmp_path):
+    """list_sales_orders 应按日期范围和状态筛选销售单列表。"""
+    session = _session(
+        tmp_path,
+        [{"ptypeid": "P001", "pfullname": "土豆", "unit": "斤"}],
+    )
+    toolset = _billing_toolset(session, CompleteSalesOrderApi())
+
+    result = toolset.list_sales_orders(
+        page_num=1,
+        page_size=20,
+        sort_by="updateTime",
+        order_type="desc",
+        start_date="2026-07-04",
+        end_date="2026-08-04",
+        status=2,
+    )
+
+    assert result["ok"] is True
+    assert result["page"] == 1
+    assert result["pageSize"] == 20
+    assert result["total"] == 1
+    assert result["orders"][0]["orderNo"] == "SO20260804001"
+
+
+def test_list_sales_orders_rejects_invalid_date_format(tmp_path):
+    """list_sales_orders 应拒绝非 YYYY-MM-DD 格式的日期。"""
+    session = _session(
+        tmp_path,
+        [{"ptypeid": "P001", "pfullname": "土豆", "unit": "斤"}],
+    )
+    toolset = _billing_toolset(session, CompleteSalesOrderApi())
+
+    result = toolset.list_sales_orders(start_date="2026/07/04")
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "ERP_SALES_ORDER_DATE_INVALID"
+
+
+def test_list_sales_orders_rejects_end_before_start(tmp_path):
+    """list_sales_orders 应拒绝结束日期早于开始日期。"""
+    session = _session(
+        tmp_path,
+        [{"ptypeid": "P001", "pfullname": "土豆", "unit": "斤"}],
+    )
+    toolset = _billing_toolset(session, CompleteSalesOrderApi())
+
+    result = toolset.list_sales_orders(
+        start_date="2026-08-04",
+        end_date="2026-07-04",
+    )
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "ERP_SALES_ORDER_DATE_INVALID"
+
+
+def test_void_sales_order_requires_confirmation(tmp_path):
+    """void_sales_order 未确认时应拒绝执行。"""
+    session = _session(
+        tmp_path,
+        [{"ptypeid": "P001", "pfullname": "土豆", "unit": "斤"}],
+    )
+    api = CompleteSalesOrderApi()
+    toolset = _billing_toolset(session, api)
+
+    rejected = toolset.void_sales_order(
+        order_id="208457406331712307",
+        confirmed_by_user=False,
+    )
+
+    assert rejected["ok"] is False
+    assert rejected["error"]["code"] == "ERP_SALES_ORDER_CONFIRMATION_REQUIRED"
+    assert not getattr(api, "voided_order_ids", [])
+
+
+def test_void_sales_order_executes_after_confirmation(tmp_path):
+    """void_sales_order 在用户确认后应作废单据。"""
+    session = _session(
+        tmp_path,
+        [{"ptypeid": "P001", "pfullname": "土豆", "unit": "斤"}],
+    )
+    api = CompleteSalesOrderApi()
+    toolset = _billing_toolset(session, api)
+
+    result = toolset.void_sales_order(
+        order_id="208457406331712307",
+        confirmed_by_user=True,
+    )
+
+    assert result["ok"] is True
+    assert result["voided"] is True
+    assert result["orderId"] == "208457406331712307"
+    assert api.voided_order_ids == ["208457406331712307"]
+
+
+def test_void_sales_order_rejects_empty_id(tmp_path):
+    """void_sales_order 应拒绝空的销售单 ID。"""
+    session = _session(
+        tmp_path,
+        [{"ptypeid": "P001", "pfullname": "土豆", "unit": "斤"}],
+    )
+    toolset = _billing_toolset(session, CompleteSalesOrderApi())
+
+    result = toolset.void_sales_order(
+        order_id="",
+        confirmed_by_user=True,
+    )
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "ERP_SALES_ORDER_ID_INVALID"
+
+
+def test_modify_sales_order_builds_payload_and_executes(tmp_path):
+    """modify_sales_order 应构建 SalesOrderUpdateDTO 并在确认后执行。"""
+    session = _session(
+        tmp_path,
+        [{"ptypeid": "P001", "pfullname": "土豆", "unit": "斤"}],
+    )
+    api = CompleteSalesOrderApi()
+    toolset = _billing_toolset(session, api)
+
+    result = toolset.modify_sales_order(
+        order_id="208457406331712307",
+        order_date="2026-08-04",
+        handler_id="STAFF-1",
+        items=[
+            {
+                "productId": "P001",
+                "quantity": 3,
+                "unit": "斤",
+                "unitPrice": 3.5,
+                "remark": "加急",
+            },
+        ],
+        customer_id="CUS-1",
+        warehouse_id="WH-1",
+        save_type=0,
+        remark="下午送达",
+        confirmed_by_user=True,
+    )
+
+    assert result["ok"] is True
+    assert result["modified"] is True
+    assert result["orderId"] == "208457406331712307"
+    order_id, payload = api.updated_payloads[0]
+    assert order_id == "208457406331712307"
+    assert payload["id"] == 208457406331712307
+    assert payload["orderDate"] == "2026-08-04"
+    assert payload["handlerId"] == "STAFF-1"
+    assert payload["customerId"] == "CUS-1"
+    assert payload["warehouseId"] == "WH-1"
+    assert payload["saveType"] == 0
+    assert payload["remark"] == "下午送达"
+    assert payload["items"] == [
+        {
+            "productId": "P001",
+            "quantity": 3.0,
+            "unit": "斤",
+            "unitPrice": 3.5,
+            "remark": "加急",
+        },
+    ]
+
+
+def test_modify_sales_order_requires_confirmation(tmp_path):
+    """modify_sales_order 未确认时应拒绝执行。"""
+    session = _session(
+        tmp_path,
+        [{"ptypeid": "P001", "pfullname": "土豆", "unit": "斤"}],
+    )
+    api = CompleteSalesOrderApi()
+    toolset = _billing_toolset(session, api)
+
+    rejected = toolset.modify_sales_order(
+        order_id="208457406331712307",
+        order_date="2026-08-04",
+        handler_id="STAFF-1",
+        items=[{"productId": "P001", "quantity": 3}],
+        confirmed_by_user=False,
+    )
+
+    assert rejected["ok"] is False
+    assert rejected["error"]["code"] == "ERP_SALES_ORDER_CONFIRMATION_REQUIRED"
+    assert not getattr(api, "updated_payloads", [])
+
+
+def test_modify_sales_order_rejects_empty_items(tmp_path):
+    """modify_sales_order 应拒绝空商品明细。"""
+    session = _session(
+        tmp_path,
+        [{"ptypeid": "P001", "pfullname": "土豆", "unit": "斤"}],
+    )
+    toolset = _billing_toolset(session, CompleteSalesOrderApi())
+
+    result = toolset.modify_sales_order(
+        order_id="208457406331712307",
+        order_date="2026-08-04",
+        handler_id="STAFF-1",
+        items=[],
+        confirmed_by_user=True,
+    )
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "ERP_SALES_ORDER_ITEMS_EMPTY"
+
+
+def test_modify_sales_order_rejects_item_without_product_id(tmp_path):
+    """modify_sales_order 应拒绝缺少 productId 的商品明细。"""
+    session = _session(
+        tmp_path,
+        [{"ptypeid": "P001", "pfullname": "土豆", "unit": "斤"}],
+    )
+    toolset = _billing_toolset(session, CompleteSalesOrderApi())
+
+    result = toolset.modify_sales_order(
+        order_id="208457406331712307",
+        order_date="2026-08-04",
+        handler_id="STAFF-1",
+        items=[{"quantity": 3}],
+        confirmed_by_user=True,
+    )
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "ERP_SALES_ORDER_ITEM_INVALID"
+
+
+def test_modify_sales_order_rejects_invalid_date(tmp_path):
+    """modify_sales_order 应拒绝非 YYYY-MM-DD 格式的日期。"""
+    session = _session(
+        tmp_path,
+        [{"ptypeid": "P001", "pfullname": "土豆", "unit": "斤"}],
+    )
+    toolset = _billing_toolset(session, CompleteSalesOrderApi())
+
+    result = toolset.modify_sales_order(
+        order_id="208457406331712307",
+        order_date="2026/08/04",
+        handler_id="STAFF-1",
+        items=[{"productId": "P001", "quantity": 3}],
+        confirmed_by_user=True,
+    )
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "ERP_SALES_ORDER_DATE_INVALID"
+
+
+def test_modify_sales_order_rejects_zero_quantity(tmp_path):
+    """modify_sales_order 应拒绝数量小于等于 0 的商品明细。"""
+    session = _session(
+        tmp_path,
+        [{"ptypeid": "P001", "pfullname": "土豆", "unit": "斤"}],
+    )
+    toolset = _billing_toolset(session, CompleteSalesOrderApi())
+
+    result = toolset.modify_sales_order(
+        order_id="208457406331712307",
+        order_date="2026-08-04",
+        handler_id="STAFF-1",
+        items=[{"productId": "P001", "quantity": 0}],
+        confirmed_by_user=True,
+    )
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "ERP_SALES_ORDER_ITEM_INVALID"

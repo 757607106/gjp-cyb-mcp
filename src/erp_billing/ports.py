@@ -24,9 +24,26 @@ class BillingReferenceSnapshot:
 
 @dataclass(frozen=True)
 class BillingSalesOrderResult:
-    """ERP 新增销售单的最小返回结果。"""
+    """ERP 新增或修改销售单的最小返回结果。"""
 
     order_id: str
+
+
+@dataclass(frozen=True)
+class BillingSalesOrderDetailResult:
+    """ERP 销售单详情查询结果。"""
+
+    order: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class BillingSalesOrderPageResult:
+    """ERP 销售单分页查询结果。"""
+
+    total: int
+    page_num: int
+    page_size: int
+    orders: tuple[dict[str, Any], ...]
 
 
 class AuthenticatedJsonClient(Protocol):
@@ -45,6 +62,14 @@ class AuthenticatedJsonClient(Protocol):
         context: InvocationContext,
         path: str,
         payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        ...
+
+    def put_json(
+        self,
+        context: InvocationContext,
+        path: str,
+        payload: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         ...
 
@@ -86,6 +111,46 @@ class BillingApiPort(Protocol):
     def create_sales_order(
         self,
         context: InvocationContext,
+        payload: dict[str, Any],
+    ) -> BillingSalesOrderResult:
+        ...
+
+    def get_sales_order_detail(
+        self,
+        context: InvocationContext,
+        order_id: str,
+    ) -> BillingSalesOrderDetailResult:
+        ...
+
+    def search_sales_orders(
+        self,
+        context: InvocationContext,
+        *,
+        page_num: int = 1,
+        page_size: int = 20,
+        sort_by: str = "",
+        order_type: str = "",
+        start_date: str = "",
+        end_date: str = "",
+        status: int | None = None,
+        payment_status: int | None = None,
+        return_status: int | None = None,
+        order_no: str = "",
+        customer_id: str = "",
+    ) -> BillingSalesOrderPageResult:
+        ...
+
+    def void_sales_order(
+        self,
+        context: InvocationContext,
+        order_id: str,
+    ) -> None:
+        ...
+
+    def update_sales_order(
+        self,
+        context: InvocationContext,
+        order_id: str,
         payload: dict[str, Any],
     ) -> BillingSalesOrderResult:
         ...

@@ -24,6 +24,10 @@ BILLING_MCP_TOOL_NAMES = frozenset(
         "search_sales_order_options",
         "prepare_sales_order",
         "submit_sales_order",
+        "get_sales_order_detail",
+        "list_sales_orders",
+        "void_sales_order",
+        "modify_sales_order",
     },
 )
 
@@ -198,6 +202,58 @@ _SUBMIT_SALES_ORDER_OUTPUT_SCHEMA = {
     "additionalProperties": True,
 }
 
+_GET_SALES_ORDER_DETAIL_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "ok": {"type": "boolean"},
+        "error": _ERROR_OUTPUT_OBJECT,
+        "order": {"type": ["object", "null"], "additionalProperties": True},
+    },
+    "required": ["ok"],
+    "additionalProperties": True,
+}
+
+_LIST_SALES_ORDERS_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "ok": {"type": "boolean"},
+        "error": _ERROR_OUTPUT_OBJECT,
+        "page": {"type": "integer"},
+        "pageSize": {"type": "integer"},
+        "total": {"type": "integer"},
+        "orders": {
+            "type": "array",
+            "items": {"type": "object", "additionalProperties": True},
+        },
+    },
+    "required": ["ok"],
+    "additionalProperties": True,
+}
+
+_VOID_SALES_ORDER_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "ok": {"type": "boolean"},
+        "error": _ERROR_OUTPUT_OBJECT,
+        "voided": {"type": "boolean"},
+        "orderId": {"type": "string"},
+    },
+    "required": ["ok"],
+    "additionalProperties": True,
+}
+
+_MODIFY_SALES_ORDER_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "ok": {"type": "boolean"},
+        "error": _ERROR_OUTPUT_OBJECT,
+        "modified": {"type": "boolean"},
+        "orderId": {"type": "string"},
+    },
+    "required": ["ok"],
+    "additionalProperties": True,
+}
+
 
 class BillingToolSet(AgentScopeToolSet):
     """开单 ToolSet：检索基础资料、生成预览并在确认后写入销售单。"""
@@ -242,6 +298,26 @@ class BillingToolSet(AgentScopeToolSet):
                     self.submit_sales_order,
                     is_concurrency_safe=False,
                     output_schema=_SUBMIT_SALES_ORDER_OUTPUT_SCHEMA,
+                ),
+                SessionFunctionTool(
+                    self.get_sales_order_detail,
+                    is_read_only=True,
+                    output_schema=_GET_SALES_ORDER_DETAIL_OUTPUT_SCHEMA,
+                ),
+                SessionFunctionTool(
+                    self.list_sales_orders,
+                    is_read_only=True,
+                    output_schema=_LIST_SALES_ORDERS_OUTPUT_SCHEMA,
+                ),
+                SessionFunctionTool(
+                    self.void_sales_order,
+                    is_concurrency_safe=False,
+                    output_schema=_VOID_SALES_ORDER_OUTPUT_SCHEMA,
+                ),
+                SessionFunctionTool(
+                    self.modify_sales_order,
+                    is_concurrency_safe=False,
+                    output_schema=_MODIFY_SALES_ORDER_OUTPUT_SCHEMA,
                 ),
             ],
             contexts=contexts,
@@ -539,6 +615,215 @@ class BillingToolSet(AgentScopeToolSet):
         except DomainError as exc:
             return self.error_response(exc)
 
+    def get_sales_order_detail(self, order_id: str) -> dict[str, Any]:
+        """查询销售单详情，含商品明细、收款记录和状态。
+
+        Args:
+            order_id: 销售单 ID。
+        """
+        try:
+            context = self._contexts.get()
+            context.require_scope("billing:read")
+            result = self._api.get_sales_order_detail(
+                context,
+                order_id.strip(),
+            )
+            return self.ok_response(order=result.order)
+        except DomainError as exc:
+            return self.error_response(exc)
+
+    def list_sales_orders(
+        self,
+        page_num: int = 1,
+        page_size: int = 20,
+        sort_by: str = "",
+        order_type: str = "",
+        start_date: str = "",
+        end_date: str = "",
+        status: int | None = None,
+        payment_status: int | None = None,
+        return_status: int | None = None,
+        order_no: str = "",
+        customer_id: str = "",
+    ) -> dict[str, Any]:
+        """分页查询销售单列表，支持按日期、状态和客户筛选。
+
+        适用于录单日常查询和客户单据查询场景。传 start_date 和
+        end_date 可查指定时间段的单据；传 status 可筛选草稿、
+        预收、已生效或已作废单据。
+
+        Args:
+            page_num: 页码，从 1 开始。
+            page_size: 每页数量，范围 1 到 100。
+            sort_by: 排序字段，如 updateTime、orderDate。
+            order_type: 排序方向：asc 或 desc。
+            start_date: 开始日期，格式 YYYY-MM-DD。
+            end_date: 结束日期，格式 YYYY-MM-DD。
+            status: 单据状态：0=草稿 1=预收 2=已生效 3=已作废。
+            payment_status: 收款状态：0=未收款 1=部分收款 2=已完成。
+            return_status: 退货状态：0=无退货 1=部分退货 2=全部退货。
+            order_no: 单据编号模糊匹配关键词。
+            customer_id: 客户 ID。
+        """
+        try:
+            context = self._contexts.get()
+            context.require_scope("billing:read")
+            self._validate_date_range(start_date.strip(), end_date.strip())
+            result = self._api.search_sales_orders(
+                context,
+                page_num=max(1, int(page_num or 1)),
+                page_size=max(1, min(int(page_size or 20), 100)),
+                sort_by=sort_by.strip(),
+                order_type=order_type.strip(),
+                start_date=start_date.strip(),
+                end_date=end_date.strip(),
+                status=status,
+                payment_status=payment_status,
+                return_status=return_status,
+                order_no=order_no.strip(),
+                customer_id=customer_id.strip(),
+            )
+            return self.ok_response(
+                page=result.page_num,
+                pageSize=result.page_size,
+                total=result.total,
+                orders=list(result.orders),
+            )
+        except DomainError as exc:
+            return self.error_response(exc)
+
+    def void_sales_order(
+        self,
+        order_id: str,
+        confirmed_by_user: bool,
+    ) -> dict[str, Any]:
+        """作废销售单；只有用户明确确认后才能执行。
+
+        作废后单据状态变为已作废，不可恢复。调用前建议先调用
+        get_sales_order_detail 向用户展示单据内容。
+
+        Args:
+            order_id: 销售单 ID。
+            confirmed_by_user: 仅在用户明确确认作废后传 true。
+        """
+        try:
+            context = self._contexts.get()
+            context.require_scope("billing:write")
+            if confirmed_by_user is not True:
+                raise DomainError(
+                    "ERP_SALES_ORDER_CONFIRMATION_REQUIRED",
+                    "必须先向用户展示销售单详情并取得明确确认",
+                )
+            target_id = order_id.strip()
+            if not target_id:
+                raise DomainError(
+                    "ERP_SALES_ORDER_ID_INVALID",
+                    "销售单 ID 不能为空",
+                )
+            self._api.void_sales_order(context, target_id)
+            return self.ok_response(voided=True, orderId=target_id)
+        except DomainError as exc:
+            return self.error_response(exc)
+
+    def modify_sales_order(
+        self,
+        order_id: str,
+        order_date: str,
+        handler_id: str,
+        items: list[dict[str, Any]],
+        customer_id: str = "",
+        warehouse_id: str = "",
+        save_type: int = 0,
+        remark: str = "",
+        discount_amount: float | None = None,
+        discount_account_id: str = "",
+        receipt_amount: float | None = None,
+        receipt_account_id: str = "",
+        confirmed_by_user: bool = False,
+    ) -> dict[str, Any]:
+        """修改已存在的销售单；只有用户明确确认后才能执行。
+
+        建议先调用 get_sales_order_detail 获取当前数据，再做修改。
+        已生效单据的客户和出库仓库不可修改。
+
+        Args:
+            order_id: 销售单 ID。
+            order_date: 单据日期，格式 YYYY-MM-DD。
+            handler_id: 经办人 ID。
+            items: 商品明细列表，每个元素包含 productId（必填）、
+                quantity（必填）、unit、unitPrice、orderItemId、remark 等。
+            customer_id: 客户 ID（已生效状态不可修改）。
+            warehouse_id: 出库仓库 ID（已生效状态不可修改）。
+            save_type: 保存方式：0=保持草稿/预收 2=草稿/预收转过账。
+            remark: 备注。
+            discount_amount: 优惠金额（已生效状态不可修改）。
+            discount_account_id: 优惠账户 ID（已生效状态不可修改）。
+            receipt_amount: 本次追加收款金额（预收转正式过账时使用）。
+            receipt_account_id: 收款账户 ID（预收转正式过账时使用）。
+            confirmed_by_user: 仅在用户明确确认修改内容后传 true。
+        """
+        try:
+            context = self._contexts.get()
+            context.require_scope("billing:write")
+            if confirmed_by_user is not True:
+                raise DomainError(
+                    "ERP_SALES_ORDER_CONFIRMATION_REQUIRED",
+                    "必须先向用户展示修改内容并取得明确确认",
+                )
+            target_id = order_id.strip()
+            if not target_id:
+                raise DomainError(
+                    "ERP_SALES_ORDER_ID_INVALID",
+                    "销售单 ID 不能为空",
+                )
+            clean_date = order_date.strip()
+            if not clean_date:
+                raise DomainError(
+                    "ERP_SALES_ORDER_DATE_INVALID",
+                    "录单日期不能为空",
+                )
+            self._validate_order_date(clean_date)
+            clean_handler = handler_id.strip()
+            if not clean_handler:
+                raise DomainError(
+                    "ERP_SALES_ORDER_HANDLER_REQUIRED",
+                    "经办人 ID 不能为空",
+                )
+            if len(remark.strip()) > 200:
+                raise DomainError(
+                    "ERP_SALES_ORDER_REMARK_TOO_LONG",
+                    "备注最多 200 个字符",
+                )
+            order_items = self._build_modify_items(items)
+            payload: dict[str, Any] = {
+                "id": int(target_id),
+                "orderDate": clean_date,
+                "handlerId": clean_handler,
+                "items": order_items,
+                "remark": remark.strip(),
+            }
+            if customer_id.strip():
+                payload["customerId"] = customer_id.strip()
+            if warehouse_id.strip():
+                payload["warehouseId"] = warehouse_id.strip()
+            if save_type is not None:
+                payload["saveType"] = int(save_type)
+            if discount_amount is not None:
+                payload["discountAmount"] = float(discount_amount)
+            if discount_account_id.strip():
+                payload["discountAccountId"] = discount_account_id.strip()
+            if receipt_amount is not None:
+                payload["receiptAmount"] = float(receipt_amount)
+            if receipt_account_id.strip():
+                payload["receiptAccountId"] = receipt_account_id.strip()
+            result = self._api.update_sales_order(context, target_id, payload)
+            return self.ok_response(
+                modified=True,
+                orderId=result.order_id,
+            )
+        except DomainError as exc:
+            return self.error_response(exc)
+
     def _search_reference(
         self,
         option_type: str,
@@ -678,6 +963,105 @@ class BillingToolSet(AgentScopeToolSet):
                 "ERP_ORDER_SOURCE_INVALID",
                 "source 必须是 text、voice 或 image",
             )
+
+    @staticmethod
+    def _validate_order_date(order_date: str) -> None:
+        """校验录单日期为合法的 YYYY-MM-DD 格式。"""
+        try:
+            parsed = date.fromisoformat(order_date)
+        except ValueError as exc:
+            raise DomainError(
+                "ERP_SALES_ORDER_DATE_INVALID",
+                "录单日期必须使用 YYYY-MM-DD 格式",
+            ) from exc
+        if parsed.isoformat() != order_date:
+            raise DomainError(
+                "ERP_SALES_ORDER_DATE_INVALID",
+                "录单日期必须使用 YYYY-MM-DD 格式",
+            )
+
+    @staticmethod
+    def _validate_date_range(start_date: str, end_date: str) -> None:
+        """校验查询日期范围格式和先后顺序。"""
+        parsed_start = None
+        if start_date:
+            try:
+                parsed_start = date.fromisoformat(start_date)
+            except ValueError as exc:
+                raise DomainError(
+                    "ERP_SALES_ORDER_DATE_INVALID",
+                    "开始日期必须使用 YYYY-MM-DD 格式",
+                ) from exc
+            if parsed_start.isoformat() != start_date:
+                raise DomainError(
+                    "ERP_SALES_ORDER_DATE_INVALID",
+                    "开始日期必须使用 YYYY-MM-DD 格式",
+                )
+        if end_date:
+            try:
+                parsed_end = date.fromisoformat(end_date)
+            except ValueError as exc:
+                raise DomainError(
+                    "ERP_SALES_ORDER_DATE_INVALID",
+                    "结束日期必须使用 YYYY-MM-DD 格式",
+                ) from exc
+            if parsed_end.isoformat() != end_date:
+                raise DomainError(
+                    "ERP_SALES_ORDER_DATE_INVALID",
+                    "结束日期必须使用 YYYY-MM-DD 格式",
+                )
+            if parsed_start is not None and parsed_end < parsed_start:
+                raise DomainError(
+                    "ERP_SALES_ORDER_DATE_INVALID",
+                    "结束日期不能早于开始日期",
+                )
+
+    @staticmethod
+    def _build_modify_items(items: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+        """清洗修改商品明细，确保每行包含必填的 productId 和 quantity。"""
+        if not items:
+            raise DomainError(
+                "ERP_SALES_ORDER_ITEMS_EMPTY",
+                "商品明细不能为空",
+            )
+        result: list[dict[str, Any]] = []
+        for index, raw in enumerate(items, start=1):
+            if not isinstance(raw, dict):
+                raise DomainError(
+                    "ERP_SALES_ORDER_ITEM_INVALID",
+                    "第%d行商品明细不是 JSON 对象" % index,
+                )
+            product_id = str(raw.get("productId") or raw.get("product_id") or "").strip()
+            if not product_id:
+                raise DomainError(
+                    "ERP_SALES_ORDER_ITEM_INVALID",
+                    "第%d行商品明细缺少 productId" % index,
+                )
+            quantity = raw.get("quantity")
+            if quantity is None:
+                raise DomainError(
+                    "ERP_SALES_ORDER_ITEM_INVALID",
+                    "第%d行商品明细缺少 quantity" % index,
+                )
+            try:
+                qty = float(quantity)  # type: ignore[arg-type]
+            except (TypeError, ValueError) as exc:
+                raise DomainError(
+                    "ERP_SALES_ORDER_ITEM_INVALID",
+                    "第%d行商品明细数量不是数字" % index,
+                ) from exc
+            if qty <= 0:
+                raise DomainError(
+                    "ERP_SALES_ORDER_ITEM_INVALID",
+                    "第%d行商品明细数量必须大于 0" % index,
+                )
+            item: dict[str, Any] = {"productId": product_id, "quantity": qty}
+            for key in ("unit", "unitPrice", "remark", "orderItemId"):
+                value = raw.get(key)
+                if value not in (None, ""):
+                    item[key] = value
+            result.append(item)
+        return result
 
     @staticmethod
     def _unit_warnings(draft: BillingDraft | None) -> list[dict[str, Any]]:
