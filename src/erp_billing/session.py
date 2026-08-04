@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import json
 import re
 from dataclasses import replace
 from typing import Any
@@ -184,9 +185,18 @@ class ErpBillingSession:
         source: str = "text",
         customer: str = "",
         warehouse: str = "",
-        confirmed_products: dict[str, str] | None = None,
+        confirmed_products: list[dict[str, str]]
+        | dict[str, str]
+        | str
+        | None = None,
     ) -> BillingDraft:
-        """从完整订单文本重建草稿，并校验前端确认的候选商品。"""
+        """从完整订单文本重建草稿，并校验前端确认的候选商品。
+
+        confirmed_products 接受三种格式，内部统一归一为 {lineId: productId}：
+        - list[dict]：[{"lineId": "L001", "productId": "P001"}]（推荐格式）
+        - dict[str, str]：{"L001": "P001"}（向后兼容）
+        - str：JSON 文本（容错，LLM 可能误传字符串）
+        """
         self._require_catalog()
         normalized_source = source.strip().casefold()
         if normalized_source not in {"text", "voice", "image"}:
@@ -198,16 +208,7 @@ class ErpBillingSession:
         if not lines:
             raise DomainError("ERP_ORDER_TEXT_EMPTY", "未识别到商品行")
 
-        confirmations: dict[str, str] = {}
-        for raw_line_id, raw_product_id in (confirmed_products or {}).items():
-            line_id = str(raw_line_id).strip()
-            product_id = str(raw_product_id).strip()
-            if not line_id or not product_id:
-                raise DomainError(
-                    "ERP_CONFIRMED_PRODUCT_INVALID",
-                    "confirmed_products 的 lineId 和 productId 不能为空",
-                )
-            confirmations[line_id] = product_id
+        confirmations = _normalize_confirmed_products(confirmed_products)
         valid_line_ids = {line.line_id for line in lines}
         unknown_line_ids = sorted(set(confirmations).difference(valid_line_ids))
         if unknown_line_ids:
@@ -386,6 +387,66 @@ def parse_order_text(text: str) -> list[OrderLine]:
         )
         for index, line in enumerate(lines, start=1)
     ]
+
+
+def _normalize_confirmed_products(
+    raw: list[dict[str, str]] | dict[str, str] | str | None,
+) -> dict[str, str]:
+    """将各种 confirmed_products 输入格式统一为 {lineId: productId} 字典。
+
+    支持 list[dict]、dict[str, str] 和 JSON 字符串三种输入；
+    list 格式每个元素须包含 lineId 和 productId（或 ptypeid）键。
+    """
+    if raw is None:
+        return {}
+    if isinstance(raw, str):
+        stripped = raw.strip()
+        if not stripped:
+            return {}
+        try:
+            raw = json.loads(stripped)
+        except json.JSONDecodeError as exc:
+            raise DomainError(
+                "ERP_CONFIRMED_PRODUCTS_INVALID",
+                "confirmed_products 不是有效的 JSON 对象或数组",
+            ) from exc
+    if isinstance(raw, list):
+        result: dict[str, str] = {}
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            line_id = str(
+                item.get("lineId") or item.get("line_id") or ""
+            ).strip()
+            product_id = str(
+                item.get("productId")
+                or item.get("product_id")
+                or item.get("ptypeid")
+                or ""
+            ).strip()
+            if not line_id or not product_id:
+                raise DomainError(
+                    "ERP_CONFIRMED_PRODUCT_INVALID",
+                    "confirmed_products 的 lineId 和 productId 不能为空",
+                )
+            result[line_id] = product_id
+        return result
+    if isinstance(raw, dict):
+        result = {}
+        for raw_line_id, raw_product_id in raw.items():
+            line_id = str(raw_line_id).strip()
+            product_id = str(raw_product_id).strip()
+            if not line_id or not product_id:
+                raise DomainError(
+                    "ERP_CONFIRMED_PRODUCT_INVALID",
+                    "confirmed_products 的 lineId 和 productId 不能为空",
+                )
+            result[line_id] = product_id
+        return result
+    raise DomainError(
+        "ERP_CONFIRMED_PRODUCTS_INVALID",
+        "confirmed_products 必须是 JSON 对象或数组",
+    )
 
 
 def _parse_part(raw: str) -> list[OrderLine]:

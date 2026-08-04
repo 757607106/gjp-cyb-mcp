@@ -63,7 +63,7 @@ ERP API 调用。业务 URL 始终来自 `ERP_BILLING_BASE_URL`。
     "order_date": "2026-08-04",
     "remark": "下午送达",
     "save_type": "final",
-    "confirmed_products": {}
+    "confirmed_products": []
   }
 }
 ```

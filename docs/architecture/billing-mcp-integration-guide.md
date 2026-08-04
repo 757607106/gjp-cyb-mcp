@@ -67,7 +67,7 @@ sequenceDiagram
   "remark": "下午送达",
   "save_type": "final",
   "source": "text",
-  "confirmed_products": {}
+  "confirmed_products": []
 }
 ```
 

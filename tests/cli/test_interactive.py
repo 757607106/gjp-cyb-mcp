@@ -49,7 +49,7 @@ class RecordingAgent:
 
 
 class StreamingBillingDraftAgent:
-    """模拟远程 MCP create_draft 返回，验证终端直接渲染结构化开单结果。"""
+    """模拟远程 MCP prepare_sales_order 返回，验证终端直接渲染结构化开单结果。"""
 
     async def reply_stream(self, inputs):
         assert inputs.get_text_content() == "土豆5斤"
@@ -57,12 +57,12 @@ class StreamingBillingDraftAgent:
         yield ToolCallStartEvent(
             reply_id="r1",
             tool_call_id="draft1",
-            tool_call_name="mcp__erp-billing__create_draft",
+            tool_call_name="mcp__erp-billing__prepare_sales_order",
         )
         yield ToolResultStartEvent(
             reply_id="r1",
             tool_call_id="draft1",
-            tool_call_name="mcp__erp-billing__create_draft",
+            tool_call_name="mcp__erp-billing__prepare_sales_order",
         )
         yield ToolResultTextDeltaEvent(
             reply_id="r1",

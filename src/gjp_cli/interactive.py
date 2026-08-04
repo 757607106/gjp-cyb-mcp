@@ -69,14 +69,16 @@ class AgentConsoleProfile:
 ERP_BILLING_CONSOLE_PROFILE = AgentConsoleProfile(
     title="ERP Billing Agent",
     summary="自然语言生成销售单 JSON，并匹配真实 ERP 商品目录。",
-    detail="支持商品同步、语义查询、完整文本开单，也可直接输入下单图片路径。",
+    detail="支持商品同步、浏览目录、语义查询、完整文本开单，也可直接输入下单图片路径。",
     prompt_hint="直接描述客户下单或输入图片路径",
     display_title="ERP AI开单",
-    json_result_tools=frozenset({"create_draft"}),
+    json_result_tools=frozenset({"prepare_sales_order"}),
     tool_labels={
         "sync_products": "同步线上商品",
+        "list_products": "浏览商品目录",
         "search_products": "查询系统商品",
-        "create_draft": "生成开单 JSON",
+        "prepare_sales_order": "生成开单预览",
+        "submit_sales_order": "提交销售单",
     },
 )
 

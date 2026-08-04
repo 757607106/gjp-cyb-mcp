@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import date, datetime, timezone
 from typing import Any
 
@@ -18,6 +19,7 @@ from .session import ErpBillingSession
 BILLING_MCP_TOOL_NAMES = frozenset(
     {
         "sync_products",
+        "list_products",
         "search_products",
         "search_sales_order_options",
         "prepare_sales_order",
@@ -44,6 +46,159 @@ _REQUIRED_FIELDS = (
 )
 
 
+_ERROR_OUTPUT_OBJECT = {
+    "type": "object",
+    "properties": {
+        "code": {"type": "string"},
+        "message": {"type": "string"},
+    },
+    "additionalProperties": True,
+}
+
+# 开单工具输出 schema：顶层字段声明类型，嵌套对象/数组项保持宽松
+# （additionalProperties=True），避免动态字段（如非空才带的 imageUrls）
+# 和可空字段触发 jsonschema.validate 失败；required 只放必定出现的 ok。
+
+_SYNC_PRODUCTS_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "ok": {"type": "boolean"},
+        "error": _ERROR_OUTPUT_OBJECT,
+        "catalogVersion": {"type": "string"},
+        "productCount": {"type": "integer"},
+        "sampleProducts": {
+            "type": "array",
+            "items": {"type": "object", "additionalProperties": True},
+        },
+    },
+    "required": ["ok"],
+    "additionalProperties": True,
+}
+
+_LIST_PRODUCTS_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "ok": {"type": "boolean"},
+        "error": _ERROR_OUTPUT_OBJECT,
+        "page": {"type": "integer"},
+        "pageSize": {"type": "integer"},
+        "total": {"type": "integer"},
+        "products": {
+            "type": "array",
+            "items": {"type": "object", "additionalProperties": True},
+        },
+    },
+    "required": ["ok"],
+    "additionalProperties": True,
+}
+
+_SEARCH_PRODUCTS_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "ok": {"type": "boolean"},
+        "error": _ERROR_OUTPUT_OBJECT,
+        "results": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "status": {"type": "string"},
+                    "product": {"type": ["object", "null"]},
+                    "recommendations": {
+                        "type": "array",
+                        "items": {"type": "object", "additionalProperties": True},
+                    },
+                },
+                "required": ["query", "status"],
+                "additionalProperties": True,
+            },
+        },
+    },
+    "required": ["ok"],
+    "additionalProperties": True,
+}
+
+_SEARCH_SALES_ORDER_OPTIONS_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "ok": {"type": "boolean"},
+        "error": _ERROR_OUTPUT_OBJECT,
+        "optionType": {"type": "string"},
+        "keyword": {"type": "string"},
+        "options": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string"},
+                    "code": {"type": "string"},
+                    "name": {"type": "string"},
+                    "isDefault": {"type": "boolean"},
+                },
+                "additionalProperties": True,
+            },
+        },
+    },
+    "required": ["ok"],
+    "additionalProperties": True,
+}
+
+_PREPARE_SALES_ORDER_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "ok": {"type": "boolean"},
+        "error": _ERROR_OUTPUT_OBJECT,
+        "fieldRequirements": {"type": "object", "additionalProperties": True},
+        "missingRequiredFields": {
+            "type": "array",
+            "items": {"type": "object", "additionalProperties": True},
+        },
+        "referenceResolutions": {"type": "object", "additionalProperties": True},
+        "needsConfirmation": {
+            "type": "array",
+            "items": {"type": "object", "additionalProperties": True},
+        },
+        "unitWarnings": {
+            "type": "array",
+            "items": {"type": "object", "additionalProperties": True},
+        },
+        "confirmedProducts": {
+            "type": "array",
+            "items": {"type": "object", "additionalProperties": True},
+        },
+        "recommendedProducts": {
+            "type": "array",
+            "items": {"type": "object", "additionalProperties": True},
+        },
+        "unmatchedProducts": {
+            "type": "array",
+            "items": {"type": "object", "additionalProperties": True},
+        },
+        "readyToSubmit": {"type": "boolean"},
+        "previewId": {"type": ["string", "null"]},
+        "preview": {"type": ["object", "null"]},
+    },
+    "required": ["ok"],
+    "additionalProperties": True,
+}
+
+_SUBMIT_SALES_ORDER_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "ok": {"type": "boolean"},
+        "error": _ERROR_OUTPUT_OBJECT,
+        "submitted": {"type": "boolean"},
+        "orderId": {"type": "string"},
+        "previewId": {"type": "string"},
+        "saveType": {"type": "string"},
+        "idempotentReplay": {"type": "boolean"},
+    },
+    "required": ["ok"],
+    "additionalProperties": True,
+}
+
+
 class BillingToolSet(AgentScopeToolSet):
     """开单 ToolSet：检索基础资料、生成预览并在确认后写入销售单。"""
 
@@ -60,23 +215,33 @@ class BillingToolSet(AgentScopeToolSet):
                 SessionFunctionTool(
                     self.sync_products,
                     is_concurrency_safe=False,
+                    output_schema=_SYNC_PRODUCTS_OUTPUT_SCHEMA,
+                ),
+                SessionFunctionTool(
+                    self.list_products,
+                    is_read_only=True,
+                    output_schema=_LIST_PRODUCTS_OUTPUT_SCHEMA,
                 ),
                 SessionFunctionTool(
                     session.search_products,
                     is_read_only=True,
+                    output_schema=_SEARCH_PRODUCTS_OUTPUT_SCHEMA,
                 ),
                 SessionFunctionTool(
                     self.search_sales_order_options,
                     is_read_only=True,
+                    output_schema=_SEARCH_SALES_ORDER_OPTIONS_OUTPUT_SCHEMA,
                 ),
                 SessionFunctionTool(
                     self.prepare_sales_order,
                     is_read_only=True,
                     is_concurrency_safe=False,
+                    output_schema=_PREPARE_SALES_ORDER_OUTPUT_SCHEMA,
                 ),
                 SessionFunctionTool(
                     self.submit_sales_order,
                     is_concurrency_safe=False,
+                    output_schema=_SUBMIT_SALES_ORDER_OUTPUT_SCHEMA,
                 ),
             ],
             contexts=contexts,
@@ -92,9 +257,53 @@ class BillingToolSet(AgentScopeToolSet):
         """
         try:
             synced_at = self._sync_catalog(limit)
+            products = self.session.catalog.products
+            sample = [
+                {**product.core_fields(), "code": product.code}
+                for product in products[:5]
+            ]
             return self.ok_response(
                 catalogVersion=synced_at,
-                productCount=len(self.session.catalog.products),
+                productCount=len(products),
+                sampleProducts=sample,
+            )
+        except DomainError as exc:
+            return self.error_response(exc)
+
+    def list_products(
+        self,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> dict[str, Any]:
+        """列出当前会话商品目录中的所有商品（分页）。
+
+        目录为空时自动同步一次。用户问"有哪些商品"时用此工具，
+        不要用 search_products 遍历关键词。
+
+        Args:
+            page: 页码，从 1 开始。
+            page_size: 每页商品数量，范围 1 到 100。
+        """
+        try:
+            context = self._contexts.get()
+            context.require_scope("billing:read")
+            if not self.session.catalog.products:
+                self._sync_catalog()
+            products = self.session.catalog.products
+            total = len(products)
+            effective_page = max(1, int(page or 1))
+            effective_size = max(1, min(int(page_size or 20), 100))
+            start = (effective_page - 1) * effective_size
+            end = start + effective_size
+            items = [
+                {**product.core_fields(), "code": product.code}
+                for product in products[start:end]
+            ]
+            return self.ok_response(
+                page=effective_page,
+                pageSize=effective_size,
+                total=total,
+                products=items,
             )
         except DomainError as exc:
             return self.error_response(exc)
@@ -157,7 +366,8 @@ class BillingToolSet(AgentScopeToolSet):
         remark: str = "",
         save_type: str = "final",
         source: str = "text",
-        confirmed_products: dict[str, str] | None = None,
+        confirmed_products: list[dict[str, str]] | None = None,
+        partial: bool = False,
     ) -> dict[str, Any]:
         """校验完整销售单信息、匹配真实资料并生成不可变提交预览。
 
@@ -170,7 +380,13 @@ class BillingToolSet(AgentScopeToolSet):
             remark: 可选的整单备注，最多 200 个字符。
             save_type: 保存类型；draft 草稿、pre_receipt 预收、final 正式。
             source: 文本来源；语音和图片必须先由前端转成文本。
-            confirmed_products: 用户选择的推荐商品，键为 lineId，值为 ERP 商品 ID。
+            confirmed_products: 用户确认的商品列表，每个元素格式为
+                {"lineId": "L001", "productId": "ERP商品ID"}；
+                lineId 取自 recommendedProducts 或 unmatchedProducts
+                的 lineId 字段，productId 取自 ptypeid 字段；
+                对 unmatchedProducts 中无候选的行同样有效。
+            partial: 为 true 时只提交已匹配商品，跳过未匹配行；
+                用于部分开单场景。
         """
         try:
             context = self._contexts.get()
@@ -225,12 +441,22 @@ class BillingToolSet(AgentScopeToolSet):
                 if resolution["status"] not in {"matched", "missing"}
             ]
             unit_warnings = self._unit_warnings(draft)
+            has_matched = (
+                draft is not None
+                and any(
+                    line.status == "matched" and line.product is not None
+                    for line in draft.lines
+                )
+            )
             ready = bool(
                 not missing
                 and not needs_confirmation
                 and not unit_warnings
                 and draft is not None
-                and draft.status == "ready"
+                and (
+                    draft.status == "ready"
+                    or (partial and has_matched)
+                )
             )
 
             preview_id: str | None = None
@@ -242,6 +468,7 @@ class BillingToolSet(AgentScopeToolSet):
                     order_date=values["order_date"],
                     remark=remark.strip(),
                     save_type=save_type,
+                    partial=partial,
                 )
                 preview_id = self.session.store_prepared_sales_order(payload, preview)
 
@@ -350,20 +577,60 @@ class BillingToolSet(AgentScopeToolSet):
                 normalize_name(str(option.get("name") or "")),
             }
         ]
-        selected = exact[0] if len(exact) == 1 else None
-        status = "matched" if selected else "ambiguous" if options else "unmatched"
+        if len(exact) == 1:
+            return {
+                "status": "matched",
+                "query": value,
+                "selected": exact[0],
+                "candidates": [],
+            }
+        # 无唯一精确匹配时，对同主体多业务类型候选去重，最多返回 5 个
+        if options:
+            options = self._deduplicate_reference_options(options, normalized)
+        status = "ambiguous" if options else "unmatched"
         return {
             "status": status,
             "query": value,
-            "selected": selected,
-            "candidates": options if selected is None else [],
+            "selected": None,
+            "candidates": options,
         }
+
+    @staticmethod
+    def _deduplicate_reference_options(
+        options: list[dict[str, Any]],
+        normalized_query: str,
+    ) -> list[dict[str, Any]]:
+        """按基础名称去重，优先保留包含查询词的候选，最多返回 5 个。
+
+        ERP 常为同一客户/经手人返回多业务类型变体（COVR/SALE/PURC 等），
+        名称仅在尾部后缀不同；按第一个分隔符前的名称去重后大幅减少候选数。
+        """
+        def _name_contains_query(option: dict[str, Any]) -> bool:
+            if not normalized_query:
+                return False
+            name = normalize_name(str(option.get("name") or ""))
+            return normalized_query in name
+
+        sorted_options = sorted(options, key=lambda o: not _name_contains_query(o))
+        seen: set[str] = set()
+        deduped: list[dict[str, Any]] = []
+        for option in sorted_options:
+            name = str(option.get("name") or "")
+            base = re.split(r"[-\u2012-\u2015]|\(|\uff08|\u3010", name, maxsplit=1)[0].strip()
+            base_key = (
+                normalize_name(base) if base else normalize_name(name)
+            )
+            if not base_key or base_key in seen:
+                continue
+            seen.add(base_key)
+            deduped.append(option)
+        return deduped[:5]
 
     def _match_order_products(
         self,
         order_text: str,
         source: str,
-        confirmed_products: dict[str, str] | None,
+        confirmed_products: list[dict[str, str]] | None,
     ) -> BillingDraft | None:
         if not order_text:
             return None
@@ -442,6 +709,7 @@ class BillingToolSet(AgentScopeToolSet):
         order_date: str,
         remark: str,
         save_type: str,
+        partial: bool = False,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         customer = references["customer"]["selected"]
         warehouse = references["warehouse"]["selected"]
@@ -450,6 +718,8 @@ class BillingToolSet(AgentScopeToolSet):
         preview_items: list[dict[str, Any]] = []
         for line in draft.lines:
             if line.product is None:
+                if partial:
+                    continue
                 raise DomainError(
                     "ERP_SALES_ORDER_PRODUCT_UNCONFIRMED",
                     "销售单仍有未确认商品，不能生成提交预览",

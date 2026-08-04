@@ -89,6 +89,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
             "build-erp-billing-agent",
             "natural-language-tool-selection",
             "sync-session-product-catalog",
+            "browse-product-catalog",
             "parse-complete-order-text",
             "match-real-erp-products",
             "resolve-customer-warehouse-handler",

@@ -1,6 +1,7 @@
 import json
 from dataclasses import fields
 
+import jsonschema
 import pytest
 from agentscope.agent import Agent
 
@@ -19,7 +20,7 @@ from erp_billing.ports import (
     BillingSalesOrderResult,
 )
 from erp_billing.session import ErpBillingSession, parse_order_text
-from erp_billing.toolset import BillingToolSet
+from erp_billing.toolset import BILLING_MCP_TOOL_NAMES, BillingToolSet
 from gjp_cli.agent import ERP_BILLING_AGENT_SPEC, build_agent
 from gjp_cli.model_runtime import LLMSettings
 from gjp_common.context import InvocationContext, InvocationContextStore
@@ -489,7 +490,7 @@ def test_confirmed_line_not_found_error_includes_valid_ids(tmp_path):
 
     result = _billing_toolset(session).prepare_sales_order(
         "牛肉10斤",
-        confirmed_products={"L999": "P001"},
+        confirmed_products=[{"lineId": "L999", "productId": "P001"}],
     )
 
     assert result["ok"] is False
@@ -704,7 +705,7 @@ def test_create_draft_validates_frontend_confirmation(tmp_path):
 
     result = toolset.prepare_sales_order(
         "牛肉10斤",
-        confirmed_products={"L001": "P002"},
+        confirmed_products=[{"lineId": "L001", "productId": "P002"}],
     )
 
     assert _product_payload(result) == {
@@ -726,11 +727,16 @@ def test_create_draft_validates_frontend_confirmation(tmp_path):
 @pytest.mark.parametrize(
     ("confirmed_products", "error_code"),
     [
+        ([{"lineId": "L999", "productId": "P001"}], "ERP_CONFIRMED_LINE_NOT_FOUND"),
+        ([{"lineId": "L001", "productId": ""}], "ERP_CONFIRMED_PRODUCT_INVALID"),
+        ([{"lineId": "L001", "productId": "P404"}], "ERP_PRODUCT_NOT_FOUND"),
+        ([{"lineId": "L001", "productId": "P003"}], "ERP_CONFIRMED_PRODUCT_NOT_RECOMMENDED"),
+        # 向后兼容：dict 格式仍可使用
         ({"L999": "P001"}, "ERP_CONFIRMED_LINE_NOT_FOUND"),
-        ({"L001": ""}, "ERP_CONFIRMED_PRODUCT_INVALID"),
-        ({"": "P001"}, "ERP_CONFIRMED_PRODUCT_INVALID"),
         ({"L001": "P404"}, "ERP_PRODUCT_NOT_FOUND"),
         ({"L001": "P003"}, "ERP_CONFIRMED_PRODUCT_NOT_RECOMMENDED"),
+        # 字符串容错：JSON 文本
+        ('[{"lineId": "L999", "productId": "P001"}]', "ERP_CONFIRMED_LINE_NOT_FOUND"),
     ],
 )
 def test_create_draft_rejects_invalid_confirmation(
@@ -819,6 +825,56 @@ def test_product_accepts_live_erp_fields():
     assert product.stock == 12
 
 
+def test_product_image_urls_present_when_erp_row_has_imageurls():
+    """有 imageUrls 的商品应在 core_fields 和 to_payload 中附带图片 URL。"""
+    product = Product.from_mapping(
+        {
+            "ptypeid": "P001",
+            "pfullname": "番茄",
+            "unit": "斤",
+            "imageUrls": ["https://cdn.example.com/a.jpg"],
+        },
+    )
+
+    assert product.image_urls == ("https://cdn.example.com/a.jpg",)
+    assert product.core_fields()["imageUrls"] == ["https://cdn.example.com/a.jpg"]
+    assert product.to_payload()["imageUrls"] == ["https://cdn.example.com/a.jpg"]
+
+
+def test_product_image_urls_absent_when_erp_row_has_no_imageurls():
+    """无 imageUrls 的商品在 core_fields 和 to_payload 中不出现 imageUrls 键。"""
+    product = Product.from_mapping(
+        {"ptypeid": "P001", "pfullname": "土豆", "unit": "斤"},
+    )
+
+    assert product.image_urls == ()
+    assert "imageUrls" not in product.core_fields()
+    assert "imageUrls" not in product.to_payload()
+
+
+def test_list_products_includes_image_urls_when_present(tmp_path):
+    """list_products 输出商品时，有图片带 imageUrls，无图片不带该键。"""
+    session = _session(
+        tmp_path,
+        [
+            {
+                "ptypeid": "P001",
+                "pfullname": "番茄",
+                "unit": "斤",
+                "imageUrls": ["https://cdn.example.com/a.jpg"],
+            },
+            {"ptypeid": "P002", "pfullname": "土豆", "unit": "斤"},
+        ],
+    )
+    toolset = _billing_toolset(session)
+
+    result = toolset.list_products()
+
+    products = {item["ptypeid"]: item for item in result["products"]}
+    assert products["P001"]["imageUrls"] == ["https://cdn.example.com/a.jpg"]
+    assert "imageUrls" not in products["P002"]
+
+
 def test_live_product_normalization_keeps_leaf_products_only():
     rows = [
         {
@@ -863,12 +919,14 @@ def test_billing_toolset_exposes_complete_sales_order_tools(tmp_path):
 
     assert {tool.name for tool in toolset.local_tools()} == {
         "sync_products",
+        "list_products",
         "search_products",
         "search_sales_order_options",
         "prepare_sales_order",
         "submit_sales_order",
     }
     assert toolset.get("sync_products").is_read_only is False
+    assert toolset.get("list_products").is_read_only is True
     assert toolset.get("search_products").is_read_only is True
     assert toolset.get("search_sales_order_options").is_read_only is True
     assert toolset.get("prepare_sales_order").is_read_only is True
@@ -880,12 +938,13 @@ def test_billing_toolset_exposes_complete_sales_order_tools(tmp_path):
         assert "file_path" not in schema_text
     schema = toolset.get("prepare_sales_order").input_schema
     confirmed = schema["properties"]["confirmed_products"]
-    object_schema = next(
+    array_schema = next(
         item
         for item in confirmed["anyOf"]
-        if item.get("type") == "object"
+        if item.get("type") == "array"
     )
-    assert object_schema["additionalProperties"] == {"type": "string"}
+    assert array_schema["items"]["type"] == "object"
+    assert array_schema["items"]["additionalProperties"] == {"type": "string"}
 
 
 def test_billing_settings_contain_no_runtime_output_path():
@@ -925,6 +984,7 @@ def test_sync_products_replaces_in_memory_catalog_without_writing_file(tmp_path)
     assert result["ok"] is True
     assert result["productCount"] == 1
     assert "catalogPath" not in result
+    assert result["sampleProducts"][0]["pfullname"] == "土豆"
     assert session.catalog.products[0].name == "土豆"
     assert list(tmp_path.iterdir()) == []
 
@@ -1347,7 +1407,7 @@ def test_match_logger_records_user_confirmed_lines(tmp_path):
 
     _billing_toolset(session).prepare_sales_order(
         "牛肉10斤",
-        confirmed_products={"L001": "P002"},
+        confirmed_products=[{"lineId": "L001", "productId": "P002"}],
     )
 
     events = [
@@ -1399,3 +1459,441 @@ def test_create_match_logger_from_env_returns_null_when_unset(monkeypatch):
     logger = create_match_logger_from_env()
 
     assert isinstance(logger, NullMatchEventLogger)
+
+
+# ---------------------------------------------------------------------------
+# confirmed_products 多格式输入测试
+# ---------------------------------------------------------------------------
+
+
+def test_confirmed_products_list_format_success(tmp_path):
+    """list[dict] 格式的 confirmed_products 应正确确认推荐商品。"""
+    session = _session(
+        tmp_path,
+        [
+            {"ptypeid": "P001", "pfullname": "牛肉1", "unit": "斤"},
+            {"ptypeid": "P002", "pfullname": "牛肉2", "unit": "斤"},
+        ],
+    )
+    toolset = _billing_toolset(session)
+
+    result = toolset.prepare_sales_order(
+        "牛肉10斤",
+        confirmed_products=[{"lineId": "L001", "productId": "P002"}],
+    )
+
+    assert _product_payload(result) == {
+        "ok": True,
+        "confirmedProducts": [
+            {
+                "lineId": "L001",
+                "ptypeid": "P002",
+                "pfullname": "牛肉2",
+                "unit": "斤",
+                "quantity": 10,
+            },
+        ],
+        "recommendedProducts": [],
+        "unmatchedProducts": [],
+    }
+
+
+def test_confirmed_products_dict_format_backward_compat(tmp_path):
+    """dict[str, str] 格式的 confirmed_products 仍可正常使用（向后兼容）。"""
+    session = _session(
+        tmp_path,
+        [
+            {"ptypeid": "P001", "pfullname": "牛肉1", "unit": "斤"},
+            {"ptypeid": "P002", "pfullname": "牛肉2", "unit": "斤"},
+        ],
+    )
+    toolset = _billing_toolset(session)
+
+    result = toolset.prepare_sales_order(
+        "牛肉10斤",
+        confirmed_products={"L001": "P002"},
+    )
+
+    assert result["ok"] is True
+    assert result["confirmedProducts"][0]["ptypeid"] == "P002"
+
+
+def test_confirmed_products_string_tolerance(tmp_path):
+    """JSON 字符串格式的 confirmed_products 应被自动解析。"""
+    session = _session(
+        tmp_path,
+        [
+            {"ptypeid": "P001", "pfullname": "牛肉1", "unit": "斤"},
+            {"ptypeid": "P002", "pfullname": "牛肉2", "unit": "斤"},
+        ],
+    )
+    toolset = _billing_toolset(session)
+
+    result = toolset.prepare_sales_order(
+        "牛肉10斤",
+        confirmed_products='[{"lineId": "L001", "productId": "P002"}]',
+    )
+
+    assert result["ok"] is True
+    assert result["confirmedProducts"][0]["ptypeid"] == "P002"
+
+
+def test_confirmed_products_for_unmatched_allows_manual_spec(tmp_path):
+    """unmatchedProducts 中无候选的行，可通过 confirmed_products 手动指定商品。"""
+    session = _session(
+        tmp_path,
+        [
+            {"ptypeid": "P001", "pfullname": "土豆", "unit": "斤"},
+            {"ptypeid": "P002", "pfullname": "量子芯片", "unit": "箱"},
+        ],
+    )
+    toolset = _billing_toolset(session)
+
+    result = toolset.prepare_sales_order(
+        "土豆2斤，未知商品1箱",
+        confirmed_products=[{"lineId": "L002", "productId": "P002"}],
+    )
+
+    assert result["ok"] is True
+    assert len(result["confirmedProducts"]) == 2
+    assert result["confirmedProducts"][1]["ptypeid"] == "P002"
+
+
+# ---------------------------------------------------------------------------
+# partial 部分提交测试
+# ---------------------------------------------------------------------------
+
+
+def test_partial_preview_skips_unmatched_products(tmp_path):
+    """partial=True 时预览只含已匹配商品，跳过未匹配行。"""
+    session = _session(
+        tmp_path,
+        [
+            {"id": "P001", "code": "SP001", "name": "土豆", "unit": "斤", "salesPrice": 3.5},
+            {"id": "P002", "code": "SP002", "name": "量子芯片", "unit": "箱"},
+        ],
+    )
+    api = CompleteSalesOrderApi()
+    toolset = _billing_toolset(session, api)
+
+    result = toolset.prepare_sales_order(
+        order_text="土豆2斤，未知商品1箱",
+        customer="客户甲",
+        warehouse="一号仓",
+        handler="张三",
+        order_date="2026-08-04",
+        partial=True,
+    )
+
+    assert result["ok"] is True
+    assert result["readyToSubmit"] is True
+    assert len(result["preview"]["items"]) == 1
+    assert result["preview"]["items"][0]["name"] == "土豆"
+
+
+def test_partial_false_requires_all_matched(tmp_path):
+    """partial=False 时有未匹配商品不能生成预览。"""
+    session = _session(
+        tmp_path,
+        [
+            {"id": "P001", "name": "土豆", "unit": "斤"},
+        ],
+    )
+    toolset = _billing_toolset(session, CompleteSalesOrderApi())
+
+    result = toolset.prepare_sales_order(
+        order_text="土豆2斤，未知商品1箱",
+        customer="客户甲",
+        warehouse="一号仓",
+        handler="张三",
+        order_date="2026-08-04",
+    )
+
+    assert result["ok"] is True
+    assert result["readyToSubmit"] is False
+    assert result["previewId"] is None
+
+
+# ---------------------------------------------------------------------------
+# 扩充默认别名测试
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("erp_name", "requested_name"),
+    [
+        ("黄瓜", "胡瓜"),
+        ("黄瓜", "青瓜"),
+        ("卷心菜", "包菜"),
+        ("卷心菜", "洋白菜"),
+        ("卷心菜", "莲花白"),
+        ("花椰菜", "花菜"),
+        ("花椰菜", "菜花"),
+        ("猪肚", "肚子"),
+        ("慈菇", "茨菇"),
+    ],
+)
+def test_expanded_default_aliases_match(
+    tmp_path,
+    erp_name,
+    requested_name,
+):
+    """扩充后的默认别名应能正确匹配 ERP 商品。"""
+    session = _session(
+        tmp_path,
+        [{"ptypeid": "P001", "pfullname": erp_name, "unit": "斤"}],
+    )
+
+    draft = session.create_draft_from_text("%s2斤" % requested_name)
+
+    assert draft.status == "ready"
+    assert draft.lines[0].product is not None
+    assert draft.lines[0].product.name == erp_name
+    assert draft.lines[0].match_type == "alias_exact"
+
+
+# ---------------------------------------------------------------------------
+# 客户/经手人候选去重测试
+# ---------------------------------------------------------------------------
+
+
+def test_list_products_returns_paginated_catalog(tmp_path):
+    """list_products 应分页返回当前会话商品目录。"""
+    products = [
+        {
+            "id": "P%03d" % i,
+            "code": "S%03d" % i,
+            "name": "商品%d" % i,
+            "unit": "斤",
+        }
+        for i in range(1, 26)
+    ]
+    session = _session(tmp_path, products)
+    toolset = _billing_toolset(session)
+
+    page1 = toolset.list_products(page=1, page_size=10)
+    page2 = toolset.list_products(page=2, page_size=10)
+    page3 = toolset.list_products(page=3, page_size=10)
+
+    assert page1["ok"] is True
+    assert page1["total"] == 25
+    assert page1["page"] == 1
+    assert len(page1["products"]) == 10
+    assert page1["products"][0]["pfullname"] == "商品1"
+
+    assert len(page2["products"]) == 10
+    assert page2["products"][0]["pfullname"] == "商品11"
+
+    assert len(page3["products"]) == 5
+    assert page3["products"][0]["pfullname"] == "商品21"
+
+
+def test_list_products_auto_syncs_when_empty(tmp_path):
+    """目录为空时 list_products 自动同步后返回商品。"""
+    session = ErpBillingSession.from_settings(
+        _settings(tmp_path),
+        allow_missing_catalog=True,
+    )
+
+    class FakeApi:
+        @staticmethod
+        def fetch_products(context, limit=None):
+            return BillingProductSnapshot(
+                products=(
+                    {"productId": "P001", "name": "土豆", "unit": "斤"},
+                ),
+            )
+
+    toolset = _billing_toolset(session, FakeApi())
+    result = toolset.list_products()
+
+    assert result["ok"] is True
+    assert result["total"] == 1
+    assert result["products"][0]["pfullname"] == "土豆"
+
+
+def test_sync_products_returns_sample_products(tmp_path):
+    """sync_products 应返回 sampleProducts 样本供用户浏览。"""
+    products_data = [
+        {"id": "P00%d" % i, "code": "S00%d" % i, "name": "商品%d" % i, "unit": "斤"}
+        for i in range(1, 11)
+    ]
+    session = ErpBillingSession.from_settings(
+        _settings(tmp_path),
+        allow_missing_catalog=True,
+    )
+
+    class SampleApi:
+        @staticmethod
+        def fetch_products(context, limit=None):
+            return BillingProductSnapshot(products=tuple(products_data))
+
+    toolset = _billing_toolset(session, SampleApi())
+    result = toolset.sync_products()
+
+    assert result["ok"] is True
+    assert result["productCount"] == 10
+    assert len(result["sampleProducts"]) == 5
+    assert result["sampleProducts"][0]["pfullname"] == "商品1"
+    assert result["sampleProducts"][0]["code"] == "S001"
+
+
+def test_reference_dedup_reduces_business_type_variants(tmp_path):
+    """同一客户的多业务类型变体应被去重，最多返回 5 个候选。"""
+    session = _session(
+        tmp_path,
+        [{"id": "P001", "name": "土豆", "unit": "斤"}],
+    )
+
+    class MultiVariantApi:
+        @staticmethod
+        def fetch_products(context, limit=None):
+            return BillingProductSnapshot(products=())
+
+        @staticmethod
+        def search_customers(context, keyword, limit=10):
+            return BillingReferenceSnapshot(
+                options=tuple(
+                    {"id": "C-%d" % i, "code": "C%03d" % i, "name": name}
+                    for i, name in enumerate(
+                        [
+                            "好又多超市西湖店-70WL（KH0104）",
+                            "杭州西湖区好又多超市西湖店-70WL-COVR",
+                            "杭州西湖区好又多超市西湖店-70WL-SALE",
+                            "杭州西湖区好又多超市西湖店-70WL-PURC",
+                            "杭州西湖区好又多超市西湖店-70WL-INVT",
+                            "杭州西湖区好又多超市西湖店-70WL-FINA",
+                            "杭州西湖区好又多超市西湖店-70WL-TRXN",
+                            "杭州西湖区好又多超市西湖店-70WL-MSTR",
+                            "好又多超市西湖店-99NK（KH0103）",
+                            "杭州西湖区好又多超市西湖店-99NK-COVR",
+                        ],
+                        start=1,
+                    )
+                ),
+            )
+
+        @staticmethod
+        def search_warehouses(context, keyword, limit=10):
+            return BillingReferenceSnapshot(options=())
+
+        @staticmethod
+        def search_staff(context, keyword, limit=10):
+            return BillingReferenceSnapshot(options=())
+
+        def create_sales_order(self, context, payload):
+            return BillingSalesOrderResult(order_id="SO-1")
+
+    toolset = _billing_toolset(session, MultiVariantApi())
+    result = toolset.prepare_sales_order(
+        order_text="土豆2斤",
+        customer="好又多超市西湖店",
+        warehouse="一号仓",
+        handler="张三",
+        order_date="2026-08-04",
+    )
+
+    customer_resolution = result["referenceResolutions"]["customer"]
+    assert customer_resolution["status"] == "ambiguous"
+    # 10 个候选去重后不超过 5 个
+    assert len(customer_resolution["candidates"]) <= 5
+
+
+# ---------------------------------------------------------------------------
+# 工具输出 schema（outputSchema）测试
+# ---------------------------------------------------------------------------
+
+
+def test_billing_tools_carry_output_schema(tmp_path):
+    """每个开单工具应携带 output_schema，且 required 只含必定出现的 ok。"""
+    session = _session(
+        tmp_path,
+        [{"ptypeid": "P001", "pfullname": "土豆", "unit": "斤"}],
+    )
+    toolset = _billing_toolset(session)
+    by_name = {tool.name: tool for tool in toolset.local_tools()}
+
+    assert set(by_name) == set(BILLING_MCP_TOOL_NAMES)
+    for name in BILLING_MCP_TOOL_NAMES:
+        schema = by_name[name].output_schema
+        assert schema is not None
+        assert schema["required"] == ["ok"]
+
+
+def test_tool_outputs_validate_against_output_schema(tmp_path):
+    """工具实际返回（含图片字段、可空 previewId 和错误路径）应通过 output_schema 校验。"""
+    products_data = [
+        {
+            "ptypeid": "P001",
+            "pfullname": "土豆",
+            "unit": "斤",
+            "imageUrls": ["https://cdn.example.com/a.jpg"],
+        },
+        {"ptypeid": "P002", "pfullname": "番茄", "unit": "斤"},
+    ]
+    session = _session(tmp_path, products_data)
+
+    class BillingApi:
+        @staticmethod
+        def fetch_products(context, limit=None):
+            return BillingProductSnapshot(products=tuple(products_data))
+
+        @staticmethod
+        def search_customers(context, keyword, limit=10):
+            return CompleteSalesOrderApi.search_customers(context, keyword, limit)
+
+        @staticmethod
+        def search_warehouses(context, keyword, limit=10):
+            return CompleteSalesOrderApi.search_warehouses(context, keyword, limit)
+
+        @staticmethod
+        def search_staff(context, keyword, limit=10):
+            return CompleteSalesOrderApi.search_staff(context, keyword, limit)
+
+        def create_sales_order(self, context, payload):
+            return CompleteSalesOrderApi().create_sales_order(context, payload)
+
+    toolset = _billing_toolset(session, BillingApi())
+    by_name = {tool.name: tool for tool in toolset.local_tools()}
+
+    synced = toolset.sync_products()
+    jsonschema.validate(synced, by_name["sync_products"].output_schema)
+    assert any("imageUrls" in item for item in synced["sampleProducts"])
+
+    listed = toolset.list_products()
+    jsonschema.validate(listed, by_name["list_products"].output_schema)
+
+    searched = session.search_products(["土豆", "量子芯片"])
+    jsonschema.validate(searched, by_name["search_products"].output_schema)
+
+    options = toolset.search_sales_order_options("customer", "客户甲")
+    jsonschema.validate(options, by_name["search_sales_order_options"].output_schema)
+
+    prepared = toolset.prepare_sales_order(order_text="土豆2斤")
+    jsonschema.validate(prepared, by_name["prepare_sales_order"].output_schema)
+    assert prepared["previewId"] is None
+
+    ready = toolset.prepare_sales_order(
+        order_text="土豆2斤",
+        customer="C001",
+        warehouse="一号仓",
+        handler="张三",
+        order_date="2026-08-04",
+    )
+    jsonschema.validate(ready, by_name["prepare_sales_order"].output_schema)
+    assert ready["previewId"] is not None
+
+    submitted = toolset.submit_sales_order(
+        ready["previewId"],
+        "business-key-1",
+        confirmed_by_user=True,
+    )
+    jsonschema.validate(submitted, by_name["submit_sales_order"].output_schema)
+
+    rejected = toolset.submit_sales_order(
+        ready["previewId"],
+        "business-key-2",
+        confirmed_by_user=False,
+    )
+    jsonschema.validate(rejected, by_name["submit_sales_order"].output_schema)
+    assert rejected["ok"] is False

@@ -94,17 +94,18 @@ Adapter 按 20 条一页自动翻页；响应由 `normalize_live_product_rows()`
 
 ## 3. 对外工具
 
-开单 Agent 和远程 MCP 发布以下五个工具：
+开单 Agent 和远程 MCP 发布以下六个工具：
 
 | 工具 | 输入 | 职责 | 主要输出 |
 |---|---|---|---|
-| `sync_products` | `limit?` | 从当前 ERP 账号同步商品并替换当前 Session 的内存目录 | `catalogVersion`、`productCount` |
+| `sync_products` | `limit?` | 从当前 ERP 账号同步商品并替换当前 Session 的内存目录 | `catalogVersion`、`productCount`、`sampleProducts` |
+| `list_products` | `page?`、`page_size?` | 分页列出当前会话商品目录中的所有商品；目录为空时自动同步 | `page`、`pageSize`、`total`、`products` |
 | `search_products` | `keyword`、`limit?` | 按 ID、编号、条码、名称、同义词组和模糊相似度查询已有商品 | 唯一商品或顶层 `recommendations` |
 | `search_sales_order_options` | `option_type`、`keyword?`、`limit?` | 查询客户、出库仓库或经手人候选 | 可用基础资料最小字段 |
-| `prepare_sales_order` | 完整销售单业务字段、`save_type`、`confirmed_products?` | 校验必填项、解析基础资料、匹配商品并保存不可变预览 | 缺失项、候选、商品数组、`previewId` |
+| `prepare_sales_order` | 完整销售单业务字段、`save_type`、`confirmed_products?`、`partial?` | 校验必填项、解析基础资料、匹配商品并保存不可变预览 | 缺失项、候选、商品数组、`previewId` |
 | `submit_sales_order` | `preview_id`、`idempotency_key`、`confirmed_by_user` | 明确确认后调用真实写单接口 | `orderId`、保存类型、幂等重放标志 |
 
-五个工具的返回值都是 MCP 结构化 JSON 内容。服务不维护可逐行修改的文件草稿，
+六个工具的返回值都是 MCP 结构化 JSON 内容。服务不维护可逐行修改的文件草稿，
 但会在隔离 Session 中短期保存不可变提交预览和成功幂等结果。只有
 `submit_sales_order` 具有 ERP 写副作用，并要求 `billing:write`、明确用户确认和
 幂等键。
@@ -140,14 +141,20 @@ Adapter 按 20 条一页自动翻页；响应由 `normalize_live_product_rows()`
 
 ## 5. 完整同义词组
 
-别名配置仍使用 `别名 -> 标准名` 形式。例如：
+别名配置仍使用 `别名 -> 标准名` 形式。默认生鲜别名覆盖薯类、茄果、瓜类、
+豆苗、甘蓝类、根茎和猪副等常见区域同义词：
 
 ```json
 {
-  "土豆": "马铃薯",
-  "洋芋": "马铃薯",
-  "洋山芋": "马铃薯",
-  "薯仔": "马铃薯"
+  "土豆": "马铃薯", "洋芋": "马铃薯", "洋山芋": "马铃薯", "薯仔": "马铃薯",
+  "西红柿": "番茄", "圣女果": "小番茄",
+  "胡瓜": "黄瓜", "青瓜": "黄瓜",
+  "番瓜": "南瓜", "倭瓜": "南瓜", "金瓜": "南瓜",
+  "碗豆尖": "豌豆尖",
+  "包菜": "卷心菜", "洋白菜": "卷心菜", "莲花白": "卷心菜", "包心菜": "卷心菜",
+  "花菜": "花椰菜", "菜花": "花椰菜",
+  "茨菇": "慈菇",
+  "肚子": "猪肚"
 }
 ```
 
@@ -331,7 +338,7 @@ ERP 目录中只有部位级商品（"牛腱子""牛肉-牛腩"），没有单�
   "remark": "下午送达",
   "save_type": "final",
   "source": "voice",
-  "confirmed_products": {}
+  "confirmed_products": []
 }
 ```
 
@@ -388,7 +395,8 @@ ERP 目录中只有部位级商品（"牛腱子""牛肉-牛腩"），没有单�
 ## 8. 前端确认推荐商品
 
 用户改选推荐商品后，调用方根据完整订单文本中的订单行编号生成 `lineId`，把稳定
-的 `ptypeid` 连同当前完整订单文本再次提交给 `prepare_sales_order`：
+的 `ptypeid` 连同当前完整订单文本再次提交给 `prepare_sales_order`。`confirmed_products`
+格式为 JSON 数组，每个元素包含 `lineId` 和 `productId`：
 
 ```json
 {
@@ -398,17 +406,24 @@ ERP 目录中只有部位级商品（"牛腱子""牛肉-牛腩"），没有单�
   "handler": "张三",
   "order_date": "2026-08-04",
   "source": "text",
-  "confirmed_products": {
-    "L001": "P502"
-  }
+  "confirmed_products": [
+    {"lineId": "L001", "productId": "P502"}
+  ]
 }
 ```
+
+`confirmed_products` 也接受 `dict[str, str]` 格式（向后兼容）和 JSON 字符串（容错）。
+对 `unmatchedProducts` 中无候选的行，同样可通过 `confirmed_products` 手动指定 ERP 商品 ID。
+
+当部分商品无法匹配且用户同意只提交已匹配商品时，可传 `partial=true` 生成只含
+已匹配商品的部分预览；未匹配行被跳过，不出现在预览中。
 
 服务端会从文本重新解析和匹配，然后逐项校验：
 
 1. `lineId` 必须存在于本次完整文本生成的订单行。
-2. `ptypeid` 必须存在于当前租户商品目录。
-3. 该商品必须属于该行本次重新计算出的精确结果或推荐候选。
+2. `productId` 必须存在于当前租户商品目录。
+3. 该商品必须属于该行本次重新计算出的精确结果或推荐候选；但 `unmatchedProducts`
+   中无候选的行允许从全目录手动指定商品。
 
 校验通过后，用户选择的商品进入 `confirmedProducts`，不再出现在
 `recommendedProducts`。前端修改商品名称、删除或重排订单行后，必须根据最新的

@@ -39,6 +39,7 @@ class Product:
     customer_codes: tuple[str, ...] = ()
     price: Optional[float] = None
     stock: Optional[float] = None
+    image_urls: tuple[str, ...] = ()
     raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -87,6 +88,15 @@ class Product:
             or value.get("对方商品编号")
             or value.get("multpusercode")
         )
+        image_urls = _url_list(
+            _first_present(
+                value,
+                "imageUrls",
+                "image_urls",
+                "ptypeid_imageurls",
+                "图片",
+            )
+        )
         return cls(
             product_id=product_id or code or barcode or name,
             name=name,
@@ -114,11 +124,12 @@ class Product:
                     "库存",
                 ),
             ),
+            image_urls=image_urls,
             raw=dict(value),
         )
 
     def to_payload(self) -> dict[str, Any]:
-        return {
+        payload = {
             "productId": self.product_id,
             "code": self.code,
             "name": self.name,
@@ -129,14 +140,23 @@ class Product:
             "price": self.price,
             "stock": self.stock,
         }
+        if self.image_urls:
+            payload["imageUrls"] = list(self.image_urls)
+        return payload
 
     def core_fields(self) -> dict[str, Any]:
-        """返回工具输出统一使用的商品核心字段：ptypeid、pfullname、unit。"""
-        return {
+        """返回工具输出统一使用的商品核心字段：ptypeid、pfullname、unit。
+
+        imageUrls 仅在商品有图片时附带，无图片时不出现该键。
+        """
+        fields: dict[str, Any] = {
             "ptypeid": self.product_id,
             "pfullname": self.name,
             "unit": self.unit,
         }
+        if self.image_urls:
+            fields["imageUrls"] = list(self.image_urls)
+        return fields
 
 
 @dataclass(frozen=True)
@@ -266,4 +286,18 @@ def _string_tuple(value: Any) -> tuple[str, ...]:
         items = [_clean_string(item) for item in value]
     else:
         items = [_clean_string(value)]
+    return tuple(item for item in items if item)
+
+
+def _url_list(value: Any) -> tuple[str, ...]:
+    """解析商品图片 URL 列表，保留原始顺序并去除空项。
+
+    字符串视为单个 URL（URL 可能含逗号，不做逗号拆分）；列表逐项清洗。
+    """
+    if value is None:
+        return ()
+    if isinstance(value, (list, tuple)):
+        items = [str(item).strip() for item in value]
+    else:
+        items = [str(value).strip()]
     return tuple(item for item in items if item)

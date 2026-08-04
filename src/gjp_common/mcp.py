@@ -109,6 +109,7 @@ def create_mcp_server(
                 name=tool.name,
                 description=tool.description,
                 inputSchema=tool.input_schema,
+                outputSchema=getattr(tool, "output_schema", None),
                 annotations=types.ToolAnnotations(
                     readOnlyHint=tool.is_read_only,
                     destructiveHint=not tool.is_read_only,

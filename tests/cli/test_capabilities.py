@@ -92,6 +92,7 @@ def test_billing_runtime_binds_only_standard_tools_without_auth_parameters():
 
     assert {tool.name for tool in runtime.toolset.tools()} == {
         "sync_products",
+        "list_products",
         "search_products",
         "search_sales_order_options",
         "prepare_sales_order",
@@ -144,6 +145,7 @@ async def _assert_billing_mcp_schema_and_identity():
     listed_tools = listed.root.tools
     assert {tool.name for tool in listed_tools} == {
         "sync_products",
+        "list_products",
         "search_products",
         "search_sales_order_options",
         "prepare_sales_order",

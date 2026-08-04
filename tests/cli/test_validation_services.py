@@ -89,6 +89,7 @@ def test_billing_validation_accepts_erp_jwt_directly(tmp_path):
             for tool in listed.json()["result"]["tools"]
         } == {
             "sync_products",
+            "list_products",
             "search_products",
             "search_sales_order_options",
             "prepare_sales_order",

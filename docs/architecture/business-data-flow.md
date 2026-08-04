@@ -85,9 +85,9 @@ flowchart LR
   "order_date": "2026-08-04",
   "remark": "下午送达",
   "source": "text",
-  "confirmed_products": {
-    "L001": "P-BEEF-1"
-  }
+  "confirmed_products": [
+    {"lineId": "L001", "productId": "P-BEEF-1"}
+  ]
 }
 ```
 
