@@ -4,7 +4,8 @@
 
 - `POST /mcp`：Streamable HTTP
 - `GET /sse`：SSE 兼容入口
-- `POST /test-auth/token`：仅 `gjp_cli` 验证应用拥有，生产不挂载
+
+MCP 客户端直接使用 ERP JWT 作为 Bearer Token，无需换票。
 
 ## 配置与启动
 
@@ -21,17 +22,18 @@ uv run uvicorn gjp_cli.billing_validation:app \
   --port 8102
 ```
 
-验证服务没有账号密码或验证码入口。在另一个终端直接启动 CLI，按提示粘贴 ERP
-Token（输入不回显，既可粘贴 `Bearer ...`，也可粘贴裸 JWT，回车提交）：
+验证服务没有账号密码或验证码入口，也不需要换票。在另一个终端直接启动 CLI，
+按提示粘贴 ERP Token（输入不回显，既可粘贴 `Bearer ...`，也可粘贴裸 JWT，
+回车提交），CLI 直接把 ERP JWT 作为 MCP Bearer 使用：
 
 ```zsh
 cd /Users/pusonglin/gjp-cyb-mcp
 uv run python -m gjp_cli mcp-chat
 ```
 
-CLI 把 Token 发送到固定验证地址 `/test-auth/token`，得到独立临时 MCP Bearer。
-Token 请求不接受 `baseUrl` 或 `appBaseUrl`；业务 URL 始终来自
-`ERP_BILLING_BASE_URL`。
+CLI 直接把 ERP JWT 作为 MCP Bearer 传给 MCP 服务，服务端从 JWT payload
+解析 tenantId、loginId 构造 InvocationContext，并把同一个 JWT 用于
+ERP API 调用。业务 URL 始终来自 `ERP_BILLING_BASE_URL`。
 
 ## 工具
 
@@ -104,7 +106,7 @@ api = ErpAuthenticatedHttpAdapter(http)
 生产检查：
 
 - URL 固定且为 HTTPS。
-- MCP Bearer 校验 issuer、audience、expiry 与 scopes。
+- MCP 直接解析 ERP JWT payload，ERP API 拒绝过期 JWT。
 - Bearer、ToolSet、目录、预览和幂等结果按会话隔离。
 - 多副本使用共享会话/幂等存储。
 - ERP 401/403 映射为重新授权错误，不让 Agent 索要 Token。

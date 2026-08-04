@@ -45,9 +45,9 @@ api = ErpAuthenticatedHttpAdapter(http)
 
 ## CLI 边界
 
-`gjp_cli.billing_validation` 仅发布 `/test-auth/token`，用于登记已有 ERP Token 并
-签发独立临时 MCP Bearer。它不提供账号、密码或验证码登录，也不接受动态 URL。
-生产 MCP 不挂载 `/test-auth/token`。
+`gjp_cli.billing_validation` 发布 `/mcp` 与 `/sse`，MCP 客户端直接使用
+ERP JWT 作为 Bearer Token。它不提供账号、密码或验证码登录，也不接受
+动态 URL。生产 MCP 应由对接方实现 JWT/OAuth2 验签。
 
 ## 安全要求
 

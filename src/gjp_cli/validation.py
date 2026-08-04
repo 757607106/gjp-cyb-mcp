@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import base64
 import json
-import secrets
 import threading
 import time
 import urllib.error
@@ -11,9 +11,6 @@ import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Generic, TypeVar
-
-from starlette.requests import Request
-from starlette.responses import JSONResponse
 
 from gjp_common.context import InvocationContext
 from gjp_common.errors import DomainError
@@ -46,33 +43,6 @@ class ValidationCredentialStore:
         self._by_bearer: dict[str, ValidationCredential] = {}
         self._by_context: dict[tuple[str, str, str], ValidationCredential] = {}
 
-    def issue(
-        self,
-        context: InvocationContext,
-        *,
-        upstream_bearer: str = "",
-    ) -> str:
-        expires_at = datetime.now(timezone.utc) + timedelta(seconds=self.ttl_seconds)
-        credential = ValidationCredential(
-            context=context,
-            upstream_bearer=upstream_bearer,
-            expires_at=expires_at,
-        )
-        bearer = secrets.token_urlsafe(32)
-        with self._lock:
-            self._evict_expired()
-            self._by_bearer[bearer] = credential
-            self._by_context[self._context_key(context)] = credential
-        return bearer
-
-    def require_bearer(self, bearer: str) -> ValidationCredential:
-        with self._lock:
-            credential = self._by_bearer.get(bearer)
-        if credential is None:
-            raise DomainError("MCP_UNAUTHORIZED", "Authorization Bearer 无效")
-        self._assert_alive(credential)
-        return credential
-
     def require_context(self, context: InvocationContext) -> ValidationCredential:
         with self._lock:
             credential = self._by_context.get(self._context_key(context))
@@ -103,10 +73,57 @@ class ValidationCredentialStore:
     def _context_key(context: InvocationContext) -> tuple[str, str, str]:
         return context.tenant_id, context.account_id, context.session_id
 
+    def register_upstream_token(self, token: str) -> InvocationContext:
+        """直接用 ERP JWT 作为 Bearer key 登记凭据。
+
+        从 JWT payload 解析 tenantId、loginId 构造 InvocationContext，
+        并把 JWT 本身同时作为 Bearer key 和 upstream_bearer 存储，
+        使 ErpBearerJsonClient 能用同一个 JWT 调用 ERP API。
+        """
+        context = _context_from_jwt(token)
+        with self._lock:
+            self._evict_expired()
+            existing = self._by_bearer.get(token)
+            if existing is not None:
+                self._assert_alive(existing)
+                return existing.context
+            expires_at = datetime.now(timezone.utc) + timedelta(seconds=self.ttl_seconds)
+            credential = ValidationCredential(
+                context=context,
+                upstream_bearer=token,
+                expires_at=expires_at,
+            )
+            self._by_bearer[token] = credential
+            self._by_context[self._context_key(context)] = credential
+        return context
+
     @staticmethod
     def _assert_alive(credential: ValidationCredential) -> None:
         if credential.expires_at and datetime.now(timezone.utc) >= credential.expires_at:
             raise DomainError("MCP_UNAUTHORIZED", "Authorization Bearer 已过期")
+
+
+def _context_from_jwt(token: str) -> InvocationContext:
+    """从 ERP JWT payload 解析身份信息；不验签，ERP API 会拒绝过期 JWT。"""
+    parts = token.split(".")
+    if len(parts) != 3:
+        raise DomainError("MCP_UNAUTHORIZED", "ERP JWT 格式无效")
+    padding = "=" * (-len(parts[1]) % 4)
+    try:
+        payload = json.loads(base64.urlsafe_b64decode(parts[1] + padding))
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise DomainError("MCP_UNAUTHORIZED", "ERP JWT payload 解析失败") from exc
+    if not isinstance(payload, dict):
+        raise DomainError("MCP_UNAUTHORIZED", "ERP JWT payload 不是对象")
+    tenant_id = str(payload.get("tenantId") or "unknown")
+    login_id = str(payload.get("loginId") or "unknown")
+    return InvocationContext(
+        tenant_id=tenant_id,
+        subject_id=login_id,
+        account_id=tenant_id,
+        session_id="billing-" + login_id,
+        scopes=frozenset({"billing:read", "billing:write"}),
+    )
 
 
 class ExpiringToolSetCache(Generic[ToolSetT]):
@@ -146,8 +163,8 @@ class ExpiringToolSetCache(Generic[ToolSetT]):
             del self._entries[key]
 
 
-class BearerTokenIdentityResolver:
-    """从 MCP HTTP 请求头解析测试 Bearer 并映射为 InvocationContext。"""
+class DirectJwtIdentityResolver:
+    """直接从 MCP Bearer 解析 ERP JWT 并映射为 InvocationContext。"""
 
     def __init__(
         self,
@@ -159,11 +176,10 @@ class BearerTokenIdentityResolver:
         self._required_scope = required_scope
 
     def resolve(self, mcp_request_context: Any) -> InvocationContext:
-        credential = self._store.require_bearer(
-            bearer_token_from_mcp_context(mcp_request_context),
-        )
-        credential.context.require_scope(self._required_scope)
-        return credential.context
+        token = bearer_token_from_mcp_context(mcp_request_context)
+        context = self._store.register_upstream_token(token)
+        context.require_scope(self._required_scope)
+        return context
 
 
 class LazyValidationApp:
@@ -179,32 +195,6 @@ class LazyValidationApp:
         await self._app(scope, receive, send)
 
 
-def issue_bearer_response(
-    store: ValidationCredentialStore,
-    context: InvocationContext,
-    *,
-    upstream_bearer: str = "",
-) -> JSONResponse:
-    """登记测试凭据并返回统一格式的 Bearer 发放响应。"""
-    bearer = store.issue(
-        context,
-        upstream_bearer=upstream_bearer,
-    )
-    return JSONResponse(
-        {
-            "ok": True,
-            "tokenType": "Bearer",
-            "accessToken": bearer,
-            "expiresInSeconds": store.ttl_seconds,
-            "mcpUrl": "/mcp",
-            "mcpSseUrl": "/sse",
-            "accountId": context.account_id,
-            "sessionId": context.session_id,
-            "scopes": sorted(context.scopes),
-        },
-    )
-
-
 def bearer_token_from_mcp_context(mcp_request_context: Any) -> str:
     request = getattr(mcp_request_context, "request", None)
     headers = getattr(request, "headers", None)
@@ -215,26 +205,6 @@ def bearer_token_from_mcp_context(mcp_request_context: Any) -> str:
     if scheme.casefold() != "bearer" or not token.strip():
         raise DomainError("MCP_UNAUTHORIZED", "Authorization 必须使用 Bearer token")
     return token.strip()
-
-
-async def read_json_object(request: Request) -> dict[str, Any]:
-    try:
-        data = await request.json()
-    except json.JSONDecodeError as exc:
-        raise DomainError("VALIDATION_REQUEST_INVALID", "请求体必须是 JSON 对象") from exc
-    if data is None:
-        return {}
-    if not isinstance(data, dict):
-        raise DomainError("VALIDATION_REQUEST_INVALID", "请求体必须是 JSON 对象")
-    return data
-
-
-def error_response(error: DomainError) -> JSONResponse:
-    status = 401 if error.code in {"MCP_UNAUTHORIZED", "ERP_LIVE_LOGIN_FAILED"} else 400
-    return JSONResponse(
-        {"ok": False, "error": {"code": error.code, "message": error.message}},
-        status_code=status,
-    )
 
 
 def float_value(value: str, default: float) -> float:

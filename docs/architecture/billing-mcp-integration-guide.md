@@ -156,13 +156,13 @@ cd /Users/pusonglin/gjp-cyb-mcp
 uv run python -m gjp_cli mcp-chat
 ```
 
-`/test-auth/token` 只存在于 CLI 验证应用；生产不暴露。请求只含 Token 与可选身份
-元数据，不接受 ERP URL。
+CLI 验证应用直接使用 ERP JWT 作为 MCP Bearer，无需换票。生产 MCP 应由
+对接方实现 JWT/OAuth2 验签。
 
 ## 安全检查
 
 - Tool Schema 不出现 URL、账号、密码、验证码、JWT、Cookie 或 Token。
 - 固定 ERP URL 为 HTTPS，且不含 query、fragment 或用户信息。
-- MCP Bearer 与 ERP Bearer 不复用。
+- MCP Bearer 即 ERP JWT，服务端从 payload 解析身份。
 - `billing:write`、用户确认、当前预览和幂等键缺一不可。
 - 多副本把预览与幂等结果迁移到共享存储。

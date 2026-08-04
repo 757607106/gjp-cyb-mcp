@@ -13,6 +13,7 @@ from .catalog import ProductCatalog
 from .config import ErpBillingSettings
 from .matcher import ProductMatcher
 from .models import BillingDraft, DraftLine, OrderLine
+from .ports import MatchEvent, MatchEventLogger
 
 
 _SPLIT_RE = re.compile(r"[\n\r,，;；]+")
@@ -82,10 +83,16 @@ def _insert_inter_item_separators(text: str) -> str:
 class ErpBillingSession:
     """持有租户隔离商品目录；每次开单都由完整文本重新生成 JSON。"""
 
-    def __init__(self, settings: ErpBillingSettings, catalog: ProductCatalog):
+    def __init__(
+        self,
+        settings: ErpBillingSettings,
+        catalog: ProductCatalog,
+        match_logger: MatchEventLogger | None = None,
+    ) -> None:
         self.settings = settings
         self.catalog = catalog
         self.matcher = ProductMatcher(catalog, settings)
+        self._match_logger = match_logger
         self._prepared_sales_orders: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
         self._submission_results: dict[str, dict[str, Any]] = {}
 
@@ -94,6 +101,7 @@ class ErpBillingSession:
         cls,
         settings: ErpBillingSettings,
         allow_missing_catalog: bool = False,
+        match_logger: MatchEventLogger | None = None,
     ) -> "ErpBillingSession":
         try:
             catalog = ProductCatalog.from_settings(settings)
@@ -102,7 +110,11 @@ class ErpBillingSession:
                 raise
             settings = replace(settings, product_catalog_path=None)
             catalog = ProductCatalog.from_settings(settings)
-        return cls(settings=settings, catalog=catalog)
+        return cls(
+            settings=settings,
+            catalog=catalog,
+            match_logger=match_logger,
+        )
 
     def search_products(self, keywords: list[str], limit: int = 10) -> dict[str, Any]:
         """批量查询当前 ERP 商品；模糊结果仅作为推荐返回。
@@ -215,6 +227,8 @@ class ErpBillingSession:
                 )
             draft_lines.append(matched_line)
 
+        self._record_match_events(normalized_source, draft_lines)
+
         return BillingDraft(
             source=normalized_source,
             source_text=text,
@@ -257,6 +271,33 @@ class ErpBillingSession:
             match_type="user_confirmed",
             message="用户已确认推荐商品",
         )
+
+    def _record_match_events(
+        self,
+        source: str,
+        lines: list[DraftLine],
+    ) -> None:
+        """记录已确认匹配行，供离线挖掘同义词候选；不记录推荐和未匹配行。
+
+        match_type 区分自动命中（*_exact/alias_exact）与用户确认
+        （user_confirmed），后者是别名缺失最有价值的证据。匹配主流程
+        不依赖本方法的写入结果。
+        """
+        logger = self._match_logger
+        if logger is None:
+            return
+        for line in lines:
+            if line.status != "matched" or line.product is None:
+                continue
+            logger.record(
+                MatchEvent(
+                    source=source,
+                    requested_name=line.order_line.requested_name,
+                    product_id=line.product.product_id,
+                    product_name=line.product.name,
+                    match_type=line.match_type,
+                ),
+            )
 
     def _require_catalog(self) -> None:
         if not self.catalog.products:

@@ -14,6 +14,10 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from datetime import datetime, timezone
+from pathlib import Path
+
+from gjp_common.config import get_env_value
 from gjp_common.connections import (
     BusinessApiCredentialProvider,
     business_api_url,
@@ -26,12 +30,15 @@ from gjp_common.logging_config import (
     credential_dump_enabled,
     elapsed_ms,
 )
+from gjp_common.paths import resolve_output_path
 from .catalog import normalize_live_product_rows
 from .ports import (
     AuthenticatedJsonClient,
     BillingProductSnapshot,
     BillingReferenceSnapshot,
     BillingSalesOrderResult,
+    MatchEvent,
+    MatchEventLogger,
 )
 
 logger = logging.getLogger(__name__)
@@ -393,3 +400,52 @@ def _reference_option(row: dict[str, object]) -> dict[str, object] | None:
         "name": name,
         "isDefault": bool(row.get("isDefault")),
     }
+
+
+class JsonlMatchEventLogger:
+    """把匹配确认事件追加写入 JSONL 文件，供离线统计同义词候选。
+
+    记录失败只输出警告日志，不影响开单主流程；匹配主流程本身不依赖
+    本日志的写入结果。
+    """
+
+    def __init__(self, path: Path) -> None:
+        self._path = path
+
+    def record(self, event: MatchEvent) -> None:
+        line = json.dumps(
+            {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "source": event.source,
+                "requestedName": event.requested_name,
+                "productId": event.product_id,
+                "productName": event.product_name,
+                "matchType": event.match_type,
+            },
+            ensure_ascii=False,
+        )
+        try:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            with self._path.open("a", encoding="utf-8") as handle:
+                handle.write(line + "\n")
+        except OSError as exc:
+            logger.warning("写入匹配事件日志失败 path=%s err=%s", self._path, exc)
+
+
+class NullMatchEventLogger:
+    """默认空实现：不记录任何事件，保持匹配主流程零副作用。"""
+
+    def record(self, event: MatchEvent) -> None:
+        return None
+
+
+def create_match_logger_from_env() -> MatchEventLogger:
+    """按 ERP_BILLING_MATCH_LOG 环境变量构建匹配事件日志器。
+
+    留空时返回 NullMatchEventLogger，不产生任何文件 IO；非空时按
+    resolve_output_path 解析为项目根相对路径并返回 JsonlMatchEventLogger。
+    """
+    value = get_env_value("ERP_BILLING_MATCH_LOG").strip()
+    if not value:
+        return NullMatchEventLogger()
+    return JsonlMatchEventLogger(resolve_output_path(value))

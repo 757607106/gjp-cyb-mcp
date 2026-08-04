@@ -127,48 +127,47 @@ def _prompt_token(prompt: str) -> str:
         return ""
 
 
+def _strip_bearer_prefix(value: str) -> str:
+    """兼容 `Bearer <JWT>` 和裸 JWT 两种写法。"""
+    token = value.strip()
+    scheme, separator, credential = token.partition(" ")
+    if separator and scheme.casefold() == "bearer":
+        return credential.strip()
+    return token
+
+
 def _cmd_mcp_chat(args: argparse.Namespace) -> int:
     from .mcp_console import (
         build_mcp_agent_console,
         default_mcp_url,
-        request_validation_bearer_from_upstream_token,
     )
 
     agent_key = "erp-billing"
     mcp_url = str(getattr(args, "url", "") or "").strip() or default_mcp_url(agent_key)
     bearer_token = str(getattr(args, "token", "") or "").strip()
-    upstream_token = str(getattr(args, "upstream_token", "") or "").strip()
-    if not upstream_token:
-        upstream_token = get_env_value("ERP_BILLING_UPSTREAM_TOKEN").strip()
-    if upstream_token:
-        bearer_token = request_validation_bearer_from_upstream_token(
-            mcp_url=mcp_url,
-            token_url=str(getattr(args, "token_url", "") or ""),
-            upstream_token=upstream_token,
-        )
+    if not bearer_token:
+        bearer_token = str(getattr(args, "upstream_token", "") or "").strip()
+    if not bearer_token:
+        bearer_token = get_env_value("ERP_BILLING_UPSTREAM_TOKEN").strip()
     if not bearer_token:
         bearer_token = get_env_value("MCP_ACCESS_TOKEN").strip()
     if not bearer_token:
-        upstream_token = _prompt_token(
+        raw_token = _prompt_token(
             "请粘贴 ERP Token（可为 `Bearer <JWT>` 原文，输入不回显）：",
         )
-        if upstream_token:
-            bearer_token = request_validation_bearer_from_upstream_token(
-                mcp_url=mcp_url,
-                token_url=str(getattr(args, "token_url", "") or ""),
-                upstream_token=upstream_token,
-            )
+        if raw_token:
+            bearer_token = _strip_bearer_prefix(raw_token)
     if not bearer_token:
         raise DomainError(
             "MCP_CHAT_AUTH_REQUIRED",
-            "缺少 MCP Bearer；启动后可直接粘贴 ERP Token，"
+            "缺少 ERP Token；启动后可直接粘贴，"
             "或传 --upstream-token / ERP_BILLING_UPSTREAM_TOKEN；"
             "生产服务传 --token 或 MCP_ACCESS_TOKEN",
         )
     return build_mcp_agent_console(
         agent_key=agent_key,
         mcp_url=mcp_url,
-        bearer_token=bearer_token,
+        bearer_token=_strip_bearer_prefix(bearer_token),
     ).run()
 
 
@@ -185,7 +184,6 @@ def _cmd_demo(args: argparse.Namespace) -> int:
     return run_saas_demo(
         mcp_url=str(getattr(args, "url", "") or ""),
         upstream_token=upstream_token,
-        token_url=str(getattr(args, "token_url", "") or ""),
     )
 
 
@@ -204,10 +202,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     demo = subparsers.add_parser(
         "demo",
-        help="登记已有 ERP Token 并连接开单 MCP",
+        help="用已有 ERP Token 连接开单 MCP",
         description=(
-            "仅用于本地或 test/live 验证：登记已有 ERP Token，"
-            "换取独立临时 MCP Bearer 后进入文本对话。"
+            "仅用于本地或 test/live 验证：用已有 ERP Token "
+            "直接连接 MCP 服务进入文本对话。"
         ),
     )
     demo.add_argument(
@@ -216,11 +214,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     demo.add_argument(
         "--upstream-token",
-        help="仅 CLI 测试：已有 ERP Token；未提供时启动后交互式粘贴（推荐）",
-    )
-    demo.add_argument(
-        "--token-url",
-        help="CLI Token 登记地址；默认由 --url 推导为 /test-auth/token",
+        help="已有 ERP Token；未提供时启动后交互式粘贴（推荐）",
     )
     demo.set_defaults(handler=_cmd_demo)
 
@@ -255,11 +249,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     mcp_auth.add_argument(
         "--upstream-token",
-        help="仅 CLI 测试：已有 ERP Token；未提供时启动后交互式粘贴（推荐）",
-    )
-    mcp_chat.add_argument(
-        "--token-url",
-        help="CLI Token 登记地址；默认由 --url 推导为 /test-auth/token",
+        help="已有 ERP Token；未提供时启动后交互式粘贴（推荐）",
     )
     mcp_chat.set_defaults(handler=_cmd_mcp_chat)
 

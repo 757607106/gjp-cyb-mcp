@@ -4,7 +4,12 @@ from dataclasses import fields
 import pytest
 from agentscope.agent import Agent
 
-from erp_billing.adapters import UnavailableBillingApi
+from erp_billing.adapters import (
+    JsonlMatchEventLogger,
+    NullMatchEventLogger,
+    UnavailableBillingApi,
+    create_match_logger_from_env,
+)
 from erp_billing.catalog import normalize_live_product_rows
 from erp_billing.config import ErpBillingSettings
 from erp_billing.models import Product
@@ -1297,3 +1302,100 @@ def test_prepare_sales_order_rejects_invalid_date_long_remark_and_unit_guessing(
     assert unit_mismatch["readyToSubmit"] is False
     assert unit_mismatch["unitWarnings"][0]["requestedUnit"] == "kg"
     assert unit_mismatch["unitWarnings"][0]["erpUnit"] == "斤"
+
+
+def test_match_logger_records_auto_matched_alias_lines(tmp_path):
+    """别名精确命中的匹配行应被记入 JSONL，供离线挖掘同义词候选。"""
+    catalog_path = _write_catalog(
+        tmp_path,
+        [{"ptypeid": "P001", "pfullname": "土豆", "unit": "斤"}],
+    )
+    log_path = tmp_path / "match.jsonl"
+    session = ErpBillingSession.from_settings(
+        _settings(tmp_path, catalog_path=catalog_path),
+        match_logger=JsonlMatchEventLogger(log_path),
+    )
+
+    session.create_draft_from_text("马铃薯10斤", source="voice")
+
+    events = [
+        json.loads(line)
+        for line in log_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert len(events) == 1
+    assert events[0]["requestedName"] == "马铃薯"
+    assert events[0]["productId"] == "P001"
+    assert events[0]["productName"] == "土豆"
+    assert events[0]["matchType"] == "alias_exact"
+    assert events[0]["source"] == "voice"
+
+
+def test_match_logger_records_user_confirmed_lines(tmp_path):
+    """用户从推荐列表确认的商品应记为 user_confirmed，这是别名缺失最有价值的证据。"""
+    catalog_path = _write_catalog(
+        tmp_path,
+        [
+            {"ptypeid": "P001", "pfullname": "牛肉1", "unit": "斤"},
+            {"ptypeid": "P002", "pfullname": "牛肉2", "unit": "斤"},
+        ],
+    )
+    log_path = tmp_path / "match.jsonl"
+    session = ErpBillingSession.from_settings(
+        _settings(tmp_path, catalog_path=catalog_path),
+        match_logger=JsonlMatchEventLogger(log_path),
+    )
+
+    _billing_toolset(session).prepare_sales_order(
+        "牛肉10斤",
+        confirmed_products={"L001": "P002"},
+    )
+
+    events = [
+        json.loads(line)
+        for line in log_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert len(events) == 1
+    assert events[0]["requestedName"] == "牛肉"
+    assert events[0]["productId"] == "P002"
+    assert events[0]["productName"] == "牛肉2"
+    assert events[0]["matchType"] == "user_confirmed"
+
+
+def test_match_logger_skips_unmatched_and_recommendation_lines(tmp_path):
+    """未匹配和仅推荐的行不产生匹配事件日志。"""
+    catalog_path = _write_catalog(
+        tmp_path,
+        [
+            {"ptypeid": "P001", "pfullname": "牛肉1", "unit": "斤"},
+            {"ptypeid": "P002", "pfullname": "牛肉2", "unit": "斤"},
+        ],
+    )
+    log_path = tmp_path / "match.jsonl"
+    session = ErpBillingSession.from_settings(
+        _settings(tmp_path, catalog_path=catalog_path),
+        match_logger=JsonlMatchEventLogger(log_path),
+    )
+
+    session.create_draft_from_text("量子芯片2箱")
+
+    assert not log_path.exists()
+
+
+def test_no_match_logger_does_not_write(tmp_path):
+    """未注入匹配日志器时不应产生任何文件，现有调用链保持向后兼容。"""
+    session = _session(
+        tmp_path,
+        [{"ptypeid": "P001", "pfullname": "土豆", "unit": "斤"}],
+    )
+
+    session.create_draft_from_text("土豆2斤")
+
+    assert [p for p in tmp_path.iterdir() if p.suffix == ".jsonl"] == []
+
+
+def test_create_match_logger_from_env_returns_null_when_unset(monkeypatch):
+    """环境变量未配置时返回 NullMatchEventLogger，不产生文件 IO。"""
+    monkeypatch.delenv("ERP_BILLING_MATCH_LOG", raising=False)
+    logger = create_match_logger_from_env()
+
+    assert isinstance(logger, NullMatchEventLogger)

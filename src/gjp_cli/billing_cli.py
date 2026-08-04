@@ -7,6 +7,7 @@ import asyncio
 import json
 import sys
 
+from erp_billing.adapters import create_match_logger_from_env
 from erp_billing.config import ErpBillingSettings
 from erp_billing.session import ErpBillingSession
 from gjp_common.errors import DomainError
@@ -25,6 +26,7 @@ def run_billing_cli(args: argparse.Namespace) -> int:
     session = ErpBillingSession.from_settings(
         settings,
         allow_missing_catalog=True,
+        match_logger=create_match_logger_from_env(),
     )
     if image:
         text = _order_text_from_image(image)

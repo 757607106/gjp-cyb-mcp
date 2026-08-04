@@ -922,11 +922,16 @@ def build_agent_console(
 
 def _build_erp_billing_agent_runtime(options: AgentConsoleBuildOptions) -> AgentConsoleRuntime:
     """构建开单参考客户端；生产开单服务使用 billing.mcp_service 独立部署。"""
+    from erp_billing.adapters import create_match_logger_from_env
     from erp_billing.config import ErpBillingSettings
     from erp_billing.session import ErpBillingSession
 
     settings = ErpBillingSettings.from_env()
-    session = ErpBillingSession.from_settings(settings, allow_missing_catalog=True)
+    session = ErpBillingSession.from_settings(
+        settings,
+        allow_missing_catalog=True,
+        match_logger=create_match_logger_from_env(),
+    )
     context = _local_invocation_context()
     contexts = InvocationContextStore(default=context)
     toolset = BillingToolSet(

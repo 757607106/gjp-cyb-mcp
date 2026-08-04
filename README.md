@@ -82,15 +82,14 @@ uv run python -m gjp_cli mcp-chat
 如需运行 SaaS 对话模拟器，把上面命令中的 `mcp-chat` 改为 `demo`，启动后同样
 会提示粘贴 Token。也支持 `--upstream-token` 或 `ERP_BILLING_UPSTREAM_TOKEN`
 环境变量用于脚本自动化，但交互粘贴不会把 Token 留在 shell history 或进程
-参数中。CLI 调用 `/test-auth/token` 登记上游 Token，验证服务再签发一枚不同的
-临时 MCP Bearer；生产 MCP 不挂载这个测试路由。
+参数中。CLI 直接把 ERP JWT 作为 MCP Bearer 使用，无需换票。
 
-已有生产 MCP Bearer 时直接使用：
+已有 MCP Bearer 时直接使用：
 
 ```bash
 uv run python -m gjp_cli mcp-chat \
   --url https://<billing-host>/mcp \
-  --token '<MCP Bearer>'
+  --token '<ERP JWT>'
 ```
 
 ## 开发

@@ -17,7 +17,7 @@
 
 ## 鉴权与安全设计
 
-- **生产禁止账号密码登录**：生产 MCP 使用 Bearer JWT / OAuth2。账号密码换票只允许存在于 `gjp_cli` 的本地或 test/live 验证服务。
+- **生产禁止账号密码登录**：生产 MCP 使用 Bearer JWT / OAuth2。MCP 客户端直接使用 ERP JWT 作为 Bearer Token，服务端从 JWT payload 解析身份。
 - **工具参数只含业务数据**：账号、密码、JWT、Cookie 和业务 Token 不进入 AgentScope JSON Schema，也不允许模型生成。
 - **对接方处理鉴权**：服务通过 `BillingApiPort` 留出入口，由 Adapter 根据 `InvocationContext` 注入当前账套凭据。
 - **身份隔离**：`InvocationContext` 不含凭据，通过 `ContextVar` 绑定当前异步任务，请求结束后恢复。
@@ -38,7 +38,7 @@
 ```text
 src/
 ├── erp_billing/  # 开单 Runtime、ToolSet、Port、Adapter、Prompt、MCP 与领域代码
-├── gjp_cli/      # 本地 CLI、Agent 装配、账号换票和 test/live 验证服务
+├── gjp_cli/      # 本地 CLI、Agent 装配和 test/live 验证服务
 └── gjp_common/   # 上下文、连接、MCP、配置、路径与日志
 ```
 

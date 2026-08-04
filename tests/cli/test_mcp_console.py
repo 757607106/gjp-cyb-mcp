@@ -1,7 +1,5 @@
 import argparse
 import asyncio
-import json
-import urllib.error
 
 import pytest
 from agentscope.permission import PermissionBehavior, PermissionEngine
@@ -14,8 +12,6 @@ from gjp_cli.mcp_console import (
     build_mcp_agent_console,
     build_product_mcp_agent_state,
     default_mcp_url,
-    request_validation_bearer_from_upstream_token,
-    validation_token_url_from_mcp_url,
 )
 from gjp_cli.interactive import erp_billing_user_input_transformer
 from gjp_common.errors import DomainError
@@ -37,71 +33,8 @@ def test_demo_parser_targets_billing_without_product_selection():
     assert not hasattr(args, "product")
 
 
-def test_validation_upstream_token_posts_only_to_cli_token_endpoint(monkeypatch):
-    captured = {}
-
-    class FakeResponse:
-        status = 200
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return False
-
-        @staticmethod
-        def read():
-            return b'{"ok":true,"accessToken":"temporary-mcp-bearer"}'
-
-    def fake_urlopen(request, timeout):
-        captured.update(
-            url=request.full_url,
-            payload=json.loads(request.data.decode("utf-8")),
-            timeout=timeout,
-        )
-        return FakeResponse()
-
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
-    token = request_validation_bearer_from_upstream_token(
-        mcp_url="http://127.0.0.1:8102/mcp",
-        upstream_token="Bearer browser-erp-token",
-        metadata={"session_id": "cli-session"},
-        timeout_seconds=12,
-    )
-
-    assert token == "temporary-mcp-bearer"
-    assert captured == {
-        "url": "http://127.0.0.1:8102/test-auth/token",
-        "payload": {
-            "session_id": "cli-session",
-            "upstreamToken": "browser-erp-token",
-        },
-        "timeout": 12,
-    }
-
-
-def test_validation_token_unavailable_message_includes_local_start_command(monkeypatch):
-    def fake_urlopen(_request, timeout):
-        assert timeout == 1
-        raise urllib.error.URLError("Connection refused")
-
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
-
-    with pytest.raises(DomainError) as caught:
-        request_validation_bearer_from_upstream_token(
-            mcp_url="http://127.0.0.1:8102/mcp",
-            upstream_token="secret",
-            timeout_seconds=1,
-        )
-
-    assert caught.value.code == "MCP_CHAT_LOGIN_FAILED"
-    assert "http://127.0.0.1:8102/test-auth/token" in caught.value.message
-    assert "uv run uvicorn gjp_cli.billing_validation:app" in caught.value.message
-    assert "secret" not in caught.value.message
-
-
-def test_demo_upstream_token_mode_skips_captcha_and_password_prompts(monkeypatch):
-    auth_calls = []
+def test_demo_uses_erp_token_directly_as_bearer(monkeypatch):
+    """ERP Token 不再换票，直接作为 MCP Bearer 使用。"""
     console_calls = []
     output = []
 
@@ -110,20 +43,15 @@ def test_demo_upstream_token_mode_skips_captcha_and_password_prompts(monkeypatch
         def run():
             return 0
 
-    monkeypatch.setattr(
-        "gjp_cli.demo_console.request_validation_bearer_from_upstream_token",
-        lambda **kwargs: auth_calls.append(kwargs) or "mcp-bearer",
-    )
     result = run_saas_demo(
-        upstream_token="browser-erp-token",
+        upstream_token="Bearer erp-jwt-token",
         output_fn=output.append,
         console_builder=lambda **kwargs: console_calls.append(kwargs) or FakeConsole(),
     )
 
     assert result == 0
-    assert auth_calls[0]["upstream_token"] == "browser-erp-token"
-    assert console_calls[0]["bearer_token"] == "mcp-bearer"
-    assert "browser-erp-token" not in "\n".join(output)
+    assert console_calls[0]["bearer_token"] == "erp-jwt-token"
+    assert "erp-jwt-token" not in "\n".join(output)
 
 
 def test_mcp_chat_defaults_to_billing_service_port(monkeypatch):
@@ -132,24 +60,16 @@ def test_mcp_chat_defaults_to_billing_service_port(monkeypatch):
     assert default_mcp_url("erp-billing") == "http://127.0.0.1:8102/mcp"
 
 
-def test_mcp_chat_derives_validation_token_url_from_mcp_url():
-    assert (
-        validation_token_url_from_mcp_url("https://example.test/billing/mcp?x=1")
-        == "https://example.test/billing/test-auth/token"
-    )
-
-
-def test_mcp_chat_requires_mcp_or_upstream_token(monkeypatch):
+def test_mcp_chat_requires_token(monkeypatch):
     monkeypatch.delenv("MCP_ACCESS_TOKEN", raising=False)
     monkeypatch.delenv("ERP_BILLING_UPSTREAM_TOKEN", raising=False)
     args = argparse.Namespace(
         url="http://127.0.0.1:8102/mcp",
         token="",
         upstream_token="",
-        token_url="",
     )
 
-    with pytest.raises(DomainError, match="缺少 MCP Bearer"):
+    with pytest.raises(DomainError, match="缺少 ERP Token"):
         _cmd_mcp_chat(args)
 
 
@@ -177,7 +97,7 @@ def test_mcp_chat_auto_allows_authenticated_product_tools(
     )
 
     decision = asyncio.run(
-        PermissionEngine(state.permission_context).check_permission(tool, {}),
+        PermissionEngine(state.permission_context).check_permission(tool, {})
     )
 
     assert decision.behavior == PermissionBehavior.ALLOW
@@ -192,7 +112,7 @@ def test_mcp_chat_does_not_auto_allow_unknown_mcp_tool():
     )
 
     decision = asyncio.run(
-        PermissionEngine(state.permission_context).check_permission(tool, {}),
+        PermissionEngine(state.permission_context).check_permission(tool, {})
     )
 
     assert decision.behavior == PermissionBehavior.ASK

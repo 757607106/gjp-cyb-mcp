@@ -89,3 +89,21 @@ class BillingApiPort(Protocol):
         payload: dict[str, Any],
     ) -> BillingSalesOrderResult:
         ...
+
+
+@dataclass(frozen=True)
+class MatchEvent:
+    """一次开单匹配的最终确认结果，用于离线挖掘同义词候选。"""
+
+    source: str
+    requested_name: str
+    product_id: str
+    product_name: str
+    match_type: str
+
+
+class MatchEventLogger(Protocol):
+    """匹配事件旁路日志端口：记录“搜X→确认Y”语料，不参与匹配主流程。"""
+
+    def record(self, event: MatchEvent) -> None:
+        ...

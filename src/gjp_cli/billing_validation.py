@@ -8,18 +8,17 @@ from __future__ import annotations
 
 import json
 import logging
-import secrets
 import time
 import urllib.parse
 import urllib.request
 from dataclasses import replace
 from typing import Any
 
-from starlette.requests import Request
-from starlette.responses import JSONResponse
-from starlette.routing import Route
-
-from erp_billing.adapters import ErpAuthenticatedHttpAdapter, UnavailableBillingApi
+from erp_billing.adapters import (
+    ErpAuthenticatedHttpAdapter,
+    UnavailableBillingApi,
+    create_match_logger_from_env,
+)
 from erp_billing.config import ErpBillingSettings
 from erp_billing.mcp_service import create_billing_mcp_service
 from erp_billing.ports import AuthenticatedJsonClient
@@ -37,16 +36,13 @@ from gjp_common.logging_config import (
 )
 from gjp_common.mcp import McpToolSetResolver
 from .validation import (
-    BearerTokenIdentityResolver,
+    DirectJwtIdentityResolver,
     ExpiringToolSetCache,
     LazyValidationApp,
     ValidationCredentialStore,
-    error_response,
     float_value,
     http_read_json,
     int_value,
-    issue_bearer_response,
-    read_json_object,
 )
 
 logger = logging.getLogger(__name__)
@@ -158,6 +154,7 @@ class BillingValidationToolSetResolver(McpToolSetResolver):
         session = ErpBillingSession.from_settings(
             replace(self._settings, product_catalog_path=None),
             allow_missing_catalog=True,
+            match_logger=create_match_logger_from_env(),
         )
         return BillingToolSet(session, api, InvocationContextStore())
 
@@ -186,53 +183,15 @@ def create_billing_validation_app(
         ErpBillingSession.from_settings(
             replace(settings, product_catalog_path=None),
             allow_missing_catalog=True,
+            match_logger=create_match_logger_from_env(),
         ),
         UnavailableBillingApi(),
         InvocationContextStore(),
     )
 
-    async def test_token(request: Request) -> JSONResponse:
-        """仅供 CLI 验证：登记已有上游 Token 并签发独立 MCP Bearer。"""
-        try:
-            payload = await read_json_object(request)
-            if "appBaseUrl" in payload or "baseUrl" in payload:
-                raise DomainError(
-                    "ERP_LIVE_CONFIG_INVALID",
-                    "ERP URL 是固定部署配置，Token 请求不接受动态 URL",
-                )
-            upstream_token = str(
-                payload.get("upstreamToken")
-                or get_env_value("ERP_BILLING_UPSTREAM_TOKEN")
-            ).strip()
-            scheme, separator, credential = upstream_token.partition(" ")
-            if separator and scheme.casefold() == "bearer":
-                upstream_token = credential.strip()
-            if not upstream_token:
-                raise DomainError(
-                    "ERP_LIVE_AUTH_REQUIRED",
-                    "缺少 upstreamToken 或 ERP_BILLING_UPSTREAM_TOKEN",
-                )
-            session_id = str(payload.get("session_id") or "billing-" + secrets.token_urlsafe(12))
-            subject_id = str(payload.get("subject_id") or "cli-token-user").strip() or "cli-token-user"
-            tenant_id = str(payload.get("tenant_id") or "cli-token-tenant").strip() or "cli-token-tenant"
-            context = InvocationContext(
-                tenant_id=tenant_id,
-                subject_id=subject_id,
-                account_id=str(payload.get("account_id") or tenant_id).strip() or tenant_id,
-                session_id=session_id,
-                scopes=frozenset({"billing:read", "billing:write"}),
-            )
-            return issue_bearer_response(
-                credential_store,
-                context,
-                upstream_bearer=upstream_token,
-            )
-        except DomainError as exc:
-            return error_response(exc)
-
     return create_billing_mcp_service(
         schema_toolset=schema_toolset,
-        identity_resolver=BearerTokenIdentityResolver(
+        identity_resolver=DirectJwtIdentityResolver(
             credential_store,
             required_scope="billing:read",
         ),
@@ -241,9 +200,6 @@ def create_billing_validation_app(
             settings,
             http,
         ),
-        extra_routes=[
-            Route("/test-auth/token", test_token, methods=["POST"]),
-        ],
     )
 
 

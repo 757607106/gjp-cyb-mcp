@@ -1,3 +1,6 @@
+"""验证服务直接接受 ERP JWT 作为 MCP Bearer，不再需要 /test-auth/token 换票。"""
+
+import base64
 import json
 
 from starlette.testclient import TestClient
@@ -7,6 +10,17 @@ from gjp_cli.validation import ValidationCredentialStore
 
 
 FIXED_ERP_URL = "https://test-ai.yuncyb.com/aicyberp-api"
+
+
+def _make_jwt(tenant_id=1, login_id=20321082350030080703):
+    """生成测试用 ERP JWT（不验签，仅用于测试身份解析）。"""
+    header = base64.urlsafe_b64encode(
+        json.dumps({"typ": "JWT", "alg": "HS256"}).encode(),
+    ).rstrip(b"=").decode()
+    payload = base64.urlsafe_b64encode(
+        json.dumps({"tenantId": tenant_id, "loginId": login_id}).encode(),
+    ).rstrip(b"=").decode()
+    return "%s.%s.test-signature" % (header, payload)
 
 
 def _mcp_request(client, method, params=None, bearer=None, request_id=1):
@@ -53,7 +67,8 @@ class FakeErpHttpClient:
         }
 
 
-def test_billing_validation_is_token_only_and_passes_bearer_to_mcp_runtime(tmp_path):
+def test_billing_validation_accepts_erp_jwt_directly(tmp_path):
+    """ERP JWT 直接作为 MCP Bearer，无需 /test-auth/token 换票。"""
     store = ValidationCredentialStore(ttl_seconds=600)
     http = FakeErpHttpClient()
     app = create_billing_validation_app(
@@ -62,32 +77,13 @@ def test_billing_validation_is_token_only_and_passes_bearer_to_mcp_runtime(tmp_p
         store=store,
     )
 
+    jwt = _make_jwt(tenant_id=1, login_id=20321082350030080703)
+
     with TestClient(app) as client:
-        assert client.get("/test-auth/captcha").status_code == 404
-        assert client.post("/test-auth/login", json={}).status_code == 404
+        # /test-auth/token 端点已移除
+        assert client.post("/test-auth/token", json={}).status_code == 404
 
-        issued = client.post(
-            "/test-auth/token",
-            json={
-                "upstreamToken": "Bearer browser-upstream-secret",
-                "tenant_id": "tenant-token",
-                "subject_id": "user-token",
-                "session_id": "session-token",
-            },
-        )
-        assert issued.status_code == 200
-        issued_payload = issued.json()
-        bearer = issued_payload["accessToken"]
-        assert bearer != "browser-upstream-secret"
-        assert issued_payload["scopes"] == ["billing:read", "billing:write"]
-        assert "browser-upstream-secret" not in json.dumps(issued_payload, ensure_ascii=False)
-
-        credential = store.require_bearer(bearer)
-        assert credential.upstream_bearer == "browser-upstream-secret"
-        assert credential.context.tenant_id == "tenant-token"
-        assert not hasattr(credential, "app_base_url")
-
-        listed = _mcp_request(client, "tools/list", bearer=bearer, request_id=2)
+        listed = _mcp_request(client, "tools/list", bearer=jwt, request_id=1)
         assert {
             tool["name"]
             for tool in listed.json()["result"]["tools"]
@@ -100,7 +96,6 @@ def test_billing_validation_is_token_only_and_passes_bearer_to_mcp_runtime(tmp_p
         }
         schema = json.dumps(listed.json(), ensure_ascii=False).casefold()
         assert "password" not in schema
-        assert "captcha" not in schema
         assert "access_token" not in schema
         assert "base_url" not in schema
 
@@ -108,36 +103,18 @@ def test_billing_validation_is_token_only_and_passes_bearer_to_mcp_runtime(tmp_p
             client,
             "tools/call",
             {"name": "sync_products", "arguments": {"limit": 1}},
-            bearer=bearer,
-            request_id=3,
+            bearer=jwt,
+            request_id=2,
         )
 
     payload = called.json()["result"]["structuredContent"]
     assert payload["ok"] is True
     assert payload["productCount"] == 1
-    assert http.calls[0][0].session_id == "session-token"
+    assert http.calls[0][0].tenant_id == "1"
+    assert http.calls[0][0].subject_id == "20321082350030080703"
     assert http.calls[0][1] == "/product/page"
     assert http.calls[0][2] == {"pageNum": 1, "pageSize": 1, "status": 1}
     assert list(tmp_path.iterdir()) == []
-
-
-def test_billing_validation_rejects_dynamic_url_in_token_request():
-    app = create_billing_validation_app(
-        base_url=FIXED_ERP_URL,
-        http_client=FakeErpHttpClient(),
-    )
-
-    with TestClient(app) as client:
-        response = client.post(
-            "/test-auth/token",
-            json={
-                "upstreamToken": "browser-upstream-secret",
-                "appBaseUrl": "https://another.example.test/api",
-            },
-        )
-
-    assert response.status_code == 400
-    assert response.json()["error"]["code"] == "ERP_LIVE_CONFIG_INVALID"
 
 
 class TenantAwareErpHttpClient:
@@ -170,48 +147,38 @@ def test_billing_validation_isolates_catalogs_between_tenants():
         http_client=TenantAwareErpHttpClient(),
     )
 
-    with TestClient(app) as client:
-        bearers = {}
-        for tenant in ("tenant-a", "tenant-b"):
-            issued = client.post(
-                "/test-auth/token",
-                json={
-                    "upstreamToken": "token-" + tenant,
-                    "tenant_id": tenant,
-                    "session_id": "session-" + tenant,
-                },
-            )
-            assert issued.status_code == 200
-            bearers[tenant] = issued.json()["accessToken"]
+    jwt_a = _make_jwt(tenant_id=11, login_id=1001)
+    jwt_b = _make_jwt(tenant_id=22, login_id=2002)
 
-        for tenant, request_id in (("tenant-a", 2), ("tenant-b", 3)):
+    with TestClient(app) as client:
+        for jwt, request_id in ((jwt_a, 1), (jwt_b, 2)):
             synced = _mcp_request(
                 client,
                 "tools/call",
                 {"name": "sync_products", "arguments": {"limit": 1}},
-                bearer=bearers[tenant],
+                bearer=jwt,
                 request_id=request_id,
             )
             assert synced.json()["result"]["structuredContent"]["ok"] is True
 
         results = {}
-        for tenant, request_id in (("tenant-a", 4), ("tenant-b", 5)):
+        for jwt, request_id in ((jwt_a, 3), (jwt_b, 4)):
             searched = _mcp_request(
                 client,
                 "tools/call",
                 {"name": "search_products", "arguments": {"keywords": ["土豆"]}},
-                bearer=bearers[tenant],
+                bearer=jwt,
                 request_id=request_id,
             )
-            results[tenant] = json.dumps(
+            results[jwt] = json.dumps(
                 searched.json()["result"]["structuredContent"],
                 ensure_ascii=False,
             )
 
-    assert "土豆A" in results["tenant-a"]
-    assert "土豆B" not in results["tenant-a"]
-    assert "土豆B" in results["tenant-b"]
-    assert "土豆A" not in results["tenant-b"]
+    assert "土豆1" in results[jwt_a]
+    assert "土豆2" not in results[jwt_a]
+    assert "土豆2" in results[jwt_b]
+    assert "土豆1" not in results[jwt_b]
 
 
 def test_expiring_toolset_cache_evicts_idle_sessions(monkeypatch):
