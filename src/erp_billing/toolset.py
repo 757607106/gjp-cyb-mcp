@@ -619,7 +619,9 @@ class BillingToolSet(AgentScopeToolSet):
         """查询销售单详情，含商品明细、收款记录和状态。
 
         Args:
-            order_id: 销售单 ID。
+            order_id: 销售单标识，同时接受内部 ID（list_sales_orders
+                返回的 id）和业务单号 orderNo（如 XS 开头）。传入业务
+                单号时按 orderNo 精确匹配取回内部 ID 后再查详情。
         """
         try:
             context = self._contexts.get()
@@ -703,7 +705,8 @@ class BillingToolSet(AgentScopeToolSet):
         get_sales_order 向用户展示单据内容。
 
         Args:
-            order_id: 销售单 ID。
+            order_id: 销售单标识，同时接受内部 ID 和业务单号 orderNo
+                （如 XS 开头），传入业务单号时自动回查内部 ID。
             confirmed_by_user: 仅在用户明确确认作废后传 true。
         """
         try:
@@ -747,7 +750,8 @@ class BillingToolSet(AgentScopeToolSet):
         已生效单据的客户和出库仓库不可修改。
 
         Args:
-            order_id: 销售单 ID。
+            order_id: 销售单标识，同时接受内部 ID 和业务单号 orderNo
+                （如 XS 开头），传入业务单号时自动回查内部 ID。
             order_date: 单据日期，格式 YYYY-MM-DD。
             handler_id: 经办人 ID。
             items: 商品明细列表，每个元素包含 product_id（必填）、
@@ -801,7 +805,7 @@ class BillingToolSet(AgentScopeToolSet):
                 )
             order_items = self._build_modify_items(items)
             payload: dict[str, Any] = {
-                "id": int(target_id),
+                "id": int(target_id) if target_id.isdigit() else target_id,
                 "orderDate": clean_date,
                 "handlerId": clean_handler,
                 "items": order_items,

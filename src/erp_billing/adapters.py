@@ -14,7 +14,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import NoReturn
 
@@ -240,14 +240,50 @@ class ErpAuthenticatedHttpAdapter:
             )
         return BillingSalesOrderResult(order_id=order_id)
 
+    def _resolve_order_id(
+        self,
+        context: InvocationContext,
+        order_id: str,
+    ) -> str:
+        """归一化销售单标识为内部数字 ID。
+
+        详情、作废和修改接口的路径参数是内部数字 ID，不是业务单号
+        orderNo。入参为纯数字串时视为内部 ID 直接返回；非纯数字（业务
+        单号，如 XS 开头的 orderNo）则通过列表按 orderNo 精确匹配取回
+        内部 ID，使工具对两种标识都可用。
+        """
+        token = (order_id or "").strip()
+        if not token:
+            raise DomainError(
+                "erp_sales_order_id_invalid",
+                "销售单 ID 不能为空",
+            )
+        if token.isdigit():
+            return token
+        page = self.search_sales_orders(
+            context,
+            order_no=token,
+            page_size=20,
+        )
+        for order in page.orders:
+            if str(order.get("orderNo") or "").strip() == token:
+                resolved = str(order.get("id") or "").strip()
+                if resolved:
+                    return resolved
+        raise DomainError(
+            "erp_sales_order_not_found",
+            "销售单不存在：%s" % token,
+        )
+
     def get_sales_order_detail(
         self,
         context: InvocationContext,
         order_id: str,
     ) -> BillingSalesOrderDetailResult:
+        resolved = self._resolve_order_id(context, order_id)
         data = self._get(
             context,
-            "/sales/orders/%s" % _path_segment(order_id),
+            "/sales/orders/%s" % _path_segment(resolved),
             {},
         )
         order = data.get("data")
@@ -274,6 +310,7 @@ class ErpAuthenticatedHttpAdapter:
         order_no: str = "",
         customer_id: str = "",
     ) -> BillingSalesOrderPageResult:
+        self._validate_date_range(start_date.strip(), end_date.strip())
         params: dict[str, object] = {
             "pageNum": max(1, page_num),
             "pageSize": max(1, min(page_size, 100)),
@@ -324,14 +361,55 @@ class ErpAuthenticatedHttpAdapter:
             ),
         )
 
+    @staticmethod
+    def _validate_date_range(start_date: str, end_date: str) -> None:
+        """校验查询日期格式为 YYYY-MM-DD 且结束不早于开始。
+
+        ERP 的 startDate/endDate 要求 LocalDate，非法格式会触发后端
+        类型转换异常并泄露技术栈错误；在协议层提前拦截，返回友好错误。
+        """
+        parsed_start = None
+        if start_date:
+            try:
+                parsed_start = date.fromisoformat(start_date)
+            except ValueError as exc:
+                raise DomainError(
+                    "erp_sales_order_date_invalid",
+                    "开始日期必须使用 YYYY-MM-DD 格式",
+                ) from exc
+            if parsed_start.isoformat() != start_date:
+                raise DomainError(
+                    "erp_sales_order_date_invalid",
+                    "开始日期必须使用 YYYY-MM-DD 格式",
+                )
+        if end_date:
+            try:
+                parsed_end = date.fromisoformat(end_date)
+            except ValueError as exc:
+                raise DomainError(
+                    "erp_sales_order_date_invalid",
+                    "结束日期必须使用 YYYY-MM-DD 格式",
+                ) from exc
+            if parsed_end.isoformat() != end_date:
+                raise DomainError(
+                    "erp_sales_order_date_invalid",
+                    "结束日期必须使用 YYYY-MM-DD 格式",
+                )
+            if parsed_start is not None and parsed_end < parsed_start:
+                raise DomainError(
+                    "erp_sales_order_date_invalid",
+                    "结束日期不能早于开始日期",
+                )
+
     def void_sales_order(
         self,
         context: InvocationContext,
         order_id: str,
     ) -> None:
+        resolved = self._resolve_order_id(context, order_id)
         self._put(
             context,
-            "/sales/orders/%s/void" % _path_segment(order_id),
+            "/sales/orders/%s/void" % _path_segment(resolved),
             {},
         )
 
@@ -341,14 +419,17 @@ class ErpAuthenticatedHttpAdapter:
         order_id: str,
         payload: dict[str, object],
     ) -> BillingSalesOrderResult:
+        resolved = self._resolve_order_id(context, order_id)
+        payload = dict(payload)
+        payload["id"] = int(resolved)
         data = self._put(
             context,
-            "/sales/orders/%s" % _path_segment(order_id),
+            "/sales/orders/%s" % _path_segment(resolved),
             payload,
         )
         result_id = str(data.get("data") or "").strip()
         if not result_id:
-            result_id = _path_segment(order_id)
+            result_id = resolved
         return BillingSalesOrderResult(order_id=result_id)
 
 
