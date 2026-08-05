@@ -435,3 +435,28 @@ URL 路径拼错。常见误写为 `https://.../mcp/sse`，该路径在服务端
 Streamable HTTP 用 `https://test-mcp-server.yuncyb.com/mcp`，SSE 用
 `https://test-mcp-server.yuncyb.com/sse`，二者独立，不可拼接。详见
 步骤 11 端点表。
+
+### Q9：工具调用报 "未配置 ERP_BILLING_BASE_URL"
+
+根因：服务启动时未设 `GJP_ENV`，默认走 `local` 模式，会加载
+`config/local.env`；但 **main 分支已删除 `config/local.env`**（生产
+分支只留 `production.env`），文件不存在导致配置未加载，
+`ERP_BILLING_BASE_URL` 实际为空。虽然 `production.env` 里写了 URL，
+但未设 `GJP_ENV=production` 时不会加载该文件。
+
+配置优先级（`get_env_value`）：**系统环境变量 > 配置文件 > 默认值**。
+
+解决（联调用，不验签）：用系统环境变量直接注入，优先级最高，
+绕过配置文件，保持 local 模式（`DirectJwtIdentityResolver` 不验签）：
+
+```bash
+pkill -f "uvicorn erp_billing.app"
+cd /root/cyb-mcp-server/gjp-cyb-mcp-main
+export ERP_BILLING_BASE_URL=https://test-ai.yuncyb.com/aicyberp-api
+nohup uv run uvicorn erp_billing.app:app --host 0.0.0.0 --port 8102 \
+  > /var/log/erp-billing-mcp.log 2>&1 &
+```
+
+若要走生产模式（`GJP_ENV=production` 加载 `production.env`），
+必须同时注入 `ERP_BILLING_JWT_SECRET`，否则构造
+`VerifiedJwtIdentityResolver` 会拒绝启动。
