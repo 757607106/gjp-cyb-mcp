@@ -1,4 +1,9 @@
-"""配置模块：自动加载项目.env，为公共层与各产品提供环境变量读取。"""
+"""配置模块：按运行环境加载 config 目录下的环境文件。
+
+环境区分：``GJP_ENV`` 取值 local（默认，即测试环境）或 production，
+分别加载 ``config/local.env`` 与 ``config/production.env``。
+显式指定 ``GJP_ENV_FILE`` 或对应系统环境变量时优先于环境文件的值。
+"""
 
 from __future__ import annotations
 
@@ -13,17 +18,35 @@ from .paths import discover_project_root
 
 _ENV_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
+# 环境名与 config 目录下对应文件名的映射：本地即测试环境，生产使用独立文件
+_ENV_DIR = "config"
+_ENV_FILE_NAMES: Dict[str, str] = {
+    "local": "local.env",
+    "production": "production.env",
+}
+
+
+def current_env_name() -> str:
+    """返回当前运行环境名，非法取值回退到 local。"""
+    value = os.getenv("GJP_ENV", "local").strip().casefold()
+    return value if value in _ENV_FILE_NAMES else "local"
+
+
+def is_production() -> bool:
+    """当前是否生产环境；供组合根选择环境专属装配，业务代码不应调用。"""
+    return current_env_name() == "production"
+
 
 def local_env_path() -> Optional[Path]:
     explicit_path = os.getenv("GJP_ENV_FILE")
-    candidates = (
-        [Path(explicit_path).expanduser()]
-        if explicit_path
-        else [Path.cwd() / ".env", discover_project_root() / ".env"]
-    )
-    for path in candidates:
-        if path.is_file():
-            return path.resolve()
+    if explicit_path:
+        path = Path(explicit_path).expanduser()
+        return path.resolve() if path.is_file() else None
+    file_name = _ENV_FILE_NAMES[current_env_name()]
+    for root in (Path.cwd(), discover_project_root()):
+        candidate = root / _ENV_DIR / file_name
+        if candidate.is_file():
+            return candidate.resolve()
     return None
 
 

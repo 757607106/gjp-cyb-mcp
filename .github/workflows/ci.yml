@@ -1,0 +1,28 @@
+# 代码质量流水线：push/PR 到 main、test 时运行 lint 与单元测试
+name: CI
+
+on:
+  push:
+    branches: [main, test]
+  pull_request:
+    branches: [main, test]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: 安装 uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "latest"
+      - name: 同步依赖
+        run: uv sync --extra dev
+      - name: 代码检查
+        run: uv run ruff check src tests
+      - name: 单元测试
+        run: uv run pytest -q

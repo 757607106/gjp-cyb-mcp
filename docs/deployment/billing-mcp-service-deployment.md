@@ -7,24 +7,53 @@
 
 MCP 客户端直接使用 ERP JWT 作为 Bearer Token，无需换票。
 
-## 配置与启动
+## 环境制品范围
 
-ERP URL 是固定部署配置：
+生产环境不包含测试相关的代码和文档，仓库内容按归属划分：
+
+| 内容 | 归属 | 生产制品 |
+|---|---|---|
+| `src/erp_billing`、`src/gjp_common` | 运行时代码 | 包含 |
+| `config/production.env` | 生产配置模板 | 包含 |
+| `config/local.env` | 测试环境配置 | 不包含 |
+| `tests/`、`tests/billing/fixtures/` | 测试代码与数据 | 不包含 |
+| `docs/`、`AGENTS.md`、`README.md` | 开发文档 | 不包含 |
+
+生产从构建产物安装，不把仓库目录整体搬上服务器：
 
 ```zsh
-export ERP_BILLING_BASE_URL=https://test-ai.yuncyb.com/aicyberp-api
+uv build --wheel
+uv pip install dist/gjp_erp_billing_mcp-*.whl
+```
+
+wheel 只含 `src/erp_billing` 与 `src/gjp_common` 两个包，测试、文档与
+测试环境配置天然不进入制品；`config/production.env` 随部署清单单独投放。
+**生产 wheel 必须从 `main` 分支构建**，禁止用 `test` 或 `feature/*`
+分支的产物上生产。
+本地宽松解析器 `DirectJwtIdentityResolver` 虽与生产代码同包，但只在
+`GJP_ENV` 非 production 时被装配，生产启动强制走验签路径。
+
+## 配置与启动
+
+ERP URL 与验签密钥是固定部署配置，由部署平台注入环境变量：
+
+```zsh
+export GJP_ENV=production
+export ERP_BILLING_BASE_URL=https://正式域名/aicyberp-api
+export ERP_BILLING_JWT_SECRET=<HS256 验签密钥>
 export ERP_BILLING_TIMEOUT_SECONDS=30
 ```
 
-仓库自带可运行入口 `erp_billing.app:app`：直接从 MCP Bearer 中的 ERP JWT
-解析身份，按 `(tenant, account, session)` 隔离 ToolSet，并把同一个 JWT 注入
-ERP API 调用。
+仓库自带可运行入口 `erp_billing.app:app`：按 `GJP_ENV` 选择鉴权强度，
+production 下 `VerifiedJwtIdentityResolver` 强制 HS256 验签并校验 JWT
+过期，通过后按 `(tenant, account, session)` 隔离 ToolSet，并把同一个
+JWT 注入 ERP API 调用。缺失 `ERP_BILLING_JWT_SECRET` 时拒绝启动。
 
 ```zsh
 uv run uvicorn erp_billing.app:app --host 0.0.0.0 --port 8102
 ```
 
-生产如需接入自有会话存储或 JWT/OAuth2 验签，可自行实现
+生产如需接入自有会话存储或 OAuth2 换签，可自行实现
 `McpIdentityResolver` 与 `McpToolSetResolver`，再用
 `create_billing_mcp_service()` 装配 Starlette 应用：
 
@@ -38,10 +67,10 @@ app = create_billing_mcp_service(
 )
 ```
 
-MCP 客户端把 ERP JWT 直接作为 Bearer Token 传给 MCP 服务，服务端从 JWT payload
-解析 tenantId、loginId 构造 InvocationContext，并把同一个 JWT 用于
-ERP API 调用。业务 URL 始终来自 `ERP_BILLING_BASE_URL`。生产 MCP 应由
-对接方实现 JWT/OAuth2 验签。
+MCP 客户端把 ERP JWT 直接作为 Bearer Token 传给 MCP 服务，服务端验签后从
+JWT payload 解析 tenantId、loginId 构造 InvocationContext，并把同一个 JWT
+用于 ERP API 调用。业务 URL 始终来自 `ERP_BILLING_BASE_URL`。
+直接读 payload 不验签的 `DirectJwtIdentityResolver` 仅限 local 测试环境。
 
 ## 工具
 
@@ -113,8 +142,9 @@ api = ErpAuthenticatedHttpAdapter(http)
 
 生产检查：
 
-- URL 固定且为 HTTPS。
-- MCP 直接解析 ERP JWT payload，ERP API 拒绝过期 JWT。
+- `GJP_ENV=production`，制品来自 wheel，不含 tests、docs 与 `config/local.env`。
+- URL 固定且为 HTTPS；`ERP_BILLING_JWT_SECRET` 仅经环境变量注入。
+- JWT 经 HS256 验签与过期校验，非 HS256 算法一律拒绝。
 - Bearer、ToolSet、目录、预览和幂等结果按会话隔离。
 - 多副本使用共享会话/幂等存储。
 - ERP 401/403 映射为重新授权错误，不让 Agent 索要 Token。

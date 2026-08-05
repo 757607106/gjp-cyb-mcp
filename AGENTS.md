@@ -78,3 +78,40 @@ Agent 与 MCP 的唯一工具来源。生产服务不构建模型，只通过
 uv sync --extra dev
 uv run pytest -q
 ```
+
+### 环境区分
+
+配置按 `GJP_ENV` 选择环境文件，系统环境变量始终优先于文件值：
+
+| GJP_ENV | 加载文件 | 用途 |
+|---|---|---|
+| 缺省 / `local` | `config/local.env` | 本地开发，即测试环境 |
+| `production` | `config/production.env` | 生产部署模板，敏感值由部署环境变量注入 |
+
+`GJP_ENV_FILE` 显式指定文件时优先于上述选择；测试由
+`tests/conftest.py` 隔离项目环境文件，不读取任何真实配置。
+
+生产制品只从 wheel 安装（仅含 `src/erp_billing`、`src/gjp_common`），
+不包含 `tests/`、`docs/`、`AGENTS.md` 与 `config/local.env`；详见
+`docs/deployment/billing-mcp-service-deployment.md`。
+
+### 分支策略
+
+采用 `test` + `main` 双长期分支 + `feature/*` 短分支的轻量模型：
+
+| 分支 | 职责 | 对应环境 |
+|---|---|---|
+| `main` | 只含已验收功能，每次发布打 tag；生产 wheel 只从 `main` 构建 | 生产 |
+| `test` | 集成多个实验/验收中功能 | 测试环境 |
+| `feature/*` | 单个功能开发，从 `test` 切出，合回 `test` | — |
+
+工作流要点：
+- 实验性功能从 `test` 切 `feature/*`，PR 合回 `test`，不直接碰 `main`。
+- 功能验收通过、决定上生产时，对 `feature/*` 执行 `git rebase main` 后
+  `git merge --ff-only` 合入 `main` 并打 tag；已混入 `test` 的改用 `cherry-pick`。
+- 紧急修复从 `main` 切 `hotfix/*`，合回 `main` 打 tag 后同步回 `test`。
+- `main` 禁止直接 push，必须经 PR 且 CI（`.github/workflows/ci.yml`）通过。
+- Git 提交信息使用中文。
+
+分支管「哪些功能出现在哪个分支」（功能级），与 `GJP_ENV` 管的「同一功能
+在两环境怎么跑」（配置级）互补，不冲突。
