@@ -199,7 +199,7 @@ def create_mcp_server(
 
 
 def _masked_authorization(mcp_request_context: Any) -> str:
-    """脱敏输出 Authorization 头，只保留 scheme 和长度，不暴露任何 token 字符。"""
+    """脱敏输出 Authorization 头；开启 GJP_DEBUG_DUMP_CREDENTIALS 时输出完整 token。"""
     request = getattr(mcp_request_context, "request", None)
     headers = getattr(request, "headers", None)
     value = headers.get("authorization", "") if headers is not None else ""
@@ -209,6 +209,8 @@ def _masked_authorization(mcp_request_context: Any) -> str:
     token = token.strip()
     if not token:
         return scheme + " <空>"
+    if credential_dump_enabled():
+        return "%s %s" % (scheme, token)
     return "%s …(len=%d)" % (scheme, len(token))
 
 
