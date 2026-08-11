@@ -27,7 +27,6 @@ LEVELS = {
     "ERROR": logging.ERROR,
     "CRITICAL": logging.CRITICAL,
 }
-_CONTEXT_LOGGING_ENABLED = False
 
 
 class _DynamicStderrHandler(logging.StreamHandler):
@@ -49,21 +48,6 @@ def _enabled(value: str) -> bool:
     if normalized in TRUE_VALUES:
         return True
     return True
-
-
-def logging_runtime_settings() -> Dict[str, object]:
-    local_env = _read_local_env()
-    level_name = _setting(local_env, "GJP_LOG_LEVEL", "INFO").upper()
-    return {
-        "enabled": _enabled(_setting(local_env, "GJP_LOG_ENABLED", "true")),
-        "level": level_name if level_name in LEVELS else "INFO",
-        "contextEnabled": _enabled(_setting(local_env, "GJP_LOG_CONTEXT", "false")),
-        "credentialDumpEnabled": credential_dump_enabled(),
-    }
-
-
-def context_logging_enabled() -> bool:
-    return _CONTEXT_LOGGING_ENABLED
 
 
 def credential_dump_enabled() -> bool:
@@ -95,12 +79,11 @@ def error_text(exc: BaseException) -> str:
 
 def configure_logging() -> bool:
     """Configure package logs on stderr and return whether logging is enabled."""
-    global _CONTEXT_LOGGING_ENABLED
     local_env = _read_local_env()
     enabled = _enabled(_setting(local_env, "GJP_LOG_ENABLED", "true"))
     level_name = _setting(local_env, "GJP_LOG_LEVEL", "INFO").upper()
     level = LEVELS.get(level_name, logging.INFO)
-    _CONTEXT_LOGGING_ENABLED = _enabled(_setting(local_env, "GJP_LOG_CONTEXT", "false"))
+    context_enabled = _enabled(_setting(local_env, "GJP_LOG_CONTEXT", "false"))
 
     package_loggers = [logging.getLogger(name) for name in PACKAGE_LOGGERS]
     for package_logger in package_loggers:
@@ -125,7 +108,7 @@ def configure_logging() -> bool:
     logging.getLogger(LOGGER_NAME).info(
         "终端执行日志已开启 level=%s model_context=%s",
         logging.getLevelName(level),
-        _CONTEXT_LOGGING_ENABLED,
+        context_enabled,
     )
     if level_name not in LEVELS:
         logging.getLogger(LOGGER_NAME).warning("未知日志级别 %s，已使用 INFO", level_name)

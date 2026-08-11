@@ -63,13 +63,3 @@ class BusinessApiCredentialProvider(Protocol):
 
     def resolve(self, context: InvocationContext) -> BusinessApiCredential:
         ...
-
-
-class StaticBusinessApiCredentialProvider:
-    """仅用于本地单凭据 CLI 或测试。"""
-
-    def __init__(self, credential: BusinessApiCredential) -> None:
-        self._credential = credential
-
-    def resolve(self, _context: InvocationContext) -> BusinessApiCredential:
-        return self._credential

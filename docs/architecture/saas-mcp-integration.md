@@ -33,16 +33,16 @@ sequenceDiagram
     participant ERP as 固定 URL ERP API
 
     UI->>Agent: 商品与销售单抬头
-    Agent->>MCP: prepare_sales_order
+    Agent->>MCP: previewSalesOrder
     MCP->>ERP: 查询商品/客户/仓库/职员
     MCP-->>Agent: 缺失项、候选或 preview
     Agent-->>UI: 追问或展示预览
     UI->>Agent: 明确确认
-    Agent->>MCP: submit_sales_order + 幂等键
+    Agent->>MCP: submitSalesOrder + 幂等键
     MCP->>ERP: POST /sales/orders
     ERP-->>MCP: orderId
     MCP-->>UI: submitted=true
 ```
 
-任何修改都必须用完整销售单信息重新调用 `prepare_sales_order`。`submit_sales_order`
+任何修改都必须用完整销售单信息重新调用 `previewSalesOrder`。`submitSalesOrder`
 必须具有 `billing:write`，并传当前 `preview_id`、明确确认标志和幂等键。

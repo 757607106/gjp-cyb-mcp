@@ -38,7 +38,7 @@ api = ErpAuthenticatedHttpAdapter(http)
 ## 权限与写单
 
 - 查询、同步和生成预览要求 `billing:read`。
-- `submit_sales_order` 要求 `billing:write`。
+- `submitSalesOrder` 要求 `billing:write`。
 - 写单还必须有当前 `preview_id`、用户明确确认和唯一 `idempotency_key`。
 - 单进程会话内防重只适合验证；多 worker 或多副本使用 Redis/数据库或 ERP 网关
   提供共享幂等。

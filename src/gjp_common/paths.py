@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import Optional, Union
 
 from .errors import DomainError
 
@@ -60,16 +59,3 @@ def resolve_output_path(value: PathValue, project_root: Optional[Path] = None) -
     if path.is_absolute():
         return path.resolve()
     return ((project_root or discover_project_root()) / path).resolve()
-
-
-def read_json(path: Path) -> Dict[str, Any]:
-    """读取并解析 JSON 文件，失败时抛出 DomainError。"""
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError as exc:
-        raise DomainError("file_not_found", "文件不存在：%s" % path) from exc
-    except json.JSONDecodeError as exc:
-        raise DomainError("json_invalid", "文件不是合法 JSON：%s" % path) from exc
-    if not isinstance(value, dict):
-        raise DomainError("json_invalid", "JSON 顶层必须是对象：%s" % path)
-    return value
