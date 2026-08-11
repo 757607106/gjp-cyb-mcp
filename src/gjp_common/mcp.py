@@ -209,6 +209,11 @@ def _masked_authorization(mcp_request_context: Any) -> str:
     token = token.strip()
     if not token:
         return scheme + " <空>"
+    # 防御性剥离客户端可能误传的多余 Bearer 前缀
+    if token[:7].casefold() == "bearer ":
+        token = token[7:].strip()
+    if not token:
+        return scheme + " <空>"
     if credential_dump_enabled():
         return "%s %s" % (scheme, token)
     return "%s …(len=%d)" % (scheme, len(token))
