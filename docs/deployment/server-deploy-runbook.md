@@ -10,7 +10,7 @@
 |---|---|
 | 代码仓库 | `https://github.com/757607106/gjp-cyb-mcp.git` |
 | 生产分支 | `main` |
-| 最新发布 tag | `v0.2.2` |
+| 最新发布 tag | `v0.2.4` |
 | MCP 服务名 | `erp-billing` |
 | 服务端口 | `8102` |
 | 对外域名 | `test-mcp-server.yuncyb.com` |
@@ -429,32 +429,70 @@ curl -i -X POST https://test-mcp-server.yuncyb.com/mcp \
 
 ## 日常更新流程
 
-`main` 分支修复 bug 后，在服务器上执行以下命令更新部署。
+`main` 分支修复 bug 后，在服务器上使用部署脚本一键更新。
 
-### 更新流程（nohup 方式）
+### 方式 A：一键部署脚本（推荐）
+
+项目自带 `scripts/deploy.sh`，自动完成停服务、拉代码、同步依赖、重启和验证：
 
 ```bash
-# 1. 停止当前服务
-pkill -f "uvicorn erp_billing.app"
+cd /root/gjp-cyb-mcp
+./scripts/deploy.sh
+```
 
-# 2. 拉取最新代码 + 同步依赖
+脚本自动检测 systemd 或 nohup 方式，无需手动输入多条命令。
+
+常用场景：
+
+```bash
+# 部署 main 分支（默认，生产环境）
+./scripts/deploy.sh
+
+# 部署 test 分支（测试环境）
+BRANCH=test ./scripts/deploy.sh
+
+# DEBUG 模式（临时调试，仅 nohup 方式生效）
+./scripts/deploy.sh --debug
+
+# DEBUG + 完整 token 转储（排查鉴权问题）
+./scripts/deploy.sh --debug-dump
+
+# 覆盖 ERP API 地址
+ERP_BILLING_BASE_URL=https://new.yuncyb.com/aicyberp-api ./scripts/deploy.sh
+```
+
+脚本输出示例：
+
+```text
+[INFO] ===== ERP 开单 MCP 服务快速部署 =====
+[INFO] 1/5 停止当前服务...
+[INFO] 2/5 拉取最新 main 分支代码...
+[INFO] 当前版本：acdbde7 完善 DEBUG 日志...
+[INFO] 3/5 同步项目依赖...
+[INFO] 4/5 启动服务...
+[INFO] nohup 服务已启动 PID=12345
+[INFO] 5/5 验证服务状态...
+[INFO] 进程运行中 ✓
+[INFO] 端口 8102 监听中 ✓
+[INFO] ===== 部署完成 =====
+```
+
+### 方式 B：手动命令（备选）
+
+nohup 方式：
+
+```bash
+pkill -f "uvicorn erp_billing.app"
 cd /root/gjp-cyb-mcp
 git pull origin main
 uv sync --extra dev
-
-# 3. 重启服务（带环境变量）
 export ERP_BILLING_BASE_URL=https://test-ai.yuncyb.com/aicyberp-api
 nohup uv run uvicorn erp_billing.app:app --host 0.0.0.0 --port 8102 \
   >> /var/log/erp-billing-mcp.log 2>&1 &
-
-# 4. 验证
 sleep 2 && tail -n 10 /var/log/erp-billing-mcp.log && ss -ltnp | grep 8102
 ```
 
-> 注意：每次重启需重新 `export ERP_BILLING_BASE_URL`，新进程不继承
-> 旧 shell 的环境变量。
-
-### 更新流程（systemd 方式）
+systemd 方式：
 
 ```bash
 cd /root/gjp-cyb-mcp
@@ -464,7 +502,8 @@ systemctl restart erp-billing-mcp
 systemctl status erp-billing-mcp
 ```
 
-> systemd 方式环境变量写在 service 文件里，无需重复 export。
+> 注意：nohup 方式每次重启需重新 `export ERP_BILLING_BASE_URL`；systemd
+> 方式环境变量写在 service 文件里，无需重复 export。
 
 ---
 
@@ -472,21 +511,32 @@ systemctl status erp-billing-mcp
 
 ### 开启 DEBUG + 完整 token 日志
 
-```bash
-# 1. 停止当前服务
-pkill -f "uvicorn erp_billing.app"
+使用部署脚本一键切换：
 
-# 2. 设置环境变量（完整 token 调试）
+```bash
+# DEBUG 模式（脱敏，不暴露 token）
+./scripts/deploy.sh --debug
+
+# DEBUG + 完整 token 转储（排查鉴权问题）
+./scripts/deploy.sh --debug-dump
+
+# 实时跟踪日志
+tail -f /var/log/erp-billing-mcp.log
+```
+
+> 注意：`--debug` 参数仅对 nohup 方式生效。若服务以 systemd 方式运行，
+> 需先停用 systemd 再用脚本启动，或修改 service 文件中的环境变量。
+
+手动方式（备选）：
+
+```bash
+pkill -f "uvicorn erp_billing.app"
 cd /root/gjp-cyb-mcp
 export ERP_BILLING_BASE_URL=https://test-ai.yuncyb.com/aicyberp-api
 export GJP_LOG_LEVEL=DEBUG
 export GJP_DEBUG_DUMP_CREDENTIALS=true
-
-# 3. 启动服务
 nohup uv run uvicorn erp_billing.app:app --host 0.0.0.0 --port 8102 \
   >> /var/log/erp-billing-mcp.log 2>&1 &
-
-# 4. 实时跟踪日志
 tail -f /var/log/erp-billing-mcp.log
 ```
 
