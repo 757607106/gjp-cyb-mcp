@@ -45,7 +45,11 @@ from .toolset import BillingToolSet
 
 
 def _bearer_token_from_mcp_context(mcp_request_context: Any) -> str:
-    """从 MCP HTTP 请求头读取 Bearer Token。"""
+    """从 MCP HTTP 请求头读取 Bearer Token。
+
+    标准格式为 ``Authorization: Bearer <token>``；部分客户端可能误传
+    ``Bearer Bearer <token>``，此处剥离多余前缀以保证下游拿到纯 token。
+    """
     request = getattr(mcp_request_context, "request", None)
     headers = getattr(request, "headers", None)
     authorization = headers.get("authorization", "") if headers is not None else ""
@@ -54,7 +58,13 @@ def _bearer_token_from_mcp_context(mcp_request_context: Any) -> str:
     scheme, _, token = authorization.partition(" ")
     if scheme.casefold() != "bearer" or not token.strip():
         raise DomainError("mcp_unauthorized", "Authorization 必须使用 Bearer token")
-    return token.strip()
+    token = token.strip()
+    # 防御性剥离客户端可能误传的多余 Bearer 前缀
+    if token[:7].casefold() == "bearer ":
+        token = token[7:].strip()
+    if not token:
+        raise DomainError("mcp_unauthorized", "Authorization Bearer 后缺少令牌")
+    return token
 
 
 def _context_from_jwt(token: str) -> InvocationContext:
