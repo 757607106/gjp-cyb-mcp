@@ -1,7 +1,7 @@
 # ERP 销售开单 MCP 服务 - 服务器部署手册
 
 本文档记录在 Linux 服务器上从零部署 `erp-billing` MCP 服务的完整步骤，
-包含代码拉取、运行时安装、wheel 构建、服务启动、Nginx 反代与 HTTPS 配置。
+包含代码拉取、运行时安装、服务启动、Nginx 反代与 HTTPS 配置。
 适用于运维人员对照执行。
 
 ## 部署信息概览
@@ -16,7 +16,8 @@
 | 对外域名 | `test-mcp-server.yuncyb.com` |
 | MCP 端点 | `POST /mcp`（Streamable HTTP）、`GET /sse`（SSE 兼容） |
 | 启动入口 | `erp_billing.app:app` |
-| 部署目录 | `/root/cyb-mcp-server` |
+| 部署目录 | `/root/gjp-cyb-mcp` |
+| 日志文件 | `/var/log/erp-billing-mcp.log` |
 
 ## 前置条件
 
@@ -31,33 +32,72 @@
 
 ---
 
+## 首次部署步骤总览
+
+| 步骤 | 操作 | 必选 |
+|---|---|---|
+| 1 | 拉取代码 | 是 |
+| 2 | 安装 uv 包管理器 | 是 |
+| 3 | 安装独立 Python 3.11 | 是 |
+| 4 | 同步项目依赖 | 是 |
+| 5 | 构建生产 wheel 制品 | 否（仅制品部署时需要） |
+| 6 | 验证 wheel 制品纯净度 | 否（仅制品部署时需要） |
+| 7 | 配置环境变量 | 是 |
+| 8 | 启动服务 | 是 |
+| 9 | 配置 Nginx 反向代理 + HTTPS | 是 |
+| 10 | 验证 MCP 服务端点 | 是 |
+| 11 | MCP 客户端连接配置 | 是 |
+
+---
+
 ## 步骤 1：拉取代码
 
 生产部署必须基于 `main` 分支或 release tag，禁止用 `test`/`feature/*`
 分支的产物上生产。
 
-### 方式 A：git clone 指定 tag（推荐）
+### 方式 A：git clone main 分支（日常部署推荐）
+
+拉取 `main` 分支最新代码，适合日常更新部署：
+
+```bash
+cd /root
+git clone --branch main https://github.com/757607106/gjp-cyb-mcp.git
+cd gjp-cyb-mcp
+```
+
+后续更新只需 `git pull origin main`，无需重新克隆。
+
+> 如果克隆时报 `destination path already exists`，说明目录已存在，
+> 无需重新克隆，直接进入已有目录拉取：
+>
+> ```bash
+> cd /root/gjp-cyb-mcp
+> git fetch origin
+> git checkout main
+> git pull origin main
+> ```
+
+### 方式 B：git clone 指定 tag（发布版本部署）
+
+锁定特定发布版本，适合可追溯的正式部署：
 
 ```bash
 cd /root
 git clone --branch v0.2.2 --depth 1 https://github.com/757607106/gjp-cyb-mcp.git
+cd gjp-cyb-mcp
 ```
 
-### 方式 B：下载 zip 解压（无 git 环境时）
+### 方式 C：下载 zip 解压（无 git 环境时）
 
 从 GitHub 下载 `gjp-cyb-mcp-main.zip` 上传至服务器，解压到部署目录：
 
 ```bash
-mkdir -p /root/cyb-mcp-server
-unzip gjp-cyb-mcp-main.zip -d /root/cyb-mcp-server
-# 解压后内容在 /root/cyb-mcp-server/gjp-cyb-mcp-main/ 下
+mkdir -p /root/gjp-cyb-mcp
+unzip gjp-cyb-mcp-main.zip -d /root/gjp-cyb-mcp
+cd /root/gjp-cyb-mcp
 ```
 
-后续命令均在项目根目录执行：
-
-```bash
-cd /root/cyb-mcp-server/gjp-cyb-mcp-main
-```
+> 方式 C 无法使用 `git pull` 更新，后续更新需重新下载解压。
 
 ---
 
@@ -96,7 +136,7 @@ uv --version
 不影响系统 Python：
 
 ```bash
-cd /root/cyb-mcp-server/gjp-cyb-mcp-main
+cd /root/gjp-cyb-mcp
 uv python install 3.11
 ```
 
@@ -111,17 +151,22 @@ uv python install 3.11
 ## 步骤 4：同步项目依赖
 
 ```bash
+cd /root/gjp-cyb-mcp
 uv sync --extra dev
 ```
 
-`--extra dev` 安装含开发依赖（用于构建 wheel）。uv 会自动使用上一步装的
-Python 3.11 创建虚拟环境并安装依赖。
+`--extra dev` 安装含开发依赖（用于构建 wheel 和运行测试）。uv 会自动使用
+上一步装的 Python 3.11 创建虚拟环境并安装依赖。
 
 ---
 
-## 步骤 5：构建生产 wheel 制品
+## 步骤 5：构建生产 wheel 制品（可选）
+
+> 仅在需要以 wheel 制品形式部署时执行。直接用 `git clone + uv sync`
+> 部署可跳过本步骤和步骤 6。
 
 ```bash
+cd /root/gjp-cyb-mcp
 uv build
 ```
 
@@ -135,7 +180,7 @@ uv build
 
 ---
 
-## 步骤 6：验证 wheel 制品纯净度
+## 步骤 6：验证 wheel 制品纯净度（可选）
 
 ```bash
 unzip -l dist/gjp_erp_billing_mcp-0.1.0-py3-none-any.whl
@@ -147,7 +192,7 @@ unzip -l dist/gjp_erp_billing_mcp-0.1.0-py3-none-any.whl
 
 ---
 
-## 步骤 7：配置生产环境变量
+## 步骤 7：配置环境变量
 
 生产环境变量由部署平台注入，系统环境变量优先于 `config/production.env`
 文件值。在启动服务的 shell 或 systemd 配置中设置：
@@ -165,10 +210,15 @@ export ERP_BILLING_TIMEOUT_SECONDS=30
 | `ERP_BILLING_BASE_URL` | ERP 接口基地址 | 是 |
 | `ERP_BILLING_JWT_SECRET` | JWT HS256 验签密钥，缺失拒绝启动 | 是（生产） |
 | `ERP_BILLING_TIMEOUT_SECONDS` | ERP API 超时秒数，默认 30 | 否 |
+| `GJP_LOG_LEVEL` | 日志级别：DEBUG / INFO（默认 INFO） | 否 |
+| `GJP_DEBUG_DUMP_CREDENTIALS` | DEBUG 模式下输出完整 token，默认关闭 | 否 |
 
 > 提示：若暂无 `ERP_BILLING_JWT_SECRET`，可先不设 `GJP_ENV=production`，
 > 服务会以测试模式启动（走 `DirectJwtIdentityResolver` 不验签），仅用于
 > 联调验证，不可作为正式生产配置。
+
+> 安全提示：`ERP_BILLING_JWT_SECRET` 仅通过系统环境变量注入，不可写入
+> `config/production.env` 文件或代码仓库。
 
 ---
 
@@ -177,8 +227,9 @@ export ERP_BILLING_TIMEOUT_SECONDS=30
 ### 方式 A：nohup 临时常驻（快速验证）
 
 ```bash
+cd /root/gjp-cyb-mcp
 nohup uv run uvicorn erp_billing.app:app --host 0.0.0.0 --port 8102 \
-  > /var/log/erp-billing-mcp.log 2>&1 &
+  >> /var/log/erp-billing-mcp.log 2>&1 &
 ```
 
 验证进程与端口：
@@ -201,7 +252,7 @@ After=network.target
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/root/cyb-mcp-server/gjp-cyb-mcp-main
+WorkingDirectory=/root/gjp-cyb-mcp
 Environment=GJP_ENV=production
 Environment=ERP_BILLING_BASE_URL=https://new.yuncyb.com/aicyberp-api
 Environment=ERP_BILLING_JWT_SECRET=<HS256 验签密钥>
@@ -376,32 +427,103 @@ curl -i -X POST https://test-mcp-server.yuncyb.com/mcp \
 
 ---
 
-## 代码更新流程（git 管理后）
+## 日常更新流程
 
-部署目录改为 git 克隆后（见步骤 1），后续 `main` 分支修复 bug，
-更新只需两步：
+`main` 分支修复 bug 后，在服务器上执行以下命令更新部署。
+
+### 更新流程（nohup 方式）
 
 ```bash
-# 1. 停服务 + 拉取最新代码 + 同步依赖
-pkill -f "uvicorn erp_billing.app" ; cd /root/gjp-cyb-mcp && git pull && uv sync --extra dev
+# 1. 停止当前服务
+pkill -f "uvicorn erp_billing.app"
 
-# 2. 重启服务（带环境变量）
+# 2. 拉取最新代码 + 同步依赖
+cd /root/gjp-cyb-mcp
+git pull origin main
+uv sync --extra dev
+
+# 3. 重启服务（带环境变量）
 export ERP_BILLING_BASE_URL=https://test-ai.yuncyb.com/aicyberp-api
 nohup uv run uvicorn erp_billing.app:app --host 0.0.0.0 --port 8102 \
-  > /var/log/erp-billing-mcp.log 2>&1 &
+  >> /var/log/erp-billing-mcp.log 2>&1 &
+
+# 4. 验证
+sleep 2 && tail -n 10 /var/log/erp-billing-mcp.log && ss -ltnp | grep 8102
 ```
 
 > 注意：每次重启需重新 `export ERP_BILLING_BASE_URL`，新进程不继承
-> 旧 shell 的环境变量。若用 systemd（步骤 8 方式 B），环境变量写在
-> service 文件里则无需重复 export，更新流程简化为：
-> `git pull && uv sync --extra dev && systemctl restart erp-billing-mcp`。
+> 旧 shell 的环境变量。
 
-旧 zip 解压目录（如 `/root/cyb-mcp-server`）确认不再使用后可删除
-清理空间：
+### 更新流程（systemd 方式）
 
 ```bash
-rm -rf /root/cyb-mcp-server
+cd /root/gjp-cyb-mcp
+git pull origin main
+uv sync --extra dev
+systemctl restart erp-billing-mcp
+systemctl status erp-billing-mcp
 ```
+
+> systemd 方式环境变量写在 service 文件里，无需重复 export。
+
+---
+
+## 临时 DEBUG 调试
+
+### 开启 DEBUG + 完整 token 日志
+
+```bash
+# 1. 停止当前服务
+pkill -f "uvicorn erp_billing.app"
+
+# 2. 设置环境变量（完整 token 调试）
+cd /root/gjp-cyb-mcp
+export ERP_BILLING_BASE_URL=https://test-ai.yuncyb.com/aicyberp-api
+export GJP_LOG_LEVEL=DEBUG
+export GJP_DEBUG_DUMP_CREDENTIALS=true
+
+# 3. 启动服务
+nohup uv run uvicorn erp_billing.app:app --host 0.0.0.0 --port 8102 \
+  >> /var/log/erp-billing-mcp.log 2>&1 &
+
+# 4. 实时跟踪日志
+tail -f /var/log/erp-billing-mcp.log
+```
+
+看完日志后按 `Ctrl + C` 退出 tail，服务继续在后台运行。
+
+### DEBUG 模式日志对比
+
+| 环境变量 | 日志输出 | 用途 |
+|---|---|---|
+| `GJP_LOG_LEVEL=DEBUG` | `auth=Bearer …(len=440)` | 日常调试，不暴露 token |
+| `GJP_LOG_LEVEL=DEBUG` + `GJP_DEBUG_DUMP_CREDENTIALS=true` | `auth=Bearer <完整token>` | 排查鉴权问题 |
+
+### 过滤关键日志
+
+```bash
+# 只看错误
+grep -i "error\|exception\|500" /var/log/erp-billing-mcp.log | tail -n 30
+
+# 只看 ERP 请求
+grep "ERP 请求" /var/log/erp-billing-mcp.log | tail -n 30
+
+# 只看工具调用
+grep "MCP 调用" /var/log/erp-billing-mcp.log | tail -n 30
+```
+
+### 切回 INFO（调试完毕）
+
+```bash
+pkill -f "uvicorn erp_billing.app"
+cd /root/gjp-cyb-mcp
+export ERP_BILLING_BASE_URL=https://test-ai.yuncyb.com/aicyberp-api
+nohup uv run uvicorn erp_billing.app:app --host 0.0.0.0 --port 8102 \
+  >> /var/log/erp-billing-mcp.log 2>&1 &
+```
+
+> 查看完整运维操作手册（停止服务、DEBUG、生产启用）见
+> `docs/deployment/server-service-ops.md`。
 
 ---
 
@@ -411,7 +533,6 @@ rm -rf /root/cyb-mcp-server
 |---|---|
 | uv 版本 | `uv --version` → `uv 0.12.1` |
 | Python 版本 | `uv run python --version` → `Python 3.11.x` |
-| wheel 纯净 | `unzip -l dist/*.whl` → 仅 `src/` 代码 |
 | 服务进程 | `ss -ltnp \| grep 8102` → 端口在监听 |
 | 启动日志 | `tail /var/log/erp-billing-mcp.log` → 无异常 |
 | Nginx 配置 | `nginx -t` → `test is successful` |
@@ -480,10 +601,10 @@ Streamable HTTP 用 `https://test-mcp-server.yuncyb.com/mcp`，SSE 用
 
 ```bash
 pkill -f "uvicorn erp_billing.app"
-cd /root/cyb-mcp-server/gjp-cyb-mcp-main
+cd /root/gjp-cyb-mcp
 export ERP_BILLING_BASE_URL=https://test-ai.yuncyb.com/aicyberp-api
 nohup uv run uvicorn erp_billing.app:app --host 0.0.0.0 --port 8102 \
-  > /var/log/erp-billing-mcp.log 2>&1 &
+  >> /var/log/erp-billing-mcp.log 2>&1 &
 ```
 
 若要走生产模式（`GJP_ENV=production` 加载 `production.env`），
