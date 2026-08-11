@@ -21,7 +21,6 @@ from mcp import types
 from mcp.server.lowlevel import Server
 from mcp.server.lowlevel.server import request_ctx
 from mcp.server.sse import SseServerTransport
-from mcp.server.stdio import stdio_server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -42,6 +41,21 @@ from .toolset import AgentScopeToolSet
 logger = logging.getLogger(__name__)
 
 _TOOL_RESULT_WARN_BYTES = 512 * 1024
+
+
+def _snake_to_camel(name: str) -> str:
+    """把 snake_case 工具名转为 camelCase 后对外发布。
+
+    MCP 客户端（如云印 AI 平台）会把工具名规范化为 camelCase 暴露给模型，
+    若服务端仍下发 snake_case，模型会在 prompt 的 snake_case 与工具列表的
+    camelCase 之间混淆而调用失败。在导出层统一转为 camelCase，让两端一致。
+    """
+    parts = name.split("_")
+    if len(parts) <= 1:
+        return name
+    return parts[0] + "".join(
+        part[:1].upper() + part[1:] for part in parts[1:] if part
+    )
 
 
 class McpIdentityResolver(Protocol):
@@ -97,7 +111,7 @@ def create_mcp_server(
         instructions="业务身份由服务端认证，调用工具时不要传递账号、密码或访问令牌。",
     )
     exported_tools = {
-        tool.name: tool
+        _snake_to_camel(tool.name): tool
         for tool in schema_toolset.executable_tools()
     }
 
@@ -106,7 +120,7 @@ def create_mcp_server(
         logger.info("MCP 工具列表 tools=%d", len(exported_tools))
         return [
             types.Tool(
-                name=tool.name,
+                name=exported_name,
                 description=tool.description,
                 inputSchema=tool.input_schema,
                 outputSchema=getattr(tool, "output_schema", None),
@@ -115,7 +129,7 @@ def create_mcp_server(
                     destructiveHint=not tool.is_read_only,
                 ),
             )
-            for tool in exported_tools.values()
+            for exported_name, tool in exported_tools.items()
         ]
 
     @server.call_tool()
@@ -123,7 +137,7 @@ def create_mcp_server(
         started = time.perf_counter()
         request_context = request_ctx.get()
         try:
-            tool = exported_tools[name]
+            schema_tool = exported_tools[name]
         except KeyError as exc:
             raise ValueError("未知工具：%s" % name) from exc
         logger.info("MCP 调用开始 tool=%s", name)
@@ -165,10 +179,10 @@ def create_mcp_server(
                     type(runtime_toolset).__name__,
                 ),
             )
-        tool = runtime_toolset.get(name)
+        tool = runtime_toolset.get(schema_tool.name)
         if tool.is_external_tool:
             raise ValueError("MCP 不支持执行外部 HITL 工具：%s" % name)
-        if tool.input_schema != exported_tools[name].input_schema:
+        if tool.input_schema != schema_tool.input_schema:
             raise ValueError("运行时工具 schema 与 MCP 发布版本不一致：%s" % name)
         with runtime_toolset.bind_context(context):
             try:
@@ -270,16 +284,6 @@ async def _invoke_tool(
     except json.JSONDecodeError:
         return {"ok": True, "result": text}
     return payload if isinstance(payload, dict) else {"ok": True, "result": payload}
-
-
-async def run_stdio_server(server: Server) -> None:
-    """以标准 MCP STDIO 传输运行。"""
-    async with stdio_server() as (read_stream, write_stream):
-        await server.run(
-            read_stream,
-            write_stream,
-            server.create_initialization_options(),
-        )
 
 
 def create_mcp_http_app(

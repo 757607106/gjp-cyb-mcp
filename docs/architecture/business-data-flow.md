@@ -16,7 +16,7 @@ flowchart LR
     Session --> Catalog["会话内商品目录"]
     Session --> Preview["不可变销售单预览"]
     Preview --> Confirm{"用户明确确认?"}
-    Confirm -->|是| Submit["submit_sales_order"]
+    Confirm -->|是| Submit["submitSalesOrder"]
     Submit --> ERP
     Confirm -->|否| UI
     Session --> Result["缺失字段 / 候选 / 商品匹配"]
@@ -25,9 +25,9 @@ flowchart LR
 
 | 数据 | 模型可见 | Tool Schema 可见 | 存放位置 |
 |---|---:|---:|---|
-| 当前订单完整文本 | 是 | 是 | Agent / `preview_sales_order` 参数 |
-| 客户、仓库、经手人、录单日期、备注 | 是 | 是 | `preview_sales_order` 参数 |
-| `preview_id` / `idempotency_key` / 确认标志 | 是 | 是 | `submit_sales_order` 参数 |
+| 当前订单完整文本 | 是 | 是 | Agent / `previewSalesOrder` 参数 |
+| 客户、仓库、经手人、录单日期、备注 | 是 | 是 | `previewSalesOrder` 参数 |
+| `preview_id` / `idempotency_key` / 确认标志 | 是 | 是 | `submitSalesOrder` 参数 |
 | `tenant_id` / `account_id` / `session_id` | 否 | 否 | `InvocationContext` |
 | MCP JWT / OAuth2 | 否 | 否 | 网关或认证层 |
 | 云创业版上游 Bearer | 否 | 否 | 服务端连接存储 |
@@ -55,17 +55,17 @@ flowchart LR
 
 1. MCP 认证层生成 `InvocationContext`。
 2. `McpToolSetResolver` 返回当前会话的 `BillingToolSet`。
-3. `sync_products` 校验 `billing:read`。
+3. `syncProducts` 校验 `billing:read`。
 4. `BillingApiPort.fetch_products(context)` 获取当前账套商品。
 5. Adapter 只调用源码中固定的 ERP 相对路径。
 6. `ErpBillingSession.replace_products()` 原子替换当前会话的内存目录。
 
-`preview_sales_order` 发现商品目录为空时也会自动同步一次。商品目录不写入仓库文件或
+`previewSalesOrder` 发现商品目录为空时也会自动同步一次。商品目录不写入仓库文件或
 共享进程级缓存。
 
 ## 4. 查询、预览与提交
 
-`search_products` 对每个关键词返回：
+`searchProducts` 对每个关键词返回：
 
 - `matched`：唯一精确命中；
 - `ambiguous`：存在多个精确、包含或模糊候选；
@@ -74,7 +74,7 @@ flowchart LR
 销售单业务必填项为客户、出库仓库、经手人、录单日期和商品明细；备注可选且最多
 200 字。`id=0` 与 `save_type` 是接口必填但由工具内部管理，不由客户填写。
 
-`preview_sales_order` 每次从当前订单完整文本重新计算并解析基础资料：
+`previewSalesOrder` 每次从当前订单完整文本重新计算并解析基础资料：
 
 ```json
 {
@@ -96,7 +96,7 @@ flowchart LR
 基础资料和商品全部唯一确定且单位一致时，工具保存不可变 API Payload，并返回
 `preview_id` 与可展示的 `preview`。
 
-`submit_sales_order(preview_id, idempotency_key, confirmed_by_user)` 校验
+`submitSalesOrder(preview_id, idempotency_key, confirmed_by_user)` 校验
 `billing:write`。只有 `confirmed_by_user=true` 才调用 `POST /sales/orders`；成功后
 同一会话复用幂等结果。`save_type` 映射为草稿 `0`、预收 `1`、正式 `2`。
 

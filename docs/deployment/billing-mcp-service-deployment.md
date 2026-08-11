@@ -76,11 +76,11 @@ JWT payload 解析 tenantId、loginId 构造 InvocationContext，并把同一个
 
 | 工具 | 权限 | 副作用 |
 |---|---|---|
-| `sync_products` | `billing:read` | 替换当前 Session 内存商品目录 |
-| `search_products` | `billing:read` | 无 |
-| `search_billing_references` | `billing:read` | 无 |
-| `preview_sales_order` | `billing:read` | 保存会话内不可变预览 |
-| `submit_sales_order` | `billing:write` | `POST /sales/orders` |
+| `syncProducts` | `billing:read` | 替换当前 Session 内存商品目录 |
+| `searchProducts` | `billing:read` | 无 |
+| `searchBillingReferences` | `billing:read` | 无 |
+| `previewSalesOrder` | `billing:read` | 保存会话内不可变预览 |
+| `submitSalesOrder` | `billing:write` | `POST /sales/orders` |
 
 ## 完整销售单契约
 
@@ -91,7 +91,7 @@ JWT payload 解析 tenantId、loginId 构造 InvocationContext，并把同一个
 
 ```json
 {
-  "name": "preview_sales_order",
+  "name": "previewSalesOrder",
   "arguments": {
     "order_text": "土豆5斤，牛肉2斤",
     "customer": "客户甲",
@@ -112,7 +112,7 @@ JWT payload 解析 tenantId、loginId 构造 InvocationContext，并把同一个
 
 ```json
 {
-  "name": "submit_sales_order",
+  "name": "submitSalesOrder",
   "arguments": {
     "preview_id": "sales-preview-...",
     "idempotency_key": "conversation-42-sales-v1",

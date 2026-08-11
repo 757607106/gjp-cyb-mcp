@@ -95,9 +95,9 @@ sequenceDiagram
 
 ```mermaid
 flowchart TB
-    ERP["ERP 商品 API"] --> Sync["sync_products"] --> Catalog["会话内商品目录"]
-    Query["商品关键词"] --> Search["search_products"] --> Matcher["确定性与模糊匹配"]
-    Text["当前订单完整文本"] --> Draft["prepare_sales_order"] --> Matcher
+    ERP["ERP 商品 API"] --> Sync["syncProducts"] --> Catalog["会话内商品目录"]
+    Query["商品关键词"] --> Search["searchProducts"] --> Matcher["确定性与模糊匹配"]
+    Text["当前订单完整文本"] --> Draft["previewSalesOrder"] --> Matcher
     Catalog --> Matcher
     Matcher --> Confirmed["confirmedProducts"]
     Matcher --> Recommended["recommendedProducts / similarProducts"]
@@ -105,10 +105,10 @@ flowchart TB
     Recommended --> Choice["用户选择 ptypeid"]
     Choice --> Retry["完整文本 + confirmed_products"] --> Draft
     Draft --> Preview["不可变 preview"] --> UserConfirm{"用户明确确认?"}
-    UserConfirm -->|是| Submit["submit_sales_order"] --> SalesApi["POST /sales/orders"]
+    UserConfirm -->|是| Submit["submitSalesOrder"] --> SalesApi["POST /sales/orders"]
 ```
 
-工具还包含 `search_sales_order_options` 与 `submit_sales_order`。服务不生成草稿文件；
+工具还包含 `search_sales_order_options` 与 `submitSalesOrder`。服务不生成草稿文件；
 只有确认提交工具在满足 `billing:write`、当前预览和幂等键后写入 ERP。
 
 ## 5. 隔离规则
