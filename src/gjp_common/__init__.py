@@ -3,7 +3,6 @@
 from .connections import (
     BusinessApiCredential,
     BusinessApiCredentialProvider,
-    StaticBusinessApiCredentialProvider,
     business_api_url,
     normalize_business_api_base_url,
 )
@@ -18,7 +17,6 @@ __all__ = [
     "DomainError",
     "InvocationContext",
     "InvocationContextStore",
-    "StaticBusinessApiCredentialProvider",
     "business_api_url",
     "normalize_business_api_base_url",
 ]

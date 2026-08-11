@@ -29,14 +29,14 @@ sequenceDiagram
     participant E as 固定 URL ERP API
 
     U->>A: 商品与销售单信息
-    A->>M: preview_sales_order + MCP Bearer
+    A->>M: previewSalesOrder + MCP Bearer
     M->>C: 按 InvocationContext 解析 ERP Bearer
     M->>E: GET 商品/客户/仓库/职员
     E-->>M: 当前账号真实数据
     M-->>A: 缺失项/候选/商品匹配/preview
     A-->>U: 展示预览并询问确认
     U->>A: 明确确认
-    A->>M: submit_sales_order
+    A->>M: submitSalesOrder
     M->>E: POST /sales/orders
     E-->>M: order_id
     M-->>A: submitted=true
@@ -46,11 +46,11 @@ sequenceDiagram
 
 | 工具 | 说明 |
 |---|---|
-| `sync_products` | 主动刷新隔离会话商品目录 |
-| `search_products` | 独立查商品；模糊结果只推荐 |
-| `search_billing_references` | `reference_type` 为 customer/warehouse/handler |
-| `preview_sales_order` | 校验完整销售单并生成不可变预览 |
-| `submit_sales_order` | 明确确认后真实写单 |
+| `syncProducts` | 主动刷新隔离会话商品目录 |
+| `searchProducts` | 独立查商品；模糊结果只推荐 |
+| `searchBillingReferences` | `reference_type` 为 customer/warehouse/handler |
+| `previewSalesOrder` | 校验完整销售单并生成不可变预览 |
+| `submitSalesOrder` | 明确确认后真实写单 |
 
 业务必填项：客户、出库仓库、经手人、录单日期和商品明细。备注可选。接口技术字段
 `id=0`、`save_type=0/1/2` 由工具内部生成。

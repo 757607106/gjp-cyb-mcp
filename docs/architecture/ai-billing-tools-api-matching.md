@@ -18,15 +18,15 @@ flowchart LR
     OCR --> FullText
     FullText --> Agent["Billing Agent"]
 
-    Agent --> Sync["sync_products"]
-    Agent --> Search["search_products"]
-    Agent --> Options["search_billing_references"]
-    Agent --> Draft["preview_sales_order"]
-    Agent --> Submit["submit_sales_order"]
-    Agent --> Detail["get_sales_order"]
-    Agent --> ListOrders["list_sales_orders"]
-    Agent --> Void["void_sales_order"]
-    Agent --> Modify["update_sales_order"]
+    Agent --> Sync["syncProducts"]
+    Agent --> Search["searchProducts"]
+    Agent --> Options["searchBillingReferences"]
+    Agent --> Draft["previewSalesOrder"]
+    Agent --> Submit["submitSalesOrder"]
+    Agent --> Detail["getSalesOrder"]
+    Agent --> ListOrders["listSalesOrders"]
+    Agent --> Void["voidSalesOrder"]
+    Agent --> Modify["updateSalesOrder"]
 
     Sync --> Port["BillingApiPort"]
     Sync --> Catalog["当前 Session 的租户隔离内存商品目录"]
@@ -45,7 +45,7 @@ flowchart LR
 ```
 
 MCP 不接收音频、图片、附件、文件路径或媒体 URL，也不提供 ASR/OCR。即使
-`source` 是 `voice` 或 `image`，`preview_sales_order` 接收的仍然是前端整理后的文本。
+`source` 是 `voice` 或 `image`，`previewSalesOrder` 接收的仍然是前端整理后的文本。
 
 ## 2. 身份与 API 边界
 
@@ -114,26 +114,26 @@ Adapter 按 20 条一页自动翻页；响应由 `normalize_live_product_rows()`
 
 | 工具 | 输入 | 职责 | 主要输出 |
 |---|---|---|---|
-| `sync_products` | `limit?` | 从当前 ERP 账号同步商品并替换当前 Session 的内存目录 | `catalog_version`、`product_count`、`sample_products` |
-| `list_products` | `page?`、`page_size?` | 分页列出当前会话商品目录中的所有商品；目录为空时自动同步 | `page`、`page_size`、`total`、`products` |
-| `search_products` | `keyword`、`limit?` | 按 ID、编号、条码、名称、同义词组和模糊相似度查询已有商品 | 唯一商品或顶层 `recommendations` |
-| `search_billing_references` | `reference_type`、`keyword?`、`limit?` | 查询客户、出库仓库或经手人候选 | 可用基础资料最小字段 |
-| `preview_sales_order` | 完整销售单业务字段、`save_type`、`confirmed_products?`、`partial?` | 校验必填项、解析基础资料、匹配商品并保存不可变预览 | 缺失项、候选、商品数组、`preview_id` |
-| `submit_sales_order` | `preview_id`、`idempotency_key`、`confirmed_by_user` | 明确确认后调用真实写单接口 | `order_id`、保存类型、幂等重放标志 |
-| `get_sales_order` | `order_id` | 查询销售单详情，含商品明细、收款记录和状态 | `order`（完整 SalesOrderVO） |
-| `list_sales_orders` | `page?`、`page_size?`、`sort_by?`、`order_type?`、`start_date?`、`end_date?`、`status?`、`payment_status?`、`return_status?`、`order_no?`、`customer_id?` | 分页查询销售单列表，支持录单日常和客户查询 | `page`、`page_size`、`total`、`orders` |
-| `void_sales_order` | `order_id`、`confirmed_by_user` | 用户确认后作废销售单，不可恢复 | `voided`、`order_id` |
-| `update_sales_order` | `order_id`、`order_date`、`handler_id`、`items`、`customer_id?`、`warehouse_id?`、`save_type?`、`remark?`、`confirmed_by_user` | 用户确认后修改已存在销售单；建议先查详情 | `modified`、`order_id` |
+| `syncProducts` | `limit?` | 从当前 ERP 账号同步商品并替换当前 Session 的内存目录 | `catalog_version`、`product_count`、`sample_products` |
+| `listProducts` | `page?`、`page_size?` | 分页列出当前会话商品目录中的所有商品；目录为空时自动同步 | `page`、`page_size`、`total`、`products` |
+| `searchProducts` | `keyword`、`limit?` | 按 ID、编号、条码、名称、同义词组和模糊相似度查询已有商品 | 唯一商品或顶层 `recommendations` |
+| `searchBillingReferences` | `reference_type`、`keyword?`、`limit?` | 查询客户、出库仓库或经手人候选 | 可用基础资料最小字段 |
+| `previewSalesOrder` | 完整销售单业务字段、`save_type`、`confirmed_products?`、`partial?` | 校验必填项、解析基础资料、匹配商品并保存不可变预览 | 缺失项、候选、商品数组、`preview_id` |
+| `submitSalesOrder` | `preview_id`、`idempotency_key`、`confirmed_by_user` | 明确确认后调用真实写单接口 | `order_id`、保存类型、幂等重放标志 |
+| `getSalesOrder` | `order_id` | 查询销售单详情，含商品明细、收款记录和状态 | `order`（完整 SalesOrderVO） |
+| `listSalesOrders` | `page?`、`page_size?`、`sort_by?`、`order_type?`、`start_date?`、`end_date?`、`status?`、`payment_status?`、`return_status?`、`order_no?`、`customer_id?` | 分页查询销售单列表，支持录单日常和客户查询 | `page`、`page_size`、`total`、`orders` |
+| `voidSalesOrder` | `order_id`、`confirmed_by_user` | 用户确认后作废销售单，不可恢复 | `voided`、`order_id` |
+| `updateSalesOrder` | `order_id`、`order_date`、`handler_id`、`items`、`customer_id?`、`warehouse_id?`、`save_type?`、`remark?`、`confirmed_by_user` | 用户确认后修改已存在销售单；建议先查详情 | `modified`、`order_id` |
 
-十个工具的返回值都是 MCP 结构化 JSON 内容。`submit_sales_order`、
-`void_sales_order` 和 `update_sales_order` 具有 ERP 写副作用，要求 `billing:write`、
-明确用户确认；`submit_sales_order` 额外要求幂等键。`get_sales_order` 和
-`list_sales_orders` 是只读操作，要求 `billing:read`。服务不维护可逐行修改的文件草稿，
+十个工具的返回值都是 MCP 结构化 JSON 内容。`submitSalesOrder`、
+`voidSalesOrder` 和 `updateSalesOrder` 具有 ERP 写副作用，要求 `billing:write`、
+明确用户确认；`submitSalesOrder` 额外要求幂等键。`getSalesOrder` 和
+`listSalesOrders` 是只读操作，要求 `billing:read`。服务不维护可逐行修改的文件草稿，
 但会在隔离 Session 中短期保存不可变提交预览和成功幂等结果。
 
 ## 4. 商品目录同步
 
-`sync_products` 的处理顺序如下：
+`syncProducts` 的处理顺序如下：
 
 1. 从 `InvocationContext` 取得当前租户和账号，并校验 `billing:read`。
 2. 通过 `BillingApiPort.fetch_products()` 调用当前 ERP 账号。
@@ -153,10 +153,10 @@ Adapter 按 20 条一页自动翻页；响应由 `normalize_live_product_rows()`
 }
 ```
 
-`search_products` 和 `preview_sales_order` 都只使用当前 Session 已加载的内存目录。
-`search_products` 在目录为空时返回错误并提示先调用 `sync_products`；
-`preview_sales_order` 在目录为空时自动执行一次同步（与 `sync_products` 相同的鉴权和
-归一化流程）后再匹配，避免“先报错、再由模型补调 `sync_products`”的额外模型
+`searchProducts` 和 `previewSalesOrder` 都只使用当前 Session 已加载的内存目录。
+`searchProducts` 在目录为空时返回错误并提示先调用 `syncProducts`；
+`previewSalesOrder` 在目录为空时自动执行一次同步（与 `syncProducts` 相同的鉴权和
+归一化流程）后再匹配，避免“先报错、再由模型补调 `syncProducts`”的额外模型
 往返；自动同步失败时直接返回底层错误。Session 释放后，同步得到的商品目录
 随之释放，不提供运行时商品目录文件。
 
@@ -326,7 +326,7 @@ ERP 目录中只有部位级商品（"牛腱子""牛肉-牛腩"），没有单�
 
 ## 7. 从完整文本重建草稿
 
-首次开单和每轮修改都调用 `preview_sales_order`。前端或对话层必须先把增量表达整理成
+首次开单和每轮修改都调用 `previewSalesOrder`。前端或对话层必须先把增量表达整理成
 当前订单的完整文本，服务端不依赖上一轮草稿做增量修改。
 
 ```text
@@ -335,7 +335,7 @@ ERP 目录中只有部位级商品（"牛腱子""牛肉-牛腩"），没有单�
 下一次 order_text：牛肉20斤，土豆5斤，西红柿3斤
 ```
 
-`preview_sales_order` 内部先解析完整文本为订单行，再做商品匹配。解析规则：
+`previewSalesOrder` 内部先解析完整文本为订单行，再做商品匹配。解析规则：
 
 - **分隔符**：换行、逗号（中英文）、分号（中英文），以及"数字+单位"后的空格
   （如 `鸡蛋21个 牛肉10斤` 拆为两行）。数量前置模式（如 `来5斤 洋芋`）中的
@@ -416,7 +416,7 @@ ERP 目录中只有部位级商品（"牛腱子""牛肉-牛腩"），没有单�
 ## 8. 前端确认推荐商品
 
 用户改选推荐商品后，调用方根据完整订单文本中的订单行编号生成 `line_id`，把稳定
-的 `product_id` 连同当前完整订单文本再次提交给 `preview_sales_order`。`confirmed_products`
+的 `product_id` 连同当前完整订单文本再次提交给 `previewSalesOrder`。`confirmed_products`
 格式为 JSON 数组，每个元素包含 `line_id` 和 `product_id`：
 
 ```json
@@ -451,7 +451,7 @@ ERP 目录中只有部位级商品（"牛腱子""牛肉-牛腩"），没有单�
 完整订单文本重新生成行号；失效或跨行的旧确认不会被静默接受。
 
 这一步只生成不可变预览，不代表已写入 ERP，也不会生成 JSON 文件。前端或 Agent
-展示当前预览并取得明确确认后，调用 `submit_sales_order` 完成真实提交。
+展示当前预览并取得明确确认后，调用 `submitSalesOrder` 完成真实提交。
 
 ## 9. 安全与隔离
 
