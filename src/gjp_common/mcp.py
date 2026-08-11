@@ -199,7 +199,7 @@ def create_mcp_server(
 
 
 def _masked_authorization(mcp_request_context: Any) -> str:
-    """脱敏输出 Authorization 头，只保留 scheme 和前 8 位，便于排查平台传票格式。"""
+    """脱敏输出 Authorization 头，只保留 scheme 和长度，不暴露任何 token 字符。"""
     request = getattr(mcp_request_context, "request", None)
     headers = getattr(request, "headers", None)
     value = headers.get("authorization", "") if headers is not None else ""
@@ -209,7 +209,7 @@ def _masked_authorization(mcp_request_context: Any) -> str:
     token = token.strip()
     if not token:
         return scheme + " <空>"
-    return "%s %s…(len=%d)" % (scheme, token[:8], len(token))
+    return "%s …(len=%d)" % (scheme, len(token))
 
 
 def _request_headers(mcp_request_context: Any) -> dict[str, str]:
