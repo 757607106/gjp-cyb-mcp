@@ -126,19 +126,20 @@ def create_mcp_server(
             tool = exported_tools[name]
         except KeyError as exc:
             raise ValueError("未知工具：%s" % name) from exc
-        logger.info(
-            "MCP 调用开始 tool=%s auth=%s args=%s",
-            name,
-            _masked_authorization(request_context),
-            clip_log_text(json.dumps(arguments, ensure_ascii=False)),
-        )
-        if credential_dump_enabled() and logger.isEnabledFor(logging.DEBUG):
-            # 凭据原文仅在显式开启 GJP_DEBUG_DUMP_CREDENTIALS 时输出，生产不落盘
+        logger.info("MCP 调用开始 tool=%s", name)
+        if logger.isEnabledFor(logging.DEBUG):
             logger.debug(
-                "MCP 请求头 tool=%s headers=%s",
+                "MCP 请求详情 tool=%s auth=%s args=%s",
                 name,
-                json.dumps(_request_headers(request_context), ensure_ascii=False),
+                _masked_authorization(request_context),
+                clip_log_text(json.dumps(arguments, ensure_ascii=False)),
             )
+            if credential_dump_enabled():
+                logger.debug(
+                    "MCP 请求头 tool=%s headers=%s",
+                    name,
+                    json.dumps(_request_headers(request_context), ensure_ascii=False),
+                )
         try:
             resolved = identity_resolver.resolve(request_context)
             context = await resolved if inspect.isawaitable(resolved) else resolved
@@ -184,6 +185,12 @@ def create_mcp_server(
                     error_text(exc),
                 )
                 raise
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "MCP 调用返回 tool=%s result=%s",
+                name,
+                clip_log_text(json.dumps(result, ensure_ascii=False)),
+            )
         logger.info(
             "MCP 调用成功 tool=%s tenant=%s account=%s session=%s request=%s elapsed=%dms",
             name,
