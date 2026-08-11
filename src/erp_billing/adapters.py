@@ -497,14 +497,16 @@ class BusinessAuthenticatedJsonClient:
             headers["Content-Type"] = "application/json"
             body_bytes = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         if logger.isEnabledFor(logging.DEBUG):
-            # 请求头含凭据，仅在显式开启 GJP_DEBUG_DUMP_CREDENTIALS 时输出原文
             logger.debug(
-                "ERP 请求开始 method=%s url=%s headers=%s",
+                "ERP 请求开始 method=%s url=%s headers=%s body=%s",
                 method,
                 url,
                 json.dumps(headers, ensure_ascii=False)
                 if credential_dump_enabled()
                 else "<已脱敏>",
+                clip_log_text(json.dumps(payload, ensure_ascii=False))
+                if payload is not None
+                else "<无>",
             )
         started = time.perf_counter()
         request = urllib.request.Request(
