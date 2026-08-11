@@ -118,6 +118,38 @@ def test_local_resolver_accepts_unsigned_token() -> None:
     assert context.tenant_id == "t"
 
 
+def test_local_resolver_strips_duplicate_bearer_prefix() -> None:
+    """客户端误传 Bearer Bearer <token> 时应剥离多余前缀，下游拿到纯 token。"""
+    header_b64 = _b64url(json.dumps({"alg": "none"}).encode("utf-8"))
+    payload_b64 = _b64url(json.dumps({"tenantId": "t", "loginId": "u"}).encode("utf-8"))
+    jwt = header_b64 + "." + payload_b64 + ".sig"
+    mcp_context = SimpleNamespace(
+        request=SimpleNamespace(headers={"authorization": "Bearer Bearer " + jwt}),
+    )
+    store = SessionBearerStore()
+    resolver = DirectJwtIdentityResolver(store)
+
+    context = resolver.resolve(mcp_context)
+
+    assert context.tenant_id == "t"
+    assert store.resolve(context).value == jwt
+
+
+def test_verified_resolver_strips_duplicate_bearer_prefix() -> None:
+    """验签器同样能剥离客户端误传的多余 Bearer 前缀。"""
+    store = SessionBearerStore()
+    resolver = VerifiedJwtIdentityResolver(store, SECRET)
+    token = _make_token(_valid_payload())
+    mcp_context = SimpleNamespace(
+        request=SimpleNamespace(headers={"authorization": "Bearer Bearer " + token}),
+    )
+
+    context = resolver.resolve(mcp_context)
+
+    assert context.tenant_id == "tenant-1"
+    assert store.resolve(context).value == token
+
+
 def test_composition_root_selects_resolver_by_env(monkeypatch: pytest.MonkeyPatch) -> None:
     store = SessionBearerStore()
     monkeypatch.setenv("ERP_BILLING_JWT_SECRET", SECRET)
