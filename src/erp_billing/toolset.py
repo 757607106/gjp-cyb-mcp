@@ -255,6 +255,121 @@ _UPDATE_SALES_ORDER_OUTPUT_SCHEMA = {
 }
 
 
+# 输入 schema：为含枚举和范围约束的参数补充 JSON Schema 约束，
+# 使模型在调用前就被限制在合法值域内，而非运行时才被拦截。
+# 只收紧约束（加 enum/minimum/maximum），不改变参数结构。
+
+_LIST_PRODUCTS_INPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "page": {"type": "integer", "minimum": 1, "default": 1},
+        "page_size": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20},
+    },
+}
+
+_SEARCH_BILLING_REFERENCES_INPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "reference_type": {
+            "type": "string",
+            "enum": ["customer", "warehouse", "handler"],
+        },
+        "keyword": {"type": "string"},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 10},
+    },
+    "required": ["reference_type"],
+}
+
+_PREVIEW_SALES_ORDER_INPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "order_text": {"type": "string"},
+        "customer": {"type": "string"},
+        "warehouse": {"type": "string"},
+        "handler": {"type": "string"},
+        "order_date": {"type": "string", "description": "YYYY-MM-DD"},
+        "remark": {"type": "string"},
+        "save_type": {
+            "type": "string",
+            "enum": ["draft", "pre_receipt", "final"],
+            "default": "final",
+        },
+        "source": {
+            "type": "string",
+            "enum": ["text", "voice", "image"],
+            "default": "text",
+        },
+        "confirmed_products": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "line_id": {"type": "string"},
+                    "product_id": {"type": "string"},
+                },
+                "required": ["line_id", "product_id"],
+            },
+        },
+        "partial": {"type": "boolean", "default": False},
+    },
+}
+
+_LIST_SALES_ORDERS_INPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "page": {"type": "integer", "minimum": 1, "default": 1},
+        "page_size": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20},
+        "sort_by": {"type": "string", "enum": ["updateTime", "orderDate", ""]},
+        "order_type": {"type": "string", "enum": ["asc", "desc", ""]},
+        "start_date": {"type": "string", "description": "YYYY-MM-DD"},
+        "end_date": {"type": "string", "description": "YYYY-MM-DD"},
+        "status": {"type": "integer", "enum": [0, 1, 2, 3]},
+        "payment_status": {"type": "integer", "enum": [0, 1, 2]},
+        "return_status": {"type": "integer", "enum": [0, 1, 2]},
+        "order_no": {"type": "string"},
+        "customer_id": {"type": "string"},
+    },
+}
+
+_UPDATE_SALES_ORDER_INPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "order_id": {"type": "string"},
+        "order_date": {"type": "string", "description": "YYYY-MM-DD"},
+        "handler_id": {"type": "string"},
+        "items": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "product_id": {"type": "string"},
+                    "quantity": {"type": "number"},
+                    "unit": {"type": "string"},
+                    "unit_price": {"type": "number"},
+                    "order_item_id": {"type": "string"},
+                    "remark": {"type": "string"},
+                },
+                "required": ["product_id", "quantity"],
+            },
+        },
+        "customer_id": {"type": "string"},
+        "warehouse_id": {"type": "string"},
+        "save_type": {
+            "type": "string",
+            "enum": ["draft", "pre_receipt", "final"],
+            "default": "draft",
+        },
+        "remark": {"type": "string"},
+        "discount_amount": {"type": "number"},
+        "discount_account_id": {"type": "string"},
+        "receipt_amount": {"type": "number"},
+        "receipt_account_id": {"type": "string"},
+        "confirmed_by_user": {"type": "boolean", "default": False},
+    },
+    "required": ["order_id", "order_date", "handler_id", "items"],
+}
+
+
 class BillingToolSet(AgentScopeToolSet):
     """开单 ToolSet：检索基础资料、生成预览并在确认后写入销售单。"""
 
@@ -277,6 +392,7 @@ class BillingToolSet(AgentScopeToolSet):
                     self.list_products,
                     is_read_only=True,
                     output_schema=_LIST_PRODUCTS_OUTPUT_SCHEMA,
+                    input_schema_override=_LIST_PRODUCTS_INPUT_SCHEMA,
                 ),
                 SessionFunctionTool(
                     session.search_products,
@@ -287,12 +403,14 @@ class BillingToolSet(AgentScopeToolSet):
                     self.search_billing_references,
                     is_read_only=True,
                     output_schema=_SEARCH_BILLING_REFERENCES_OUTPUT_SCHEMA,
+                    input_schema_override=_SEARCH_BILLING_REFERENCES_INPUT_SCHEMA,
                 ),
                 SessionFunctionTool(
                     self.preview_sales_order,
                     is_read_only=True,
                     is_concurrency_safe=False,
                     output_schema=_PREVIEW_SALES_ORDER_OUTPUT_SCHEMA,
+                    input_schema_override=_PREVIEW_SALES_ORDER_INPUT_SCHEMA,
                 ),
                 SessionFunctionTool(
                     self.submit_sales_order,
@@ -308,6 +426,7 @@ class BillingToolSet(AgentScopeToolSet):
                     self.list_sales_orders,
                     is_read_only=True,
                     output_schema=_LIST_SALES_ORDERS_OUTPUT_SCHEMA,
+                    input_schema_override=_LIST_SALES_ORDERS_INPUT_SCHEMA,
                 ),
                 SessionFunctionTool(
                     self.void_sales_order,
@@ -318,6 +437,7 @@ class BillingToolSet(AgentScopeToolSet):
                     self.update_sales_order,
                     is_concurrency_safe=False,
                     output_schema=_UPDATE_SALES_ORDER_OUTPUT_SCHEMA,
+                    input_schema_override=_UPDATE_SALES_ORDER_INPUT_SCHEMA,
                 ),
             ],
             contexts=contexts,
@@ -325,14 +445,14 @@ class BillingToolSet(AgentScopeToolSet):
             mcp_tool_names=BILLING_MCP_TOOL_NAMES,
         )
 
-    def sync_products(self, limit: int | None = None) -> dict[str, Any]:
+    async def sync_products(self, limit: int | None = None) -> dict[str, Any]:
         """同步当前已认证账号可见的 ERP 商品到本会话内存目录。
 
         Args:
             limit: 可选的最大商品数量。
         """
         try:
-            synced_at = self._sync_catalog(limit)
+            synced_at = await self._sync_catalog(limit)
             products = self.session.catalog.products
             sample = [
                 {**product.core_fields(), "code": product.code}
@@ -346,7 +466,7 @@ class BillingToolSet(AgentScopeToolSet):
         except DomainError as exc:
             return self.error_response(exc)
 
-    def list_products(
+    async def list_products(
         self,
         page: int = 1,
         page_size: int = 20,
@@ -364,7 +484,7 @@ class BillingToolSet(AgentScopeToolSet):
             context = self._contexts.get()
             context.require_scope("billing:read")
             if not self.session.catalog.products:
-                self._sync_catalog()
+                await self._sync_catalog()
             products = self.session.catalog.products
             total = len(products)
             effective_page = max(1, int(page or 1))
@@ -384,11 +504,11 @@ class BillingToolSet(AgentScopeToolSet):
         except DomainError as exc:
             return self.error_response(exc)
 
-    def _sync_catalog(self, limit: int | None = None) -> str:
+    async def _sync_catalog(self, limit: int | None = None) -> str:
         """从当前 ERP 账号拉取商品并替换会话内存目录。"""
         context = self._contexts.get()
         context.require_scope("billing:read")
-        snapshot = self._api.fetch_products(context, limit)
+        snapshot = await self._api.fetch_products(context, limit)
         if not snapshot.products:
             raise DomainError(
                 "erp_live_product_empty",
@@ -397,7 +517,7 @@ class BillingToolSet(AgentScopeToolSet):
         self.session.replace_products(snapshot.products)
         return datetime.now(timezone.utc).isoformat()
 
-    def search_billing_references(
+    async def search_billing_references(
         self,
         reference_type: str,
         keyword: str = "",
@@ -414,7 +534,7 @@ class BillingToolSet(AgentScopeToolSet):
             context = self._contexts.get()
             context.require_scope("billing:read")
             effective_limit = max(1, min(int(limit or 10), 20))
-            snapshot = self._search_reference(
+            snapshot = await self._search_reference(
                 reference_type,
                 keyword.strip(),
                 effective_limit,
@@ -432,7 +552,7 @@ class BillingToolSet(AgentScopeToolSet):
             )
             return self.error_response(error)
 
-    def preview_sales_order(
+    async def preview_sales_order(
         self,
         order_text: str = "",
         customer: str = "",
@@ -486,7 +606,7 @@ class BillingToolSet(AgentScopeToolSet):
                 if not values[field]
             ]
 
-            draft = self._match_order_products(
+            draft = await self._match_order_products(
                 values["order_text"],
                 source,
                 confirmed_products,
@@ -502,9 +622,9 @@ class BillingToolSet(AgentScopeToolSet):
             )
 
             reference_resolutions = {
-                "customer": self._resolve_reference("customer", values["customer"]),
-                "warehouse": self._resolve_reference("warehouse", values["warehouse"]),
-                "handler": self._resolve_reference("handler", values["handler"]),
+                "customer": await self._resolve_reference("customer", values["customer"]),
+                "warehouse": await self._resolve_reference("warehouse", values["warehouse"]),
+                "handler": await self._resolve_reference("handler", values["handler"]),
             }
             needs_confirmation = [
                 {
@@ -566,7 +686,7 @@ class BillingToolSet(AgentScopeToolSet):
         except DomainError as exc:
             return self.error_response(exc)
 
-    def submit_sales_order(
+    async def submit_sales_order(
         self,
         preview_id: str,
         idempotency_key: str,
@@ -603,7 +723,7 @@ class BillingToolSet(AgentScopeToolSet):
                 return self.ok_response(**cached, idempotent_replay=True)
 
             payload, preview = self.session.require_prepared_sales_order(preview_id)
-            result = self._api.create_sales_order(context, payload)
+            result = await self._api.create_sales_order(context, payload)
             response = {
                 "submitted": True,
                 "order_id": result.order_id,
@@ -615,7 +735,7 @@ class BillingToolSet(AgentScopeToolSet):
         except DomainError as exc:
             return self.error_response(exc)
 
-    def get_sales_order(self, order_id: str) -> dict[str, Any]:
+    async def get_sales_order(self, order_id: str) -> dict[str, Any]:
         """查询销售单详情，含商品明细、收款记录和状态。
 
         Args:
@@ -626,7 +746,7 @@ class BillingToolSet(AgentScopeToolSet):
         try:
             context = self._contexts.get()
             context.require_scope("billing:read")
-            result = self._api.get_sales_order_detail(
+            result = await self._api.get_sales_order_detail(
                 context,
                 order_id.strip(),
             )
@@ -634,7 +754,7 @@ class BillingToolSet(AgentScopeToolSet):
         except DomainError as exc:
             return self.error_response(exc)
 
-    def list_sales_orders(
+    async def list_sales_orders(
         self,
         page: int = 1,
         page_size: int = 20,
@@ -671,7 +791,7 @@ class BillingToolSet(AgentScopeToolSet):
             context = self._contexts.get()
             context.require_scope("billing:read")
             self._validate_date_range(start_date.strip(), end_date.strip())
-            result = self._api.search_sales_orders(
+            result = await self._api.search_sales_orders(
                 context,
                 page_num=max(1, int(page or 1)),
                 page_size=max(1, min(int(page_size or 20), 100)),
@@ -694,7 +814,7 @@ class BillingToolSet(AgentScopeToolSet):
         except DomainError as exc:
             return self.error_response(exc)
 
-    def void_sales_order(
+    async def void_sales_order(
         self,
         order_id: str,
         confirmed_by_user: bool,
@@ -723,12 +843,12 @@ class BillingToolSet(AgentScopeToolSet):
                     "erp_sales_order_id_invalid",
                     "销售单 ID 不能为空",
                 )
-            self._api.void_sales_order(context, target_id)
+            await self._api.void_sales_order(context, target_id)
             return self.ok_response(voided=True, order_id=target_id)
         except DomainError as exc:
             return self.error_response(exc)
 
-    def update_sales_order(
+    async def update_sales_order(
         self,
         order_id: str,
         order_date: str,
@@ -824,7 +944,7 @@ class BillingToolSet(AgentScopeToolSet):
                 payload["receiptAmount"] = float(receipt_amount)
             if receipt_account_id.strip():
                 payload["receiptAccountId"] = receipt_account_id.strip()
-            result = self._api.update_sales_order(context, target_id, payload)
+            result = await self._api.update_sales_order(context, target_id, payload)
             return self.ok_response(
                 modified=True,
                 order_id=result.order_id,
@@ -832,7 +952,7 @@ class BillingToolSet(AgentScopeToolSet):
         except DomainError as exc:
             return self.error_response(exc)
 
-    def _search_reference(
+    async def _search_reference(
         self,
         reference_type: str,
         keyword: str,
@@ -840,17 +960,17 @@ class BillingToolSet(AgentScopeToolSet):
     ) -> BillingReferenceSnapshot:
         context = self._contexts.get()
         if reference_type == "customer":
-            return self._api.search_customers(context, keyword, limit)
+            return await self._api.search_customers(context, keyword, limit)
         if reference_type == "warehouse":
-            return self._api.search_warehouses(context, keyword, limit)
+            return await self._api.search_warehouses(context, keyword, limit)
         if reference_type == "handler":
-            return self._api.search_staff(context, keyword, limit)
+            return await self._api.search_staff(context, keyword, limit)
         raise DomainError(
             "erp_reference_type_invalid",
             "reference_type 必须是 customer、warehouse 或 handler",
         )
 
-    def _resolve_reference(self, reference_type: str, value: str) -> dict[str, Any]:
+    async def _resolve_reference(self, reference_type: str, value: str) -> dict[str, Any]:
         if not value:
             return {
                 "status": "missing",
@@ -858,7 +978,7 @@ class BillingToolSet(AgentScopeToolSet):
                 "selected": None,
                 "candidates": [],
             }
-        options = list(self._search_reference(reference_type, value, 10).options)
+        options = list((await self._search_reference(reference_type, value, 10)).options)
         normalized = normalize_name(value)
         exact = [
             option
@@ -919,7 +1039,7 @@ class BillingToolSet(AgentScopeToolSet):
             deduped.append(option)
         return deduped[:5]
 
-    def _match_order_products(
+    async def _match_order_products(
         self,
         order_text: str,
         source: str,
@@ -928,7 +1048,7 @@ class BillingToolSet(AgentScopeToolSet):
         if not order_text:
             return None
         if not self.session.catalog.products:
-            self._sync_catalog()
+            await self._sync_catalog()
         return self.session.create_draft_from_text(
             order_text,
             source=source,
