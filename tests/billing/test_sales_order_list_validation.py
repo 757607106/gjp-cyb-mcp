@@ -5,6 +5,8 @@
 类型转换异常泄露技术栈错误给调用方。
 """
 
+import asyncio
+
 import pytest
 
 from erp_billing.adapters import ErpAuthenticatedHttpAdapter
@@ -24,17 +26,17 @@ class _FakeHttp:
     def __init__(self):
         self.get_calls = []
 
-    def get_json(self, context, path, params=None):
+    async def get_json(self, context, path, params=None):
         self.get_calls.append((path, dict(params or {})))
         return {
             "code": "A00000",
             "data": {"total": 0, "pageNum": 1, "pageSize": 20, "list": []},
         }
 
-    def post_json(self, context, path, payload):
+    async def post_json(self, context, path, payload):
         return {"code": "A00000", "data": ""}
 
-    def put_json(self, context, path, payload=None):
+    async def put_json(self, context, path, payload=None):
         return {"code": "A00000", "data": ""}
 
 
@@ -48,7 +50,7 @@ def test_invalid_start_date_rejected_before_request():
     http, adapter = _adapter()
 
     with pytest.raises(DomainError) as exc:
-        adapter.search_sales_orders(_CONTEXT, start_date="2026/06/01")
+        asyncio.run(adapter.search_sales_orders(_CONTEXT, start_date="2026/06/01"))
 
     assert exc.value.code == "erp_sales_order_date_invalid"
     assert not http.get_calls
@@ -58,7 +60,7 @@ def test_invalid_end_date_rejected_before_request():
     http, adapter = _adapter()
 
     with pytest.raises(DomainError) as exc:
-        adapter.search_sales_orders(_CONTEXT, end_date="2026-06-31")
+        asyncio.run(adapter.search_sales_orders(_CONTEXT, end_date="2026-06-31"))
 
     assert exc.value.code == "erp_sales_order_date_invalid"
     assert not http.get_calls
@@ -68,10 +70,12 @@ def test_end_before_start_rejected_before_request():
     http, adapter = _adapter()
 
     with pytest.raises(DomainError) as exc:
-        adapter.search_sales_orders(
-            _CONTEXT,
-            start_date="2026-08-04",
-            end_date="2026-07-04",
+        asyncio.run(
+            adapter.search_sales_orders(
+                _CONTEXT,
+                start_date="2026-08-04",
+                end_date="2026-07-04",
+            )
         )
 
     assert exc.value.code == "erp_sales_order_date_invalid"
@@ -83,10 +87,12 @@ def test_valid_dates_proceed_to_request():
     """合法日期格式通过校验，正常发往 ERP。"""
     http, adapter = _adapter()
 
-    result = adapter.search_sales_orders(
-        _CONTEXT,
-        start_date="2026-06-01",
-        end_date="2026-06-30",
+    result = asyncio.run(
+        adapter.search_sales_orders(
+            _CONTEXT,
+            start_date="2026-06-01",
+            end_date="2026-06-30",
+        )
     )
 
     assert http.get_calls

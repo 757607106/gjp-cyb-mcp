@@ -17,14 +17,13 @@ production 使用 VerifiedJwtIdentityResolver，要求 HS256 验签通过且
 
 from __future__ import annotations
 
-import base64
-import hashlib
-import hmac
-import json
 import threading
 import time
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Any, Callable
+
+import jwt
+from cachetools import TTLCache
 
 from gjp_common.config import get_env_value, is_production
 from gjp_common.connections import BusinessApiCredential
@@ -67,13 +66,46 @@ def _bearer_token_from_mcp_context(mcp_request_context: Any) -> str:
     return token
 
 
+def _decode_jwt_unverified(token: str) -> dict:
+    """不验签地解析 JWT payload，用于本地环境和提取 exp。"""
+    try:
+        payload = jwt.decode(
+            token,
+            options={"verify_signature": False},
+        )
+    except jwt.PyJWTError as exc:
+        raise DomainError("mcp_unauthorized", "ERP JWT payload 解析失败") from exc
+    if not isinstance(payload, dict):
+        raise DomainError("mcp_unauthorized", "ERP JWT payload 不是对象")
+    return payload
+
+
+def _decode_jwt_verified(token: str, secret: str) -> dict:
+    """HS256 验签并校验过期后返回 payload。"""
+    try:
+        payload = jwt.decode(
+            token,
+            key=secret,
+            algorithms=["HS256"],
+        )
+    except jwt.ExpiredSignatureError as exc:
+        raise DomainError("mcp_unauthorized", "ERP JWT 已过期") from exc
+    except jwt.InvalidAlgorithmError as exc:
+        raise DomainError("mcp_unauthorized", "生产仅接受 HS256 签名的 JWT") from exc
+    except jwt.PyJWTError as exc:
+        raise DomainError("mcp_unauthorized", "ERP JWT 验签失败") from exc
+    if not isinstance(payload, dict):
+        raise DomainError("mcp_unauthorized", "ERP JWT payload 不是对象")
+    return payload
+
+
 def _context_from_jwt(token: str) -> InvocationContext:
     """解析 ERP JWT payload 得到无凭据的调用上下文。
 
     只读取 payload 中的身份信息，不验签；验签由生产专用解析器
     在调用本函数前完成。
     """
-    payload = _payload_from_jwt(token)
+    payload = _decode_jwt_unverified(token)
     tenant_id = str(payload.get("tenantId") or "unknown")
     login_id = str(payload.get("loginId") or "unknown")
     return InvocationContext(
@@ -85,42 +117,23 @@ def _context_from_jwt(token: str) -> InvocationContext:
     )
 
 
-def _payload_from_jwt(token: str) -> dict:
-    parts = token.split(".")
-    if len(parts) != 3:
-        raise DomainError("mcp_unauthorized", "MCP Bearer 不是有效的 JWT")
-    padding = "=" * (-len(parts[1]) % 4)
-    try:
-        payload = json.loads(base64.urlsafe_b64decode(parts[1] + padding))
-    except (ValueError, json.JSONDecodeError) as exc:
-        raise DomainError("mcp_unauthorized", "ERP JWT payload 解析失败") from exc
-    if not isinstance(payload, dict):
-        raise DomainError("mcp_unauthorized", "ERP JWT payload 不是对象")
-    return payload
+@dataclass
+class _StoredBearer:
+    """已存储的 Bearer Token 及其过期时间。"""
+
+    token: str
+    expires_at: float  # epoch seconds，0 表示未知
 
 
-def _verify_hs256(token: str, secret: str) -> None:
-    """校验 HS256 签名与过期时间，失败一律拒绝。"""
-    header_b64, payload_b64, signature_b64 = token.split(".")
-    padding = "=" * (-len(header_b64) % 4)
+def _extract_exp(token: str) -> float:
+    """从 JWT payload 解析 exp，失败返回 0。"""
     try:
-        header = json.loads(base64.urlsafe_b64decode(header_b64 + padding))
-    except (ValueError, json.JSONDecodeError) as exc:
-        raise DomainError("mcp_unauthorized", "ERP JWT header 解析失败") from exc
-    if not isinstance(header, dict) or header.get("alg") != "HS256":
-        raise DomainError("mcp_unauthorized", "生产仅接受 HS256 签名的 JWT")
-    signing_input = (header_b64 + "." + payload_b64).encode("ascii")
-    expected = hmac.new(secret.encode("utf-8"), signing_input, hashlib.sha256).digest()
-    sig_padding = "=" * (-len(signature_b64) % 4)
-    try:
-        provided = base64.urlsafe_b64decode(signature_b64 + sig_padding)
-    except (ValueError, base64.binascii.Error) as exc:
-        raise DomainError("mcp_unauthorized", "ERP JWT 签名不是合法 Base64") from exc
-    if not hmac.compare_digest(expected, provided):
-        raise DomainError("mcp_unauthorized", "ERP JWT 验签失败")
-    exp = _payload_from_jwt(token).get("exp")
-    if isinstance(exp, (int, float)) and not isinstance(exp, bool) and exp < time.time():
-        raise DomainError("mcp_unauthorized", "ERP JWT 已过期")
+        exp = _decode_jwt_unverified(token).get("exp")
+    except DomainError:
+        return 0.0
+    if isinstance(exp, (int, float)) and not isinstance(exp, bool):
+        return float(exp)
+    return 0.0
 
 
 class SessionBearerStore:
@@ -132,22 +145,25 @@ class SessionBearerStore:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._bearers: dict[tuple[str, str, str], str] = {}
+        self._bearers: dict[tuple[str, str, str], _StoredBearer] = {}
 
     @staticmethod
     def _key(context: InvocationContext) -> tuple[str, str, str]:
         return (context.tenant_id, context.account_id, context.session_id)
 
     def register(self, context: InvocationContext, bearer: str) -> None:
+        exp = _extract_exp(bearer)
         with self._lock:
-            self._bearers[self._key(context)] = bearer
+            self._bearers[self._key(context)] = _StoredBearer(bearer, exp)
 
     def resolve(self, context: InvocationContext) -> BusinessApiCredential:
         with self._lock:
-            bearer = self._bearers.get(self._key(context), "")
-        if not bearer:
+            stored = self._bearers.get(self._key(context))
+        if stored is None:
             raise DomainError("business_credential_required", "当前会话缺少 ERP Bearer")
-        return BusinessApiCredential(kind="bearer", value=bearer)
+        if stored.expires_at and stored.expires_at < time.time():
+            raise DomainError("business_reauth_required", "当前业务系统授权已失效")
+        return BusinessApiCredential(kind="bearer", value=stored.token)
 
 
 class DirectJwtIdentityResolver:
@@ -182,9 +198,7 @@ class VerifiedJwtIdentityResolver:
 
     def resolve(self, mcp_request_context: Any) -> InvocationContext:
         token = _bearer_token_from_mcp_context(mcp_request_context)
-        if len(token.split(".")) != 3:
-            raise DomainError("mcp_unauthorized", "MCP Bearer 不是有效的 JWT")
-        _verify_hs256(token, self._jwt_secret)
+        _decode_jwt_verified(token, self._jwt_secret)
         context = _context_from_jwt(token)
         context.require_scope("billing:read")
         self._store.register(context, token)
@@ -204,7 +218,10 @@ class BillingSessionToolSetResolver(McpToolSetResolver):
         self._settings = settings
         self._timeout_seconds = timeout_seconds
         self._lock = threading.Lock()
-        self._toolsets: dict[tuple[str, str, str], BillingToolSet] = {}
+        self._toolsets: TTLCache[tuple[str, str, str], BillingToolSet] = TTLCache(
+            maxsize=int(get_env_value("MCP_SESSION_MAX_SIZE", "500") or 500),
+            ttl=int(get_env_value("MCP_SESSION_TTL_SECONDS", "3600") or 3600),
+        )
 
     def resolve(self, context: InvocationContext) -> BillingToolSet:
         key = (context.tenant_id, context.account_id, context.session_id)

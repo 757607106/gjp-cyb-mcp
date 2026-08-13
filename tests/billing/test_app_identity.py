@@ -17,6 +17,7 @@ from erp_billing.app import (
     VerifiedJwtIdentityResolver,
     _create_identity_resolver,
 )
+from gjp_common.context import InvocationContext
 from gjp_common.errors import DomainError
 
 SECRET = "unit-test-hs256-secret"
@@ -169,3 +170,37 @@ def test_production_without_secret_fails_fast(monkeypatch: pytest.MonkeyPatch) -
         _create_identity_resolver(SessionBearerStore())
 
     assert excinfo.value.code == "mcp_unauthorized"
+
+
+def test_bearer_store_rejects_expired_token() -> None:
+    """过期 Token 在 resolve 时返回 business_reauth_required，复用现有错误码。"""
+    store = SessionBearerStore()
+    context = InvocationContext(
+        tenant_id="t",
+        subject_id="u",
+        account_id="t",
+        session_id="billing-u",
+    )
+    expired_payload = {"tenantId": "t", "loginId": "u", "exp": int(time.time()) - 60}
+    expired_token = _make_token(expired_payload)
+    store.register(context, expired_token)
+
+    with pytest.raises(DomainError) as excinfo:
+        store.resolve(context)
+
+    assert excinfo.value.code == "business_reauth_required"
+
+
+def test_bearer_store_accepts_unexpired_token() -> None:
+    """未过期的 Token 正常返回。"""
+    store = SessionBearerStore()
+    context = InvocationContext(
+        tenant_id="t",
+        subject_id="u",
+        account_id="t",
+        session_id="billing-u",
+    )
+    token = _make_token(_valid_payload())
+    store.register(context, token)
+
+    assert store.resolve(context).value == token

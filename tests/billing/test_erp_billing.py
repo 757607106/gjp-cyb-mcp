@@ -1,3 +1,4 @@
+import asyncio
 import json
 from dataclasses import fields
 
@@ -183,10 +184,10 @@ def test_spoken_alias_phrase_matches_erp_product(tmp_path):
         [{"ptypeid": "P001", "pfullname": "土豆", "unit": "斤"}],
     )
 
-    result = _billing_toolset(session).preview_sales_order(
+    result = asyncio.run(_billing_toolset(session).preview_sales_order(
         "来十斤马铃薯",
         source="voice",
-    )
+    ))
 
     assert _product_payload(result) == {
         "ok": True,
@@ -487,10 +488,10 @@ def test_confirmed_line_not_found_error_includes_valid_ids(tmp_path):
         ],
     )
 
-    result = _billing_toolset(session).preview_sales_order(
+    result = asyncio.run(_billing_toolset(session).preview_sales_order(
         "牛肉10斤",
         confirmed_products=[{"line_id": "L999", "product_id": "P001"}],
-    )
+    ))
 
     assert result["ok"] is False
     assert result["error"]["code"] == "erp_confirmed_line_not_found"
@@ -565,7 +566,7 @@ def test_create_draft_puts_best_match_outside_and_similar_products_inside(
         )
     ]
     session = _session(tmp_path, products)
-    result = _billing_toolset(session).preview_sales_order("牛肉10斤")
+    result = asyncio.run(_billing_toolset(session).preview_sales_order("牛肉10斤"))
 
     assert _product_payload(result) == {
         "ok": True,
@@ -619,7 +620,7 @@ def test_create_draft_returns_unmatched_products_separately(tmp_path):
         [{"ptypeid": "P001", "pfullname": "土豆", "unit": "斤"}],
     )
 
-    result = _billing_toolset(session).preview_sales_order("量子芯片2箱")
+    result = asyncio.run(_billing_toolset(session).preview_sales_order("量子芯片2箱"))
 
     assert _product_payload(result) == {
         "ok": True,
@@ -647,9 +648,9 @@ def test_create_draft_groups_three_match_results_in_one_json(tmp_path):
         ],
     )
 
-    result = _billing_toolset(session).preview_sales_order(
+    result = asyncio.run(_billing_toolset(session).preview_sales_order(
         "土豆5斤，牛肉10斤，量子芯片2箱",
-    )
+    ))
 
     assert _product_payload(result) == {
         "ok": True,
@@ -702,10 +703,10 @@ def test_create_draft_validates_frontend_confirmation(tmp_path):
     )
     toolset = _billing_toolset(session)
 
-    result = toolset.preview_sales_order(
+    result = asyncio.run(toolset.preview_sales_order(
         "牛肉10斤",
         confirmed_products=[{"line_id": "L001", "product_id": "P002"}],
-    )
+    ))
 
     assert _product_payload(result) == {
         "ok": True,
@@ -752,10 +753,10 @@ def test_create_draft_rejects_invalid_confirmation(
         ],
     )
 
-    result = _billing_toolset(session).preview_sales_order(
+    result = asyncio.run(_billing_toolset(session).preview_sales_order(
         "牛肉10斤",
         confirmed_products=confirmed_products,
-    )
+    ))
 
     assert result["ok"] is False
     assert result["error"]["code"] == error_code
@@ -771,8 +772,8 @@ def test_multi_turn_modification_rebuilds_complete_text(tmp_path):
     )
     toolset = _billing_toolset(session)
 
-    first = toolset.preview_sales_order("马铃薯5斤")
-    second = toolset.preview_sales_order("马铃薯8斤，番茄3斤", source="voice")
+    first = asyncio.run(toolset.preview_sales_order("马铃薯5斤"))
+    second = asyncio.run(toolset.preview_sales_order("马铃薯8斤，番茄3斤", source="voice"))
 
     assert [
         (line["product_name"], line["quantity"])
@@ -793,10 +794,10 @@ def test_create_draft_rejects_unsupported_source(tmp_path):
         [{"ptypeid": "P001", "pfullname": "土豆", "unit": "斤"}],
     )
 
-    result = _billing_toolset(session).preview_sales_order(
+    result = asyncio.run(_billing_toolset(session).preview_sales_order(
         "土豆2斤",
         source="audio",
-    )
+    ))
 
     assert result["ok"] is False
     assert result["error"]["code"] == "erp_order_source_invalid"
@@ -867,7 +868,7 @@ def test_list_products_includes_image_urls_when_present(tmp_path):
     )
     toolset = _billing_toolset(session)
 
-    result = toolset.list_products()
+    result = asyncio.run(toolset.list_products())
 
     products = {item["product_id"]: item for item in result["products"]}
     assert products["P001"]["image_urls"] == ["https://cdn.example.com/a.jpg"]
@@ -945,13 +946,10 @@ def test_billing_toolset_exposes_complete_sales_order_tools(tmp_path):
         assert "file_path" not in schema_text
     schema = toolset.get("preview_sales_order").input_schema
     confirmed = schema["properties"]["confirmed_products"]
-    array_schema = next(
-        item
-        for item in confirmed["anyOf"]
-        if item.get("type") == "array"
-    )
-    assert array_schema["items"]["type"] == "object"
-    assert array_schema["items"]["additionalProperties"] == {"type": "string"}
+    assert confirmed["type"] == "array"
+    assert confirmed["items"]["type"] == "object"
+    assert set(confirmed["items"]["properties"]) == {"line_id", "product_id"}
+    assert set(confirmed["items"]["required"]) == {"line_id", "product_id"}
 
 
 def test_billing_settings_contain_no_runtime_output_path():
@@ -972,7 +970,7 @@ def test_sync_products_replaces_in_memory_catalog_without_writing_file(tmp_path)
     )
 
     class FakeBillingApi:
-        def fetch_products(self, context, limit=None):
+        async def fetch_products(self, context, limit=None):
             assert context.account_id == "billing-test"
             assert limit == 1
             return BillingProductSnapshot(
@@ -986,7 +984,7 @@ def test_sync_products_replaces_in_memory_catalog_without_writing_file(tmp_path)
                 ),
             )
 
-    result = _billing_toolset(session, FakeBillingApi()).sync_products(limit=1)
+    result = asyncio.run(_billing_toolset(session, FakeBillingApi()).sync_products(limit=1))
 
     assert result["ok"] is True
     assert result["product_count"] == 1
@@ -1027,22 +1025,22 @@ def test_in_memory_sync_preserves_aliases_replaces_rows_and_is_not_shared(
                 ),
             ]
 
-        def fetch_products(self, context, limit=None):
+        async def fetch_products(self, context, limit=None):
             return self.snapshots.pop(0)
 
     toolset = _billing_toolset(session, SequenceBillingApi())
 
-    assert toolset.sync_products()["ok"] is True
-    alias_draft = toolset.preview_sales_order("来十斤马铃薯", source="voice")
+    assert asyncio.run(toolset.sync_products())["ok"] is True
+    alias_draft = asyncio.run(toolset.preview_sales_order("来十斤马铃薯", source="voice"))
     assert alias_draft["confirmed_products"][0]["product_name"] == "土豆"
 
-    assert toolset.sync_products()["ok"] is True
+    assert asyncio.run(toolset.sync_products())["ok"] is True
     assert [product.product_id for product in session.catalog.products] == [
         "P002",
     ]
     assert session.search_products(["土豆"])["results"][0]["status"] == "unmatched"
     assert (
-        toolset.preview_sales_order("苹果2斤")["confirmed_products"][0]["product_id"]
+        asyncio.run(toolset.preview_sales_order("苹果2斤"))["confirmed_products"][0]["product_id"]
         == "P002"
     )
 
@@ -1064,7 +1062,7 @@ def test_failed_sync_keeps_previous_in_memory_catalog(tmp_path):
         def __init__(self):
             self.call_count = 0
 
-        def fetch_products(self, context, limit=None):
+        async def fetch_products(self, context, limit=None):
             self.call_count += 1
             if self.call_count == 1:
                 return BillingProductSnapshot(
@@ -1080,8 +1078,8 @@ def test_failed_sync_keeps_previous_in_memory_catalog(tmp_path):
 
     toolset = _billing_toolset(session, FailingSecondSyncApi())
 
-    assert toolset.sync_products()["ok"] is True
-    failed = toolset.sync_products()
+    assert asyncio.run(toolset.sync_products())["ok"] is True
+    failed = asyncio.run(toolset.sync_products())
 
     assert failed["ok"] is False
     assert failed["error"]["code"] == "erp_live_product_empty"
@@ -1102,7 +1100,7 @@ def test_create_draft_auto_syncs_when_catalog_empty(tmp_path):
         def __init__(self):
             self.calls = 0
 
-        def fetch_products(self, context, limit=None):
+        async def fetch_products(self, context, limit=None):
             self.calls += 1
             return BillingProductSnapshot(
                 products=(
@@ -1117,8 +1115,8 @@ def test_create_draft_auto_syncs_when_catalog_empty(tmp_path):
     api = CountingBillingApi()
     toolset = _billing_toolset(session, api)
 
-    first = toolset.preview_sales_order("土豆2斤")
-    second = toolset.preview_sales_order("土豆3斤")
+    first = asyncio.run(toolset.preview_sales_order("土豆2斤"))
+    second = asyncio.run(toolset.preview_sales_order("土豆3斤"))
 
     assert first["ok"] is True
     assert first["confirmed_products"][0]["product_id"] == "P001"
@@ -1133,7 +1131,7 @@ def test_create_draft_returns_error_when_auto_sync_fails(tmp_path):
         allow_missing_catalog=True,
     )
 
-    result = _billing_toolset(session).preview_sales_order("土豆2斤")
+    result = asyncio.run(_billing_toolset(session).preview_sales_order("土豆2斤"))
 
     assert result["ok"] is False
     assert result["error"]["code"] == "billing_api_not_configured"
@@ -1146,11 +1144,11 @@ class CompleteSalesOrderApi:
         self.created_payloads = []
 
     @staticmethod
-    def fetch_products(context, limit=None):
+    async def fetch_products(context, limit=None):
         return BillingProductSnapshot(products=())
 
     @staticmethod
-    def search_customers(context, keyword, limit=10):
+    async def search_customers(context, keyword, limit=10):
         return BillingReferenceSnapshot(
             options=(
                 {"id": "CUS-1", "code": "C001", "name": "客户甲", "isDefault": False},
@@ -1158,7 +1156,7 @@ class CompleteSalesOrderApi:
         )
 
     @staticmethod
-    def search_warehouses(context, keyword, limit=10):
+    async def search_warehouses(context, keyword, limit=10):
         return BillingReferenceSnapshot(
             options=(
                 {"id": "WH-1", "code": "W001", "name": "一号仓", "isDefault": True},
@@ -1166,19 +1164,19 @@ class CompleteSalesOrderApi:
         )
 
     @staticmethod
-    def search_staff(context, keyword, limit=10):
+    async def search_staff(context, keyword, limit=10):
         return BillingReferenceSnapshot(
             options=(
                 {"id": "STAFF-1", "code": "S001", "name": "张三", "isDefault": True},
             ),
         )
 
-    def create_sales_order(self, context, payload):
+    async def create_sales_order(self, context, payload):
         self.created_payloads.append(payload)
         return BillingSalesOrderResult(order_id="SO-20260804-1")
 
     @staticmethod
-    def get_sales_order_detail(context, order_id):
+    async def get_sales_order_detail(context, order_id):
         return BillingSalesOrderDetailResult(
             order={
                 "id": order_id,
@@ -1207,7 +1205,7 @@ class CompleteSalesOrderApi:
         )
 
     @staticmethod
-    def search_sales_orders(
+    async def search_sales_orders(
         context,
         *,
         page_num=1,
@@ -1239,11 +1237,11 @@ class CompleteSalesOrderApi:
             ),
         )
 
-    def void_sales_order(self, context, order_id):
+    async def void_sales_order(self, context, order_id):
         self.voided_order_ids = getattr(self, "voided_order_ids", [])
         self.voided_order_ids.append(order_id)
 
-    def update_sales_order(self, context, order_id, payload):
+    async def update_sales_order(self, context, order_id, payload):
         self.updated_payloads = getattr(self, "updated_payloads", [])
         self.updated_payloads.append((order_id, payload))
         return BillingSalesOrderResult(order_id=order_id)
@@ -1255,7 +1253,7 @@ def test_preview_sales_order_distinguishes_required_optional_and_system_fields(t
         [{"id": "P001", "name": "土豆", "unit": "斤"}],
     )
 
-    result = _billing_toolset(session).preview_sales_order(order_text="土豆2斤")
+    result = asyncio.run(_billing_toolset(session).preview_sales_order(order_text="土豆2斤"))
 
     assert result["ok"] is True
     assert [item["field"] for item in result["missing_required_fields"]] == [
@@ -1281,14 +1279,14 @@ def test_complete_sales_order_preview_confirmation_submit_and_idempotency(tmp_pa
     api = CompleteSalesOrderApi()
     toolset = _billing_toolset(session, api)
 
-    prepared = toolset.preview_sales_order(
+    prepared = asyncio.run(toolset.preview_sales_order(
         order_text="土豆2斤",
         customer="C001",
         warehouse="一号仓",
         handler="张三",
         order_date="2026-08-04",
         remark="下午送达",
-    )
+    ))
 
     assert prepared["ok"] is True
     assert prepared["ready_to_submit"] is True
@@ -1306,19 +1304,19 @@ def test_complete_sales_order_preview_confirmation_submit_and_idempotency(tmp_pa
         },
     ]
 
-    rejected = toolset.submit_sales_order(
+    rejected = asyncio.run(toolset.submit_sales_order(
         prepared["preview_id"],
         "business-request-1",
         confirmed_by_user=False,
-    )
+    ))
     assert rejected["error"]["code"] == "erp_sales_order_confirmation_required"
     assert api.created_payloads == []
 
-    submitted = toolset.submit_sales_order(
+    submitted = asyncio.run(toolset.submit_sales_order(
         prepared["preview_id"],
         "business-request-1",
         confirmed_by_user=True,
-    )
+    ))
     assert submitted == {
         "ok": True,
         "submitted": True,
@@ -1347,11 +1345,11 @@ def test_complete_sales_order_preview_confirmation_submit_and_idempotency(tmp_pa
         },
     ]
 
-    replayed = toolset.submit_sales_order(
+    replayed = asyncio.run(toolset.submit_sales_order(
         prepared["preview_id"],
         "business-request-1",
         confirmed_by_user=True,
-    )
+    ))
     assert replayed["idempotent_replay"] is True
     assert len(api.created_payloads) == 1
 
@@ -1371,21 +1369,21 @@ def test_sales_order_save_type_matches_real_frontend_mapping(
     )
     api = CompleteSalesOrderApi()
     toolset = _billing_toolset(session, api)
-    prepared = toolset.preview_sales_order(
+    prepared = asyncio.run(toolset.preview_sales_order(
         order_text="土豆2斤",
         customer="客户甲",
         warehouse="一号仓",
         handler="张三",
         order_date="2026-08-04",
         save_type=save_type,
-    )
+    ))
 
     assert prepared["ready_to_submit"] is True
-    submitted = toolset.submit_sales_order(
+    submitted = asyncio.run(toolset.submit_sales_order(
         prepared["preview_id"],
         "save-type-" + save_type,
         confirmed_by_user=True,
-    )
+    ))
 
     assert submitted["ok"] is True
     assert api.created_payloads[0]["saveType"] == expected_code
@@ -1398,15 +1396,15 @@ def test_preview_sales_order_rejects_invalid_date_long_remark_and_unit_guessing(
     )
     toolset = _billing_toolset(session, CompleteSalesOrderApi())
 
-    invalid_date = toolset.preview_sales_order(order_date="2026/08/04")
-    long_remark = toolset.preview_sales_order(remark="备" * 201)
-    unit_mismatch = toolset.preview_sales_order(
+    invalid_date = asyncio.run(toolset.preview_sales_order(order_date="2026/08/04"))
+    long_remark = asyncio.run(toolset.preview_sales_order(remark="备" * 201))
+    unit_mismatch = asyncio.run(toolset.preview_sales_order(
         order_text="土豆2kg",
         customer="客户甲",
         warehouse="一号仓",
         handler="张三",
         order_date="2026-08-04",
-    )
+    ))
 
     assert invalid_date["error"]["code"] == "erp_sales_order_date_invalid"
     assert long_remark["error"]["code"] == "erp_sales_order_remark_too_long"
@@ -1456,10 +1454,10 @@ def test_match_logger_records_user_confirmed_lines(tmp_path):
         match_logger=JsonlMatchEventLogger(log_path),
     )
 
-    _billing_toolset(session).preview_sales_order(
+    asyncio.run(_billing_toolset(session).preview_sales_order(
         "牛肉10斤",
         confirmed_products=[{"lineId": "L001", "productId": "P002"}],
-    )
+    ))
 
     events = [
         json.loads(line)
@@ -1528,10 +1526,10 @@ def test_confirmed_products_list_format_success(tmp_path):
     )
     toolset = _billing_toolset(session)
 
-    result = toolset.preview_sales_order(
+    result = asyncio.run(toolset.preview_sales_order(
         "牛肉10斤",
         confirmed_products=[{"line_id": "L001", "product_id": "P002"}],
-    )
+    ))
 
     assert _product_payload(result) == {
         "ok": True,
@@ -1560,10 +1558,10 @@ def test_confirmed_products_dict_format_backward_compat(tmp_path):
     )
     toolset = _billing_toolset(session)
 
-    result = toolset.preview_sales_order(
+    result = asyncio.run(toolset.preview_sales_order(
         "牛肉10斤",
         confirmed_products={"L001": "P002"},
-    )
+    ))
 
     assert result["ok"] is True
     assert result["confirmed_products"][0]["product_id"] == "P002"
@@ -1580,10 +1578,10 @@ def test_confirmed_products_string_tolerance(tmp_path):
     )
     toolset = _billing_toolset(session)
 
-    result = toolset.preview_sales_order(
+    result = asyncio.run(toolset.preview_sales_order(
         "牛肉10斤",
         confirmed_products='[{"lineId": "L001", "productId": "P002"}]',
-    )
+    ))
 
     assert result["ok"] is True
     assert result["confirmed_products"][0]["product_id"] == "P002"
@@ -1600,10 +1598,10 @@ def test_confirmed_products_for_unmatched_allows_manual_spec(tmp_path):
     )
     toolset = _billing_toolset(session)
 
-    result = toolset.preview_sales_order(
+    result = asyncio.run(toolset.preview_sales_order(
         "土豆2斤，未知商品1箱",
         confirmed_products=[{"lineId": "L002", "productId": "P002"}],
-    )
+    ))
 
     assert result["ok"] is True
     assert len(result["confirmed_products"]) == 2
@@ -1627,14 +1625,14 @@ def test_partial_preview_skips_unmatched_products(tmp_path):
     api = CompleteSalesOrderApi()
     toolset = _billing_toolset(session, api)
 
-    result = toolset.preview_sales_order(
+    result = asyncio.run(toolset.preview_sales_order(
         order_text="土豆2斤，未知商品1箱",
         customer="客户甲",
         warehouse="一号仓",
         handler="张三",
         order_date="2026-08-04",
         partial=True,
-    )
+    ))
 
     assert result["ok"] is True
     assert result["ready_to_submit"] is True
@@ -1652,13 +1650,13 @@ def test_partial_false_requires_all_matched(tmp_path):
     )
     toolset = _billing_toolset(session, CompleteSalesOrderApi())
 
-    result = toolset.preview_sales_order(
+    result = asyncio.run(toolset.preview_sales_order(
         order_text="土豆2斤，未知商品1箱",
         customer="客户甲",
         warehouse="一号仓",
         handler="张三",
         order_date="2026-08-04",
-    )
+    ))
 
     assert result["ok"] is True
     assert result["ready_to_submit"] is False
@@ -1722,9 +1720,9 @@ def test_list_products_returns_paginated_catalog(tmp_path):
     session = _session(tmp_path, products)
     toolset = _billing_toolset(session)
 
-    page1 = toolset.list_products(page=1, page_size=10)
-    page2 = toolset.list_products(page=2, page_size=10)
-    page3 = toolset.list_products(page=3, page_size=10)
+    page1 = asyncio.run(toolset.list_products(page=1, page_size=10))
+    page2 = asyncio.run(toolset.list_products(page=2, page_size=10))
+    page3 = asyncio.run(toolset.list_products(page=3, page_size=10))
 
     assert page1["ok"] is True
     assert page1["total"] == 25
@@ -1748,7 +1746,7 @@ def test_list_products_auto_syncs_when_empty(tmp_path):
 
     class FakeApi:
         @staticmethod
-        def fetch_products(context, limit=None):
+        async def fetch_products(context, limit=None):
             return BillingProductSnapshot(
                 products=(
                     {"productId": "P001", "name": "土豆", "unit": "斤"},
@@ -1756,7 +1754,7 @@ def test_list_products_auto_syncs_when_empty(tmp_path):
             )
 
     toolset = _billing_toolset(session, FakeApi())
-    result = toolset.list_products()
+    result = asyncio.run(toolset.list_products())
 
     assert result["ok"] is True
     assert result["total"] == 1
@@ -1776,11 +1774,11 @@ def test_sync_products_returns_sample_products(tmp_path):
 
     class SampleApi:
         @staticmethod
-        def fetch_products(context, limit=None):
+        async def fetch_products(context, limit=None):
             return BillingProductSnapshot(products=tuple(products_data))
 
     toolset = _billing_toolset(session, SampleApi())
-    result = toolset.sync_products()
+    result = asyncio.run(toolset.sync_products())
 
     assert result["ok"] is True
     assert result["product_count"] == 10
@@ -1798,11 +1796,11 @@ def test_reference_dedup_reduces_business_type_variants(tmp_path):
 
     class MultiVariantApi:
         @staticmethod
-        def fetch_products(context, limit=None):
+        async def fetch_products(context, limit=None):
             return BillingProductSnapshot(products=())
 
         @staticmethod
-        def search_customers(context, keyword, limit=10):
+        async def search_customers(context, keyword, limit=10):
             return BillingReferenceSnapshot(
                 options=tuple(
                     {"id": "C-%d" % i, "code": "C%03d" % i, "name": name}
@@ -1825,24 +1823,24 @@ def test_reference_dedup_reduces_business_type_variants(tmp_path):
             )
 
         @staticmethod
-        def search_warehouses(context, keyword, limit=10):
+        async def search_warehouses(context, keyword, limit=10):
             return BillingReferenceSnapshot(options=())
 
         @staticmethod
-        def search_staff(context, keyword, limit=10):
+        async def search_staff(context, keyword, limit=10):
             return BillingReferenceSnapshot(options=())
 
-        def create_sales_order(self, context, payload):
+        async def create_sales_order(self, context, payload):
             return BillingSalesOrderResult(order_id="SO-1")
 
     toolset = _billing_toolset(session, MultiVariantApi())
-    result = toolset.preview_sales_order(
+    result = asyncio.run(toolset.preview_sales_order(
         order_text="土豆2斤",
         customer="好又多超市西湖店",
         warehouse="一号仓",
         handler="张三",
         order_date="2026-08-04",
-    )
+    ))
 
     customer_resolution = result["reference_resolutions"]["customer"]
     assert customer_resolution["status"] == "ambiguous"
@@ -1886,113 +1884,113 @@ def test_tool_outputs_validate_against_output_schema(tmp_path):
 
     class BillingApi:
         @staticmethod
-        def fetch_products(context, limit=None):
+        async def fetch_products(context, limit=None):
             return BillingProductSnapshot(products=tuple(products_data))
 
         @staticmethod
-        def search_customers(context, keyword, limit=10):
-            return CompleteSalesOrderApi.search_customers(context, keyword, limit)
+        async def search_customers(context, keyword, limit=10):
+            return await CompleteSalesOrderApi.search_customers(context, keyword, limit)
 
         @staticmethod
-        def search_warehouses(context, keyword, limit=10):
-            return CompleteSalesOrderApi.search_warehouses(context, keyword, limit)
+        async def search_warehouses(context, keyword, limit=10):
+            return await CompleteSalesOrderApi.search_warehouses(context, keyword, limit)
 
         @staticmethod
-        def search_staff(context, keyword, limit=10):
-            return CompleteSalesOrderApi.search_staff(context, keyword, limit)
+        async def search_staff(context, keyword, limit=10):
+            return await CompleteSalesOrderApi.search_staff(context, keyword, limit)
 
-        def create_sales_order(self, context, payload):
-            return CompleteSalesOrderApi().create_sales_order(context, payload)
-
-        @staticmethod
-        def get_sales_order_detail(context, order_id):
-            return CompleteSalesOrderApi.get_sales_order_detail(context, order_id)
+        async def create_sales_order(self, context, payload):
+            return await CompleteSalesOrderApi().create_sales_order(context, payload)
 
         @staticmethod
-        def search_sales_orders(context, **kwargs):
-            return CompleteSalesOrderApi.search_sales_orders(context, **kwargs)
+        async def get_sales_order_detail(context, order_id):
+            return await CompleteSalesOrderApi.get_sales_order_detail(context, order_id)
 
         @staticmethod
-        def void_sales_order(context, order_id):
-            CompleteSalesOrderApi().void_sales_order(context, order_id)
+        async def search_sales_orders(context, **kwargs):
+            return await CompleteSalesOrderApi.search_sales_orders(context, **kwargs)
 
         @staticmethod
-        def update_sales_order(context, order_id, payload):
-            return CompleteSalesOrderApi().update_sales_order(
+        async def void_sales_order(context, order_id):
+            await CompleteSalesOrderApi().void_sales_order(context, order_id)
+
+        @staticmethod
+        async def update_sales_order(context, order_id, payload):
+            return await CompleteSalesOrderApi().update_sales_order(
                 context, order_id, payload,
             )
 
     toolset = _billing_toolset(session, BillingApi())
     by_name = {tool.name: tool for tool in toolset.local_tools()}
 
-    synced = toolset.sync_products()
+    synced = asyncio.run(toolset.sync_products())
     jsonschema.validate(synced, by_name["sync_products"].output_schema)
     assert any("image_urls" in item for item in synced["sample_products"])
 
-    listed = toolset.list_products()
+    listed = asyncio.run(toolset.list_products())
     jsonschema.validate(listed, by_name["list_products"].output_schema)
 
     searched = session.search_products(["土豆", "量子芯片"])
     jsonschema.validate(searched, by_name["search_products"].output_schema)
 
-    options = toolset.search_billing_references("customer", "客户甲")
+    options = asyncio.run(toolset.search_billing_references("customer", "客户甲"))
     jsonschema.validate(options, by_name["search_billing_references"].output_schema)
 
-    prepared = toolset.preview_sales_order(order_text="土豆2斤")
+    prepared = asyncio.run(toolset.preview_sales_order(order_text="土豆2斤"))
     jsonschema.validate(prepared, by_name["preview_sales_order"].output_schema)
     assert prepared["preview_id"] is None
 
-    ready = toolset.preview_sales_order(
+    ready = asyncio.run(toolset.preview_sales_order(
         order_text="土豆2斤",
         customer="C001",
         warehouse="一号仓",
         handler="张三",
         order_date="2026-08-04",
-    )
+    ))
     jsonschema.validate(ready, by_name["preview_sales_order"].output_schema)
     assert ready["preview_id"] is not None
 
-    submitted = toolset.submit_sales_order(
+    submitted = asyncio.run(toolset.submit_sales_order(
         ready["preview_id"],
         "business-key-1",
         confirmed_by_user=True,
-    )
+    ))
     jsonschema.validate(submitted, by_name["submit_sales_order"].output_schema)
 
-    rejected = toolset.submit_sales_order(
+    rejected = asyncio.run(toolset.submit_sales_order(
         ready["preview_id"],
         "business-key-2",
         confirmed_by_user=False,
-    )
+    ))
     jsonschema.validate(rejected, by_name["submit_sales_order"].output_schema)
     assert rejected["ok"] is False
 
-    detail = toolset.get_sales_order(order_id="208457406331712307")
+    detail = asyncio.run(toolset.get_sales_order(order_id="208457406331712307"))
     jsonschema.validate(detail, by_name["get_sales_order"].output_schema)
     assert detail["order"]["orderNo"] == "SO20260804001"
 
-    orders = toolset.list_sales_orders(
+    orders = asyncio.run(toolset.list_sales_orders(
         start_date="2026-07-04",
         end_date="2026-08-04",
         sort_by="updateTime",
         order_type="desc",
-    )
+    ))
     jsonschema.validate(orders, by_name["list_sales_orders"].output_schema)
     assert orders["total"] == 1
 
-    voided = toolset.void_sales_order(
+    voided = asyncio.run(toolset.void_sales_order(
         order_id="208457406331712307",
         confirmed_by_user=True,
-    )
+    ))
     jsonschema.validate(voided, by_name["void_sales_order"].output_schema)
 
-    modified = toolset.update_sales_order(
+    modified = asyncio.run(toolset.update_sales_order(
         order_id="208457406331712307",
         order_date="2026-08-04",
         handler_id="STAFF-1",
         items=[{"productId": "P001", "quantity": 3}],
         confirmed_by_user=True,
-    )
+    ))
     jsonschema.validate(modified, by_name["update_sales_order"].output_schema)
 
 
@@ -2009,7 +2007,7 @@ def test_get_sales_order_returns_order(tmp_path):
     )
     toolset = _billing_toolset(session, CompleteSalesOrderApi())
 
-    result = toolset.get_sales_order(order_id="208457406331712307")
+    result = asyncio.run(toolset.get_sales_order(order_id="208457406331712307"))
 
     assert result["ok"] is True
     assert result["order"]["id"] == "208457406331712307"
@@ -2025,7 +2023,7 @@ def test_get_sales_order_returns_error_when_api_not_configured(tmp_path):
     )
     toolset = _billing_toolset(session)
 
-    result = toolset.get_sales_order(order_id="208457406331712307")
+    result = asyncio.run(toolset.get_sales_order(order_id="208457406331712307"))
 
     assert result["ok"] is False
     assert result["error"]["code"] == "billing_api_not_configured"
@@ -2039,7 +2037,7 @@ def test_list_sales_orders_with_date_range_and_status(tmp_path):
     )
     toolset = _billing_toolset(session, CompleteSalesOrderApi())
 
-    result = toolset.list_sales_orders(
+    result = asyncio.run(toolset.list_sales_orders(
         page=1,
         page_size=20,
         sort_by="updateTime",
@@ -2047,7 +2045,7 @@ def test_list_sales_orders_with_date_range_and_status(tmp_path):
         start_date="2026-07-04",
         end_date="2026-08-04",
         status=2,
-    )
+    ))
 
     assert result["ok"] is True
     assert result["page"] == 1
@@ -2064,7 +2062,7 @@ def test_list_sales_orders_rejects_invalid_date_format(tmp_path):
     )
     toolset = _billing_toolset(session, CompleteSalesOrderApi())
 
-    result = toolset.list_sales_orders(start_date="2026/07/04")
+    result = asyncio.run(toolset.list_sales_orders(start_date="2026/07/04"))
 
     assert result["ok"] is False
     assert result["error"]["code"] == "erp_sales_order_date_invalid"
@@ -2078,10 +2076,10 @@ def test_list_sales_orders_rejects_end_before_start(tmp_path):
     )
     toolset = _billing_toolset(session, CompleteSalesOrderApi())
 
-    result = toolset.list_sales_orders(
+    result = asyncio.run(toolset.list_sales_orders(
         start_date="2026-08-04",
         end_date="2026-07-04",
-    )
+    ))
 
     assert result["ok"] is False
     assert result["error"]["code"] == "erp_sales_order_date_invalid"
@@ -2096,10 +2094,10 @@ def test_void_sales_order_requires_confirmation(tmp_path):
     api = CompleteSalesOrderApi()
     toolset = _billing_toolset(session, api)
 
-    rejected = toolset.void_sales_order(
+    rejected = asyncio.run(toolset.void_sales_order(
         order_id="208457406331712307",
         confirmed_by_user=False,
-    )
+    ))
 
     assert rejected["ok"] is False
     assert rejected["error"]["code"] == "erp_sales_order_confirmation_required"
@@ -2115,10 +2113,10 @@ def test_void_sales_order_executes_after_confirmation(tmp_path):
     api = CompleteSalesOrderApi()
     toolset = _billing_toolset(session, api)
 
-    result = toolset.void_sales_order(
+    result = asyncio.run(toolset.void_sales_order(
         order_id="208457406331712307",
         confirmed_by_user=True,
-    )
+    ))
 
     assert result["ok"] is True
     assert result["voided"] is True
@@ -2134,10 +2132,10 @@ def test_void_sales_order_rejects_empty_id(tmp_path):
     )
     toolset = _billing_toolset(session, CompleteSalesOrderApi())
 
-    result = toolset.void_sales_order(
+    result = asyncio.run(toolset.void_sales_order(
         order_id="",
         confirmed_by_user=True,
-    )
+    ))
 
     assert result["ok"] is False
     assert result["error"]["code"] == "erp_sales_order_id_invalid"
@@ -2152,7 +2150,7 @@ def test_update_sales_order_builds_payload_and_executes(tmp_path):
     api = CompleteSalesOrderApi()
     toolset = _billing_toolset(session, api)
 
-    result = toolset.update_sales_order(
+    result = asyncio.run(toolset.update_sales_order(
         order_id="208457406331712307",
         order_date="2026-08-04",
         handler_id="STAFF-1",
@@ -2170,7 +2168,7 @@ def test_update_sales_order_builds_payload_and_executes(tmp_path):
         save_type="draft",
         remark="下午送达",
         confirmed_by_user=True,
-    )
+    ))
 
     assert result["ok"] is True
     assert result["modified"] is True
@@ -2204,13 +2202,13 @@ def test_update_sales_order_requires_confirmation(tmp_path):
     api = CompleteSalesOrderApi()
     toolset = _billing_toolset(session, api)
 
-    rejected = toolset.update_sales_order(
+    rejected = asyncio.run(toolset.update_sales_order(
         order_id="208457406331712307",
         order_date="2026-08-04",
         handler_id="STAFF-1",
         items=[{"productId": "P001", "quantity": 3}],
         confirmed_by_user=False,
-    )
+    ))
 
     assert rejected["ok"] is False
     assert rejected["error"]["code"] == "erp_sales_order_confirmation_required"
@@ -2225,13 +2223,13 @@ def test_update_sales_order_rejects_empty_items(tmp_path):
     )
     toolset = _billing_toolset(session, CompleteSalesOrderApi())
 
-    result = toolset.update_sales_order(
+    result = asyncio.run(toolset.update_sales_order(
         order_id="208457406331712307",
         order_date="2026-08-04",
         handler_id="STAFF-1",
         items=[],
         confirmed_by_user=True,
-    )
+    ))
 
     assert result["ok"] is False
     assert result["error"]["code"] == "erp_sales_order_items_empty"
@@ -2245,13 +2243,13 @@ def test_update_sales_order_rejects_item_without_product_id(tmp_path):
     )
     toolset = _billing_toolset(session, CompleteSalesOrderApi())
 
-    result = toolset.update_sales_order(
+    result = asyncio.run(toolset.update_sales_order(
         order_id="208457406331712307",
         order_date="2026-08-04",
         handler_id="STAFF-1",
         items=[{"quantity": 3}],
         confirmed_by_user=True,
-    )
+    ))
 
     assert result["ok"] is False
     assert result["error"]["code"] == "erp_sales_order_item_invalid"
@@ -2265,13 +2263,13 @@ def test_update_sales_order_rejects_invalid_date(tmp_path):
     )
     toolset = _billing_toolset(session, CompleteSalesOrderApi())
 
-    result = toolset.update_sales_order(
+    result = asyncio.run(toolset.update_sales_order(
         order_id="208457406331712307",
         order_date="2026/08/04",
         handler_id="STAFF-1",
         items=[{"productId": "P001", "quantity": 3}],
         confirmed_by_user=True,
-    )
+    ))
 
     assert result["ok"] is False
     assert result["error"]["code"] == "erp_sales_order_date_invalid"
@@ -2285,13 +2283,13 @@ def test_update_sales_order_rejects_zero_quantity(tmp_path):
     )
     toolset = _billing_toolset(session, CompleteSalesOrderApi())
 
-    result = toolset.update_sales_order(
+    result = asyncio.run(toolset.update_sales_order(
         order_id="208457406331712307",
         order_date="2026-08-04",
         handler_id="STAFF-1",
         items=[{"productId": "P001", "quantity": 0}],
         confirmed_by_user=True,
-    )
+    ))
 
     assert result["ok"] is False
     assert result["error"]["code"] == "erp_sales_order_item_invalid"

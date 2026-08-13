@@ -6,6 +6,8 @@ ErpAuthenticatedHttpAdapter 的 _resolve_order_id 归一化路径，确保
 两种标识都能正确落到内部 ID。
 """
 
+import asyncio
+
 import pytest
 
 from erp_billing.adapters import ErpAuthenticatedHttpAdapter
@@ -31,15 +33,15 @@ class _FakeHttp:
         self.put_calls = []
         self.get_responses = {}
 
-    def get_json(self, context, path, params=None):
+    async def get_json(self, context, path, params=None):
         self.get_calls.append((path, dict(params or {})))
         return self.get_responses.get(path, {"code": "A00000", "data": {}})
 
-    def post_json(self, context, path, payload):
+    async def post_json(self, context, path, payload):
         self.post_calls.append((path, payload))
         return {"code": "A00000", "data": "NEW-ID"}
 
-    def put_json(self, context, path, payload=None):
+    async def put_json(self, context, path, payload=None):
         self.put_calls.append((path, payload))
         return {"code": "A00000", "data": ""}
 
@@ -78,7 +80,7 @@ def test_numeric_id_skips_lookup():
     http.get_responses["/sales/orders/%s" % _INTERNAL_ID] = _detail_response()
     adapter = ErpAuthenticatedHttpAdapter(http)
 
-    result = adapter.get_sales_order_detail(_CONTEXT, _INTERNAL_ID)
+    result = asyncio.run(adapter.get_sales_order_detail(_CONTEXT, _INTERNAL_ID))
 
     paths = [call[0] for call in http.get_calls]
     assert paths == ["/sales/orders/%s" % _INTERNAL_ID]
@@ -90,7 +92,7 @@ def test_order_no_resolves_via_lookup():
     """业务单号通过列表精确匹配取回内部 ID 后再查详情。"""
     http, adapter = _adapter_with_order_no_lookup()
 
-    result = adapter.get_sales_order_detail(_CONTEXT, _ORDER_NO)
+    result = asyncio.run(adapter.get_sales_order_detail(_CONTEXT, _ORDER_NO))
 
     assert http.get_calls[0][0] == "/sales/orders/page"
     assert http.get_calls[0][1]["orderNo"] == _ORDER_NO
@@ -110,7 +112,7 @@ def test_lookup_requires_exact_order_no_match():
     http.get_responses["/sales/orders/%s" % _INTERNAL_ID] = _detail_response()
     adapter = ErpAuthenticatedHttpAdapter(http)
 
-    result = adapter.get_sales_order_detail(_CONTEXT, _ORDER_NO)
+    result = asyncio.run(adapter.get_sales_order_detail(_CONTEXT, _ORDER_NO))
 
     assert result.order["id"] == _INTERNAL_ID
     assert http.get_calls[1][0] == "/sales/orders/%s" % _INTERNAL_ID
@@ -124,7 +126,7 @@ def test_void_resolves_order_no():
     )
     adapter = ErpAuthenticatedHttpAdapter(http)
 
-    adapter.void_sales_order(_CONTEXT, _ORDER_NO)
+    asyncio.run(adapter.void_sales_order(_CONTEXT, _ORDER_NO))
 
     assert http.put_calls[0][0] == "/sales/orders/%s/void" % _INTERNAL_ID
 
@@ -137,10 +139,12 @@ def test_update_resolves_order_no_and_injects_id():
     )
     adapter = ErpAuthenticatedHttpAdapter(http)
 
-    result = adapter.update_sales_order(
-        _CONTEXT,
-        _ORDER_NO,
-        {"orderDate": "2026-08-04"},
+    result = asyncio.run(
+        adapter.update_sales_order(
+            _CONTEXT,
+            _ORDER_NO,
+            {"orderDate": "2026-08-04"},
+        )
     )
 
     path, payload = http.put_calls[0]
@@ -155,7 +159,7 @@ def test_empty_id_rejected():
     adapter = ErpAuthenticatedHttpAdapter(_FakeHttp())
 
     with pytest.raises(DomainError) as exc:
-        adapter.get_sales_order_detail(_CONTEXT, "")
+        asyncio.run(adapter.get_sales_order_detail(_CONTEXT, ""))
 
     assert exc.value.code == "erp_sales_order_id_invalid"
     assert not adapter._http.get_calls  # type: ignore[attr-defined]
@@ -168,7 +172,7 @@ def test_unknown_order_no_not_found():
     adapter = ErpAuthenticatedHttpAdapter(http)
 
     with pytest.raises(DomainError) as exc:
-        adapter.get_sales_order_detail(_CONTEXT, "XS999999999")
+        asyncio.run(adapter.get_sales_order_detail(_CONTEXT, "XS999999999"))
 
     assert exc.value.code == "erp_sales_order_not_found"
     assert "XS999999999" in exc.value.message
