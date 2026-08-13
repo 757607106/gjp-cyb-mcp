@@ -36,11 +36,24 @@ from .logging_config import (
     elapsed_ms,
     error_text,
 )
+from .tools import SessionFunctionTool
 from .toolset import AgentScopeToolSet
 
 logger = logging.getLogger(__name__)
 
 _TOOL_RESULT_WARN_BYTES = 512 * 1024
+
+
+def _warn_large_result(result: dict[str, Any], tool_name: str, tenant_id: str) -> None:
+    """结果过大时输出警告，避免长文本淹没模型上下文。"""
+    text = json.dumps(result, ensure_ascii=False)
+    if len(text.encode("utf-8")) > _TOOL_RESULT_WARN_BYTES:
+        logger.warning(
+            "MCP 结果较大 tool=%s tenant=%s size=%dKB，可能影响模型上下文",
+            tool_name,
+            tenant_id or "unknown",
+            len(text.encode("utf-8")) // 1024,
+        )
 
 
 def _snake_to_camel(name: str) -> str:
@@ -255,7 +268,17 @@ async def _invoke_tool(
     *,
     tenant_id: str = "",
 ) -> dict[str, Any]:
-    """执行 AgentScope 工具并把文本 JSON 还原为 MCP structuredContent。"""
+    """执行 AgentScope 工具并返回 MCP structuredContent。
+
+    SessionFunctionTool 优先走 invoke_raw() 直接拿原始 dict，
+    避免 dict→JSON text→TextBlock→json.loads 的脆弱往返。
+    其他工具仍走标准 ToolChunk 序列化路径。
+    """
+    if isinstance(tool, SessionFunctionTool):
+        result = await tool.invoke_raw(**arguments)
+        if isinstance(result, dict):
+            _warn_large_result(result, tool.name, tenant_id)
+            return result
     result = await tool(**arguments)
     chunks: list[ToolChunk] = []
     if isinstance(result, AsyncGenerator):

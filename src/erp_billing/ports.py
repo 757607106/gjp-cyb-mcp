@@ -49,7 +49,7 @@ class BillingSalesOrderPageResult:
 class AuthenticatedJsonClient(Protocol):
     """由对接产品实现的已鉴权 JSON 请求执行器。"""
 
-    def get_json(
+    async def get_json(
         self,
         context: InvocationContext,
         path: str,
@@ -57,7 +57,7 @@ class AuthenticatedJsonClient(Protocol):
     ) -> dict[str, Any]:
         ...
 
-    def post_json(
+    async def post_json(
         self,
         context: InvocationContext,
         path: str,
@@ -65,7 +65,7 @@ class AuthenticatedJsonClient(Protocol):
     ) -> dict[str, Any]:
         ...
 
-    def put_json(
+    async def put_json(
         self,
         context: InvocationContext,
         path: str,
@@ -77,14 +77,14 @@ class AuthenticatedJsonClient(Protocol):
 class BillingApiPort(Protocol):
     """完整销售单流程所需的已鉴权业务 API 端口。"""
 
-    def fetch_products(
+    async def fetch_products(
         self,
         context: InvocationContext,
         limit: int | None = None,
     ) -> BillingProductSnapshot:
         ...
 
-    def search_customers(
+    async def search_customers(
         self,
         context: InvocationContext,
         keyword: str,
@@ -92,7 +92,7 @@ class BillingApiPort(Protocol):
     ) -> BillingReferenceSnapshot:
         ...
 
-    def search_warehouses(
+    async def search_warehouses(
         self,
         context: InvocationContext,
         keyword: str,
@@ -100,7 +100,7 @@ class BillingApiPort(Protocol):
     ) -> BillingReferenceSnapshot:
         ...
 
-    def search_staff(
+    async def search_staff(
         self,
         context: InvocationContext,
         keyword: str,
@@ -108,21 +108,21 @@ class BillingApiPort(Protocol):
     ) -> BillingReferenceSnapshot:
         ...
 
-    def create_sales_order(
+    async def create_sales_order(
         self,
         context: InvocationContext,
         payload: dict[str, Any],
     ) -> BillingSalesOrderResult:
         ...
 
-    def get_sales_order_detail(
+    async def get_sales_order_detail(
         self,
         context: InvocationContext,
         order_id: str,
     ) -> BillingSalesOrderDetailResult:
         ...
 
-    def search_sales_orders(
+    async def search_sales_orders(
         self,
         context: InvocationContext,
         *,
@@ -140,14 +140,14 @@ class BillingApiPort(Protocol):
     ) -> BillingSalesOrderPageResult:
         ...
 
-    def void_sales_order(
+    async def void_sales_order(
         self,
         context: InvocationContext,
         order_id: str,
     ) -> None:
         ...
 
-    def update_sales_order(
+    async def update_sales_order(
         self,
         context: InvocationContext,
         order_id: str,
@@ -168,7 +168,7 @@ class MatchEvent:
 
 
 class MatchEventLogger(Protocol):
-    """匹配事件旁路日志端口：记录“搜X→确认Y”语料，不参与匹配主流程。"""
+    """匹配事件旁路日志端口：记录"搜X→确认Y"语料，不参与匹配主流程。"""
 
     def record(self, event: MatchEvent) -> None:
         ...

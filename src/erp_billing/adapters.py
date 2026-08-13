@@ -8,15 +8,13 @@ from __future__ import annotations
 
 import json
 import logging
-import socket
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
 
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import NoReturn
+from typing import Any, NoReturn
+
+import httpx
 
 from gjp_common.config import get_env_value
 from gjp_common.connections import (
@@ -60,39 +58,39 @@ class ErpAuthenticatedHttpAdapter:
         self._http = http
         self._page_size = page_size
 
-    def _get(
+    async def _get(
         self,
         context: InvocationContext,
         path: str,
         params: dict[str, object],
     ) -> dict:
-        data = self._http.get_json(
+        data = await self._http.get_json(
             context,
             "/" + path.lstrip("/"),
             params,
         )
         return self._ensure_success(data)
 
-    def _post(
+    async def _post(
         self,
         context: InvocationContext,
         path: str,
         payload: dict[str, object],
     ) -> dict:
-        data = self._http.post_json(
+        data = await self._http.post_json(
             context,
             "/" + path.lstrip("/"),
             payload,
         )
         return self._ensure_success(data)
 
-    def _put(
+    async def _put(
         self,
         context: InvocationContext,
         path: str,
         payload: dict[str, object] | None = None,
     ) -> dict:
-        data = self._http.put_json(
+        data = await self._http.put_json(
             context,
             "/" + path.lstrip("/"),
             payload,
@@ -111,7 +109,7 @@ class ErpAuthenticatedHttpAdapter:
             )
         return data
 
-    def fetch_products(
+    async def fetch_products(
         self,
         context: InvocationContext,
         limit: int | None = None,
@@ -126,7 +124,7 @@ class ErpAuthenticatedHttpAdapter:
             page_size = self._page_size
             if wanted is not None:
                 page_size = min(page_size, wanted - len(rows))
-            data = self._get(
+            data = await self._get(
                 context,
                 "/product/page",
                 {
@@ -157,46 +155,46 @@ class ErpAuthenticatedHttpAdapter:
             products = products[:wanted]
         return BillingProductSnapshot(products=tuple(products))
 
-    def search_customers(
+    async def search_customers(
         self,
         context: InvocationContext,
         keyword: str,
         limit: int = 10,
     ) -> BillingReferenceSnapshot:
-        return self._search_reference(
+        return await self._search_reference(
             context,
             "/customer/page",
             keyword,
             limit,
         )
 
-    def search_warehouses(
+    async def search_warehouses(
         self,
         context: InvocationContext,
         keyword: str,
         limit: int = 10,
     ) -> BillingReferenceSnapshot:
-        return self._search_reference(
+        return await self._search_reference(
             context,
             "/warehouse/page",
             keyword,
             limit,
         )
 
-    def search_staff(
+    async def search_staff(
         self,
         context: InvocationContext,
         keyword: str,
         limit: int = 10,
     ) -> BillingReferenceSnapshot:
-        return self._search_reference(
+        return await self._search_reference(
             context,
             "/staff/page",
             keyword,
             limit,
         )
 
-    def _search_reference(
+    async def _search_reference(
         self,
         context: InvocationContext,
         path: str,
@@ -211,7 +209,7 @@ class ErpAuthenticatedHttpAdapter:
         }
         if keyword.strip():
             params["keyword"] = keyword.strip()
-        data = self._get(context, path, params)
+        data = await self._get(context, path, params)
         page = data.get("data")
         if not isinstance(page, dict):
             raise DomainError("erp_live_response_invalid", "ERP 基础资料分页数据不是对象")
@@ -226,12 +224,12 @@ class ErpAuthenticatedHttpAdapter:
         )
         return BillingReferenceSnapshot(options=options)
 
-    def create_sales_order(
+    async def create_sales_order(
         self,
         context: InvocationContext,
         payload: dict[str, object],
     ) -> BillingSalesOrderResult:
-        data = self._post(context, "/sales/orders", payload)
+        data = await self._post(context, "/sales/orders", payload)
         order_id = str(data.get("data") or "").strip()
         if not order_id:
             raise DomainError(
@@ -240,7 +238,7 @@ class ErpAuthenticatedHttpAdapter:
             )
         return BillingSalesOrderResult(order_id=order_id)
 
-    def _resolve_order_id(
+    async def _resolve_order_id(
         self,
         context: InvocationContext,
         order_id: str,
@@ -260,7 +258,7 @@ class ErpAuthenticatedHttpAdapter:
             )
         if token.isdigit():
             return token
-        page = self.search_sales_orders(
+        page = await self.search_sales_orders(
             context,
             order_no=token,
             page_size=20,
@@ -275,13 +273,13 @@ class ErpAuthenticatedHttpAdapter:
             "销售单不存在：%s" % token,
         )
 
-    def get_sales_order_detail(
+    async def get_sales_order_detail(
         self,
         context: InvocationContext,
         order_id: str,
     ) -> BillingSalesOrderDetailResult:
-        resolved = self._resolve_order_id(context, order_id)
-        data = self._get(
+        resolved = await self._resolve_order_id(context, order_id)
+        data = await self._get(
             context,
             "/sales/orders/%s" % _path_segment(resolved),
             {},
@@ -294,7 +292,7 @@ class ErpAuthenticatedHttpAdapter:
             )
         return BillingSalesOrderDetailResult(order=order)
 
-    def search_sales_orders(
+    async def search_sales_orders(
         self,
         context: InvocationContext,
         *,
@@ -333,7 +331,7 @@ class ErpAuthenticatedHttpAdapter:
             params["orderNo"] = order_no.strip()
         if customer_id.strip():
             params["customerId"] = customer_id.strip()
-        data = self._get(context, "/sales/orders/page", params)
+        data = await self._get(context, "/sales/orders/page", params)
         page = data.get("data")
         if not isinstance(page, dict):
             raise DomainError(
@@ -401,28 +399,28 @@ class ErpAuthenticatedHttpAdapter:
                     "结束日期不能早于开始日期",
                 )
 
-    def void_sales_order(
+    async def void_sales_order(
         self,
         context: InvocationContext,
         order_id: str,
     ) -> None:
-        resolved = self._resolve_order_id(context, order_id)
-        self._put(
+        resolved = await self._resolve_order_id(context, order_id)
+        await self._put(
             context,
             "/sales/orders/%s/void" % _path_segment(resolved),
             {},
         )
 
-    def update_sales_order(
+    async def update_sales_order(
         self,
         context: InvocationContext,
         order_id: str,
         payload: dict[str, object],
     ) -> BillingSalesOrderResult:
-        resolved = self._resolve_order_id(context, order_id)
+        resolved = await self._resolve_order_id(context, order_id)
         payload = dict(payload)
         payload["id"] = int(resolved)
-        data = self._put(
+        data = await self._put(
             context,
             "/sales/orders/%s" % _path_segment(resolved),
             payload,
@@ -447,32 +445,42 @@ class BusinessAuthenticatedJsonClient:
         self._base_url = normalize_business_api_base_url(base_url)
         self._credential_provider = credential_provider
         self._timeout_seconds = timeout_seconds
+        self._client: httpx.AsyncClient | None = None
 
-    def get_json(
+    def _ensure_client(self) -> httpx.AsyncClient:
+        """延迟创建 httpx.AsyncClient，避免未使用的 ToolSet 占用连接池。"""
+        if self._client is None:
+            self._client = httpx.AsyncClient(
+                timeout=httpx.Timeout(self._timeout_seconds),
+                verify=True,
+            )
+        return self._client
+
+    async def get_json(
         self,
         context: InvocationContext,
         path: str,
         params: dict[str, object] | None = None,
-    ) -> dict:
-        return self._request_json(context, "GET", path, params=params)
+    ) -> dict[str, Any]:
+        return await self._request_json(context, "GET", path, params=params)
 
-    def post_json(
+    async def post_json(
         self,
         context: InvocationContext,
         path: str,
         payload: dict[str, object],
-    ) -> dict:
-        return self._request_json(context, "POST", path, payload=payload)
+    ) -> dict[str, Any]:
+        return await self._request_json(context, "POST", path, payload=payload)
 
-    def put_json(
+    async def put_json(
         self,
         context: InvocationContext,
         path: str,
         payload: dict[str, object] | None = None,
-    ) -> dict:
-        return self._request_json(context, "PUT", path, payload=payload)
+    ) -> dict[str, Any]:
+        return await self._request_json(context, "PUT", path, payload=payload)
 
-    def _request_json(
+    async def _request_json(
         self,
         context: InvocationContext,
         method: str,
@@ -480,9 +488,9 @@ class BusinessAuthenticatedJsonClient:
         *,
         params: dict[str, object] | None = None,
         payload: dict[str, object] | None = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         credential = self._credential_provider.resolve(context)
-        headers = {
+        headers: dict[str, str] = {
             "Accept": "application/json",
         }
         if credential.kind == "bearer":
@@ -490,8 +498,6 @@ class BusinessAuthenticatedJsonClient:
         else:
             raise DomainError("billing_api_unauthorized", "当前开单会话的鉴权类型无效")
         url = business_api_url(self._base_url, path)
-        if params:
-            url += "?" + urllib.parse.urlencode(params, doseq=True)
         body_bytes = None
         if payload is not None:
             headers["Content-Type"] = "application/json"
@@ -509,23 +515,24 @@ class BusinessAuthenticatedJsonClient:
                 else "<无>",
             )
         started = time.perf_counter()
-        request = urllib.request.Request(
-            url,
-            data=body_bytes,
-            headers=headers,
-            method=method,
-        )
         try:
-            with urllib.request.urlopen(request, timeout=self._timeout_seconds) as response:
-                body = response.read().decode("utf-8-sig")
-        except urllib.error.HTTPError as exc:
-            if exc.code in {401, 403}:
+            response = await self._ensure_client().request(
+                method,
+                url,
+                params=params,
+                content=body_bytes,
+                headers=headers,
+            )
+            response.raise_for_status()
+            body = response.text
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code in {401, 403}:
                 raise DomainError("business_reauth_required", "当前业务系统授权已失效") from exc
             raise DomainError(
                 "erp_live_request_failed",
-                "ERP 接口返回 HTTP %s" % exc.code,
+                "ERP 接口返回 HTTP %s" % exc.response.status_code,
             ) from exc
-        except (urllib.error.URLError, socket.timeout, TimeoutError) as exc:
+        except (httpx.TimeoutException, httpx.ConnectError) as exc:
             raise DomainError("business_upstream_unavailable", "当前业务系统不可用或请求超时") from exc
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(
@@ -542,6 +549,12 @@ class BusinessAuthenticatedJsonClient:
             raise DomainError("erp_live_response_invalid", "ERP 接口响应顶层不是对象")
         return data
 
+    async def close(self) -> None:
+        """关闭内部 HTTP 连接池，供服务停机或会话淘汰时调用。"""
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
+
 
 class UnavailableBillingApi:
     """本地参考客户端未注入开单产品 Adapter 时返回明确错误。"""
@@ -550,14 +563,14 @@ class UnavailableBillingApi:
     def _raise() -> NoReturn:
         raise DomainError("billing_api_not_configured", "开单服务尚未注入已鉴权 BillingApiPort")
 
-    def fetch_products(
+    async def fetch_products(
         self,
         context: InvocationContext,
         limit: int | None = None,
     ) -> BillingProductSnapshot:
         self._raise()
 
-    def search_customers(
+    async def search_customers(
         self,
         context: InvocationContext,
         keyword: str,
@@ -565,7 +578,7 @@ class UnavailableBillingApi:
     ) -> BillingReferenceSnapshot:
         self._raise()
 
-    def search_warehouses(
+    async def search_warehouses(
         self,
         context: InvocationContext,
         keyword: str,
@@ -573,7 +586,7 @@ class UnavailableBillingApi:
     ) -> BillingReferenceSnapshot:
         self._raise()
 
-    def search_staff(
+    async def search_staff(
         self,
         context: InvocationContext,
         keyword: str,
@@ -581,21 +594,21 @@ class UnavailableBillingApi:
     ) -> BillingReferenceSnapshot:
         self._raise()
 
-    def create_sales_order(
+    async def create_sales_order(
         self,
         context: InvocationContext,
         payload: dict[str, object],
     ) -> BillingSalesOrderResult:
         self._raise()
 
-    def get_sales_order_detail(
+    async def get_sales_order_detail(
         self,
         context: InvocationContext,
         order_id: str,
     ) -> BillingSalesOrderDetailResult:
         self._raise()
 
-    def search_sales_orders(
+    async def search_sales_orders(
         self,
         context: InvocationContext,
         *,
@@ -613,14 +626,14 @@ class UnavailableBillingApi:
     ) -> BillingSalesOrderPageResult:
         self._raise()
 
-    def void_sales_order(
+    async def void_sales_order(
         self,
         context: InvocationContext,
         order_id: str,
     ) -> None:
         self._raise()
 
-    def update_sales_order(
+    async def update_sales_order(
         self,
         context: InvocationContext,
         order_id: str,
