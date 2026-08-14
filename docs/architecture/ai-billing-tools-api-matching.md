@@ -12,11 +12,12 @@
 ```mermaid
 flowchart LR
     Voice["语音"] --> ASR["前端 ASR / 内容确认"]
-    Image["图片"] --> OCR["前端 OCR / 内容确认"]
+    Image["图片"] -->|VL 模型| Agent["Billing Agent"]
+    Image -->|非 VL| OCR["前端 OCR / 内容确认"]
     Text["文字"] --> FullText["当前订单完整文本"]
     ASR --> FullText
     OCR --> FullText
-    FullText --> Agent["Billing Agent"]
+    FullText --> Agent
 
     Agent --> Sync["syncProducts"]
     Agent --> Search["searchProducts"]
@@ -44,8 +45,10 @@ flowchart LR
     Port --> ERP["当前租户 ERP 商品 / 基础资料 / 销售单 API"]
 ```
 
-MCP 不接收音频、图片、附件、文件路径或媒体 URL，也不提供 ASR/OCR。即使
-`source` 是 `voice` 或 `image`，`previewSalesOrder` 接收的仍然是前端整理后的文本。
+MCP 不接收音频、图片、附件、文件路径或媒体 URL，也不提供 ASR/OCR。使用
+多模态模型（VL）时，Agent 按 `ERP_BILLING_SYSTEM_PROMPT` 第八章规则直接
+读图并组装 `order_text`，`source` 传 `image`；非 VL 模型仍由前端 OCR
+转文本后传入。无论哪种方式，`previewSalesOrder` 接收的都是文本。
 
 ## 2. 身份与 API 边界
 

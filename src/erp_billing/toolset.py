@@ -136,7 +136,6 @@ _SEARCH_BILLING_REFERENCES_OUTPUT_SCHEMA = {
                 "type": "object",
                 "properties": {
                     "id": {"type": "string"},
-                    "code": {"type": "string"},
                     "name": {"type": "string"},
                     "is_default": {"type": "boolean"},
                 },
@@ -1257,7 +1256,6 @@ class BillingToolSet(AgentScopeToolSet):
             items.append(item)
             preview_items.append(
                 {
-                    "product_id": line.product.product_id,
                     "name": line.product.name,
                     "quantity": line.order_line.quantity,
                     "unit": line.product.unit or line.order_line.unit,
