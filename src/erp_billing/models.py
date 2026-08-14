@@ -203,14 +203,19 @@ class Product:
         return fields
 
     def listing_fields(self) -> dict[str, Any]:
-        """返回商品列表展示所需的完整字段集。
+        """返回商品列表展示所需的完整业务字段集。
 
-        在 core_fields 基础上追加编号、规格型号、采购价、销售价、当前库存和
-        状态，供 listProducts 和 syncProducts 的 sample 使用。数值类字段
+        不含 product_id 和 code 等系统标识，只返回用户关心的业务字段：
+        商品名称、单位、规格型号、采购价、销售价、当前库存和状态。
+        供 listProducts 和 syncProducts 的 sample 使用。数值类字段
         为空时不出现该键，避免输出大量 null。
         """
-        fields = self.core_fields()
-        fields["code"] = self.code
+        fields: dict[str, Any] = {
+            "product_name": self.name,
+            "unit": self.unit,
+        }
+        if self.image_urls:
+            fields["image_urls"] = list(self.image_urls)
         if self.specification:
             fields["specification"] = self.specification
         if self.purchase_price is not None:

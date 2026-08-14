@@ -21,7 +21,7 @@
 - **工具参数只含业务数据**：账号、密码、JWT、Cookie 和业务 Token 不进入 AgentScope JSON Schema，也不允许模型生成。
 - **对接方处理鉴权**：服务通过 `BillingApiPort` 留出入口，由 Adapter 根据 `InvocationContext` 注入当前账套凭据。
 - **身份隔离**：`InvocationContext` 不含凭据，通过 `ContextVar` 绑定当前异步任务，请求结束后恢复。
-- **媒体边界**：业务方在调用 Agent 前把语音和图片转换并确认为文本；生产 MCP 不处理音频、图片、附件、ASR 或 OCR。
+- **媒体边界**：生产 MCP 不处理音频、图片、附件、ASR 或 OCR，只接收文本。使用多模态模型（VL）时，Agent 按 `ERP_BILLING_SYSTEM_PROMPT` 第八章图片识别规则直接读图并组装 `order_text`，无需独立 OCR 步骤；`source` 传 `image` 标记来源。语音仍由前端 ASR 转文本后传入。
 
 ## 技术栈
 
@@ -31,7 +31,7 @@
 | 语言 | Python >= 3.11 |
 | 包管理 | uv + pyproject.toml |
 | MCP 协议 | mcp >= 1.28（Streamable HTTP） |
-| 模型支持 | OpenAI / Anthropic / DashScope / DeepSeek / Gemini / Moonshot / xAI / Ollama |
+| 模型支持 | OpenAI / Anthropic / DashScope / DeepSeek / Gemini / Moonshot / xAI / Ollama（多模态 VL 模型可直接读图开单） |
 
 ## 代码结构
 
