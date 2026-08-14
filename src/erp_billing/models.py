@@ -19,6 +19,15 @@ def _optional_float(value: Any) -> Optional[float]:
         return None
 
 
+def _optional_int(value: Any) -> Optional[int]:
+    if value in (None, ""):
+        return None
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
 def _first_present(value: dict[str, Any], *keys: str) -> Any:
     """返回首个非空字段，同时保留合法的数值 0。"""
     for key in keys:
@@ -35,10 +44,13 @@ class Product:
     code: str = ""
     unit: str = ""
     barcode: str = ""
+    specification: str = ""
     aliases: tuple[str, ...] = ()
     customer_codes: tuple[str, ...] = ()
     price: Optional[float] = None
+    purchase_price: Optional[float] = None
     stock: Optional[float] = None
+    status: Optional[int] = None
     image_urls: tuple[str, ...] = ()
     raw: dict[str, Any] = field(default_factory=dict)
 
@@ -97,12 +109,23 @@ class Product:
                 "图片",
             )
         )
+        specification = _clean_string(
+            _first_present(
+                value,
+                "specification",
+                "spec",
+                "pspec",
+                "ptypeid_pspec",
+                "规格型号",
+            )
+        )
         return cls(
             product_id=product_id or code or barcode or name,
             name=name,
             code=code,
             unit=unit,
             barcode=barcode,
+            specification=specification,
             aliases=aliases,
             customer_codes=customer_codes,
             price=_optional_float(
@@ -115,6 +138,17 @@ class Product:
                     "单价",
                 ),
             ),
+            purchase_price=_optional_float(
+                _first_present(
+                    value,
+                    "purchasePrice",
+                    "purchase_price",
+                    "purprice",
+                    "preprice2",
+                    "lastpurprice",
+                    "采购价",
+                ),
+            ),
             stock=_optional_float(
                 _first_present(
                     value,
@@ -122,6 +156,13 @@ class Product:
                     "stockQuantity",
                     "qty",
                     "库存",
+                ),
+            ),
+            status=_optional_int(
+                _first_present(
+                    value,
+                    "status",
+                    "isstop",
                 ),
             ),
             image_urls=image_urls,
@@ -135,10 +176,13 @@ class Product:
             "name": self.name,
             "unit": self.unit,
             "barcode": self.barcode,
+            "specification": self.specification,
             "aliases": list(self.aliases),
             "customerCodes": list(self.customer_codes),
             "price": self.price,
+            "purchasePrice": self.purchase_price,
             "stock": self.stock,
+            "status": self.status,
         }
         if self.image_urls:
             payload["imageUrls"] = list(self.image_urls)
@@ -156,6 +200,27 @@ class Product:
         }
         if self.image_urls:
             fields["image_urls"] = list(self.image_urls)
+        return fields
+
+    def listing_fields(self) -> dict[str, Any]:
+        """返回商品列表展示所需的完整字段集。
+
+        在 core_fields 基础上追加编号、规格型号、采购价、销售价、当前库存和
+        状态，供 listProducts 和 syncProducts 的 sample 使用。数值类字段
+        为空时不出现该键，避免输出大量 null。
+        """
+        fields = self.core_fields()
+        fields["code"] = self.code
+        if self.specification:
+            fields["specification"] = self.specification
+        if self.purchase_price is not None:
+            fields["purchase_price"] = self.purchase_price
+        if self.price is not None:
+            fields["sales_price"] = self.price
+        if self.stock is not None:
+            fields["stock_quantity"] = self.stock
+        if self.status is not None:
+            fields["status"] = self.status
         return fields
 
 

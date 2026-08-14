@@ -455,7 +455,7 @@ class BillingToolSet(AgentScopeToolSet):
             synced_at = await self._sync_catalog(limit)
             products = self.session.catalog.products
             sample = [
-                {**product.core_fields(), "code": product.code}
+                product.listing_fields()
                 for product in products[:5]
             ]
             return self.ok_response(
@@ -492,7 +492,7 @@ class BillingToolSet(AgentScopeToolSet):
             start = (effective_page - 1) * effective_size
             end = start + effective_size
             items = [
-                {**product.core_fields(), "code": product.code}
+                product.listing_fields()
                 for product in products[start:end]
             ]
             return self.ok_response(
