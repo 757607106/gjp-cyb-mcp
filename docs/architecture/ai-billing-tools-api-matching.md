@@ -98,15 +98,24 @@ PUT  /sales/orders/{id}
 Adapter 按 20 条一页自动翻页；响应由 `normalize_live_product_rows()` 归一化，
 过滤停用和重复商品，只保留当前账号可用的真实商品。字段映射如下：
 
-| 云创业版字段 | 目录字段 |
-|---|---|
-| `id` | `productId` |
-| `code` | `code` |
-| `name` | `name` |
-| `unit` | `unit` |
-| `barcode` | `barcode` |
-| `salesPrice` | `price` |
-| `stockQuantity` | `stock` |
+| 云创业版字段 | 目录字段 | 说明 |
+|---|---|---|
+| `id` | `productId` | 商品 ID |
+| `code` | `code` | 商品编号 |
+| `name` | `name` | 商品名称 |
+| `unit` | `unit` | 单位/基础单位 |
+| `barcode` | `barcode` | 条码 |
+| `specification` | `specification` | 规格型号 |
+| `salesPrice` | `price` | 销售价 |
+| `purchasePrice` | `purchasePrice` | 采购价 |
+| `stockQuantity` | `stock` | 当前库存 |
+| `status` | `status` | 状态（1=启用） |
+
+`listProducts` 和 `syncProducts` 的 `sample_products` 返回 `listing_fields()`，
+包含 `product_id`、`product_name`、`unit`、`code`、`specification`、
+`purchase_price`、`sales_price`、`stock_quantity` 和 `status`。开单预览
+（`previewSalesOrder`）仍使用 `core_fields()` 最小字段集，不返回价格、
+库存等扩展字段。
 
 ## 3. 对外工具
 

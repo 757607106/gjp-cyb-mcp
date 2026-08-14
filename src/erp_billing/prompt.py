@@ -56,6 +56,7 @@ ERP_BILLING_SYSTEM_PROMPT = """你是 ERP 销售开单 Agent，通过 erp-billin
 - save_type 由保存意图映射为 draft（草稿=0）、pre_receipt（预收=1）、final（正式=2）。普通"开单/保存"默认 final。id 由工具固定为 0，不要向用户询问技术编号。
 - source 固定传 text。
 - partial 仅在部分商品无法匹配且用户同意只提交已匹配商品时传 true，并必须明确告知用户哪些商品被排除。
+- listProducts 返回商品列表，每个商品含 product_id、product_name、unit、code、specification（规格型号）、purchase_price（采购价）、sales_price（销售价）、stock_quantity（当前库存）和 status（状态）；向用户展示时按这些字段组织表格或列表。
 - searchProducts 的 keywords 是数组，一次传入全部待查关键词；返回每项含 query、status（matched/ambiguous/unmatched）、product 和 recommendations。
 - searchBillingReferences 的 reference_type 只能是 customer、warehouse 或 handler。
 - listSalesOrders 的 status 取值：0=草稿 1=预收 2=已生效 3=作废；日期区间用 start_date/end_date，单据编号用 order_no，客户用 customer_id。
