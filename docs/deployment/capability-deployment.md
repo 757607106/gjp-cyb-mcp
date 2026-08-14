@@ -49,4 +49,4 @@ api = ErpAuthenticatedHttpAdapter(http)
 - Tool 参数不得包含身份、URL、JWT、Cookie、Token 或密码。
 - 上游 Bearer 只存于服务端凭据提供者，日志默认脱敏。
 - ToolSet、Session、商品目录、预览和幂等结果按会话隔离。
-- MCP 不接收音频、图片或附件；媒体先在业务页面转换并确认成文本。
+- MCP 不接收音频、图片或附件；语音由前端 ASR 转文本后传入。多模态模型（VL）可直接读图组装 order_text，非 VL 模型仍由前端 OCR 转文本。

@@ -870,9 +870,9 @@ def test_list_products_includes_image_urls_when_present(tmp_path):
 
     result = asyncio.run(toolset.list_products())
 
-    products = {item["product_id"]: item for item in result["products"]}
-    assert products["P001"]["image_urls"] == ["https://cdn.example.com/a.jpg"]
-    assert "image_urls" not in products["P002"]
+    products = {item["product_name"]: item for item in result["products"]}
+    assert products["番茄"]["image_urls"] == ["https://cdn.example.com/a.jpg"]
+    assert "image_urls" not in products["土豆"]
 
 
 def test_live_product_normalization_keeps_leaf_products_only():
@@ -1296,7 +1296,6 @@ def test_complete_sales_order_preview_confirmation_submit_and_idempotency(tmp_pa
     assert prepared["preview"]["customer"]["id"] == "CUS-1"
     assert prepared["preview"]["items"] == [
         {
-            "product_id": "P001",
             "name": "土豆",
             "quantity": 2,
             "unit": "斤",
@@ -1784,7 +1783,8 @@ def test_sync_products_returns_sample_products(tmp_path):
     assert result["product_count"] == 10
     assert len(result["sample_products"]) == 5
     assert result["sample_products"][0]["product_name"] == "商品1"
-    assert result["sample_products"][0]["code"] == "S001"
+    assert "product_id" not in result["sample_products"][0]
+    assert "code" not in result["sample_products"][0]
 
 
 def test_reference_dedup_reduces_business_type_variants(tmp_path):

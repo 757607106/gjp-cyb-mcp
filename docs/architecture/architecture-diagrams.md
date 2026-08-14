@@ -8,7 +8,7 @@
 flowchart LR
     subgraph Business["业务方 SaaS"]
         Page["对话页"]
-        Media["ASR / OCR / 文本确认"]
+        Media["ASR / 文本确认"]
         Backend["业务后端"]
         Agent["AI Agent 平台"]
         Page --> Media --> Agent
@@ -33,8 +33,9 @@ flowchart LR
     Tools --> Port --> ERP["ERP 商品 / 基础资料 / 销售单 API"]
 ```
 
-业务方先把语音和图片转换为用户确认后的当前订单完整文本。生产 MCP 不提供媒体
-上传、ASR、OCR 或附件工具。
+业务方把语音转换为用户确认后的当前订单完整文本。多模态模型（VL）可直接
+读图组装 order_text 并调用 previewSalesOrder（source 传 image）；非 VL
+模型仍由前端 OCR 转文本。生产 MCP 不提供媒体上传、ASR 或附件工具。
 
 ## 2. 代码分层
 

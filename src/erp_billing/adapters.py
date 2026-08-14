@@ -674,7 +674,6 @@ def _reference_option(row: dict[str, object]) -> dict[str, object] | None:
         return None
     return {
         "id": option_id,
-        "code": str(row.get("code") or "").strip(),
         "name": name,
         "is_default": bool(row.get("isDefault")),
     }

@@ -32,7 +32,8 @@ flowchart LR
 | MCP JWT / OAuth2 | 否 | 否 | 网关或认证层 |
 | 云创业版上游 Bearer | 否 | 否 | 服务端连接存储 |
 | ERP Base URL | 否 | 否 | 部署级固定配置 `ERP_BILLING_BASE_URL` |
-| 原始语音、图片、附件 | 否 | 否 | 业务方前端 |
+| 原始语音、附件 | 否 | 否 | 业务方前端 |
+| 原始图片 | VL 模型可见 | 否 | Agent 上下文（VL 模型直接读图，不进入 MCP） |
 | 商品目录 | 否 | 否 | 当前 `ErpBillingSession` 内存 |
 
 ## 2. 核心对象
