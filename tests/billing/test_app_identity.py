@@ -19,7 +19,6 @@ from erp_billing.app import (
     VerifiedJwtIdentityResolver,
     _CompositeIdentityResolver,
     _create_identity_resolver,
-    _parse_api_key_mapping,
 )
 from gjp_common.connections import BusinessApiCredential
 from gjp_common.context import InvocationContext
@@ -175,16 +174,6 @@ def test_composition_root_routes_bearer_by_env(monkeypatch: pytest.MonkeyPatch) 
     assert context_local.tenant_id == "tenant-1"
 
 
-def test_production_without_secret_fails_fast(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GJP_ENV", "production")
-    monkeypatch.delenv("ERP_BILLING_JWT_SECRET", raising=False)
-
-    with pytest.raises(DomainError) as excinfo:
-        _create_identity_resolver(SessionCredentialStore())
-
-    assert excinfo.value.code == "mcp_unauthorized"
-
-
 def test_bearer_store_rejects_expired_token() -> None:
     """过期 Token 在 resolve 时返回 business_reauth_required，复用现有错误码。"""
     store = SessionCredentialStore()
@@ -225,48 +214,22 @@ def _mcp_api_key_context(api_key: str) -> SimpleNamespace:
     )
 
 
-def test_parse_api_key_mapping_parses_entries() -> None:
-    assert _parse_api_key_mapping("ak_a:t1:u1,ak_b:t2:u2") == {
-        "ak_a": ("t1", "u1"),
-        "ak_b": ("t2", "u2"),
-    }
-
-
-def test_parse_api_key_mapping_empty() -> None:
-    assert _parse_api_key_mapping("") == {}
-    assert _parse_api_key_mapping("  ,  ") == {}
-
-
-def test_parse_api_key_mapping_rejects_malformed() -> None:
-    with pytest.raises(DomainError) as excinfo:
-        _parse_api_key_mapping("ak_a:t1")
-    assert excinfo.value.code == "business_connection_invalid"
-
-
-def test_api_key_resolver_accepts_configured_key() -> None:
+def test_api_key_resolver_accepts_any_key() -> None:
+    """key 等同于 token：任意 key 都被接受，用 key 构造会话隔离身份。"""
     store = SessionCredentialStore()
-    resolver = ApiKeyIdentityResolver(store, {"ak_test_key": ("tenant-1", "user-1")})
+    resolver = ApiKeyIdentityResolver(store)
 
-    context = resolver.resolve(_mcp_api_key_context("ak_test_key"))
+    context = resolver.resolve(_mcp_api_key_context("ak_any_key"))
 
-    assert context.tenant_id == "tenant-1"
-    assert context.subject_id == "user-1"
+    assert context.tenant_id == "ak_any_key"
+    assert context.subject_id == "ak_any_key"
     credential = store.resolve(context)
     assert credential.kind == "api_key"
-    assert credential.value == "ak_test_key"
-
-
-def test_api_key_resolver_rejects_unknown_key() -> None:
-    resolver = ApiKeyIdentityResolver(SessionCredentialStore(), {})
-    with pytest.raises(DomainError) as excinfo:
-        resolver.resolve(_mcp_api_key_context("ak_unknown"))
-    assert excinfo.value.code == "mcp_unauthorized"
+    assert credential.value == "ak_any_key"
 
 
 def test_api_key_resolver_rejects_missing_header() -> None:
-    resolver = ApiKeyIdentityResolver(
-        SessionCredentialStore(), {"ak_x": ("t", "u")},
-    )
+    resolver = ApiKeyIdentityResolver(SessionCredentialStore())
     ctx = SimpleNamespace(request=SimpleNamespace(headers={}))
     with pytest.raises(DomainError) as excinfo:
         resolver.resolve(ctx)
@@ -275,9 +238,7 @@ def test_api_key_resolver_rejects_missing_header() -> None:
 
 def test_composite_resolver_prefers_bearer_when_present() -> None:
     store = SessionCredentialStore()
-    api_key_resolver = ApiKeyIdentityResolver(
-        store, {"ak_x": ("tenant-1", "user-1")},
-    )
+    api_key_resolver = ApiKeyIdentityResolver(store)
 
     def bearer_factory() -> Any:
         return DirectJwtIdentityResolver(store)
@@ -299,27 +260,31 @@ def test_composite_resolver_prefers_bearer_when_present() -> None:
 
 def test_composite_resolver_falls_back_to_api_key() -> None:
     store = SessionCredentialStore()
-    api_key_resolver = ApiKeyIdentityResolver(
-        store, {"ak_x": ("tenant-1", "user-1")},
-    )
+    api_key_resolver = ApiKeyIdentityResolver(store)
 
     def bearer_factory() -> Any:
         return DirectJwtIdentityResolver(store)
 
     resolver = _CompositeIdentityResolver(bearer_factory, api_key_resolver)
     context = resolver.resolve(_mcp_api_key_context("ak_x"))
-    assert context.tenant_id == "tenant-1"
+    assert context.tenant_id == "ak_x"
     assert store.resolve(context).kind == "api_key"
 
 
-def test_production_with_api_keys_allows_missing_secret(
+def test_production_without_secret_allows_api_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """配了 API Key 映射的生产环境允许不配 JWT secret（纯 API Key 部署）。"""
+    """生产无 JWT secret 时仍可启动：X-API-Key 请求正常，Bearer 请求才报错。"""
     monkeypatch.setenv("GJP_ENV", "production")
-    monkeypatch.setenv("ERP_BILLING_API_KEYS", "ak_x:t:u")
     monkeypatch.delenv("ERP_BILLING_JWT_SECRET", raising=False)
+    monkeypatch.delenv("ERP_BILLING_API_KEYS", raising=False)
 
     resolver = _create_identity_resolver(SessionCredentialStore())
-    context = resolver.resolve(_mcp_api_key_context("ak_x"))
-    assert context.tenant_id == "t"
+    # X-API-Key 请求正常
+    context = resolver.resolve(_mcp_api_key_context("ak_any"))
+    assert context.tenant_id == "ak_any"
+    # Bearer 请求才报错（惰性构造时 secret 缺失）
+    token = _make_token(_valid_payload())
+    with pytest.raises(DomainError) as excinfo:
+        resolver.resolve(_mcp_context(token))
+    assert excinfo.value.code == "mcp_unauthorized"
