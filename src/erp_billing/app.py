@@ -281,55 +281,25 @@ class _LazyBillingApp:
         await self._app(scope, receive, send)
 
 
-def _parse_api_key_mapping(raw: str) -> dict[str, tuple[str, str]]:
-    """解析 ERP_BILLING_API_KEYS 配置：ak_xxx:tenantId:loginId,...
-
-    返回 {api_key: (tenant_id, login_id)}；空配置返回空映射。
-    """
-    mapping: dict[str, tuple[str, str]] = {}
-    for item in raw.split(","):
-        item = item.strip()
-        if not item:
-            continue
-        parts = item.split(":")
-        if len(parts) != 3 or not all(p.strip() for p in parts):
-            raise DomainError(
-                "business_connection_invalid",
-                "ERP_BILLING_API_KEYS 格式无效，应为 ak_xxx:tenantId:loginId",
-            )
-        key, tenant, login = (p.strip() for p in parts)
-        mapping[key] = (tenant, login)
-    return mapping
-
-
 class ApiKeyIdentityResolver:
-    """X-API-Key 鉴权：通过部署配置的 key→租户映射验证身份。
+    """X-API-Key 鉴权：用 key 直接构造调用上下文。
 
-    配置项 ERP_BILLING_API_KEYS 格式为
-    ``ak_xxx:tenantId:loginId,ak_yyy:tenantId2:loginId2``；未配置时
-    不接受任何 X-API-Key 请求。API Key 只在服务端内存中流转，不进入
-    InvocationContext、Tool Schema 或模型上下文。
+    key 等同于 token：每个租户在创业版生成 key，客户端传 X-API-Key 即
+    可，服务端无需预配映射。MCP 用 key 作会话隔离标识，ERP 业务 API
+    调用用 X-API-Key 头由 ERP 识别真实租户。key 只在服务端内存中流转，
+    不进入 Tool Schema 或模型上下文。
     """
 
-    def __init__(
-        self,
-        store: SessionCredentialStore,
-        mapping: dict[str, tuple[str, str]],
-    ) -> None:
+    def __init__(self, store: SessionCredentialStore) -> None:
         self._store = store
-        self._mapping = mapping
 
     def resolve(self, mcp_request_context: Any) -> InvocationContext:
         api_key = _api_key_from_mcp_context(mcp_request_context)
-        identity = self._mapping.get(api_key)
-        if identity is None:
-            raise DomainError("mcp_unauthorized", "未知的 X-API-Key")
-        tenant_id, login_id = identity
         context = InvocationContext(
-            tenant_id=tenant_id,
-            subject_id=login_id,
-            account_id=tenant_id,
-            session_id="billing-" + login_id,
+            tenant_id=api_key,
+            subject_id=api_key,
+            account_id=api_key,
+            session_id="billing-apikey",
             scopes=frozenset({"billing:read", "billing:write"}),
         )
         context.require_scope("billing:read")
@@ -343,21 +313,18 @@ class ApiKeyIdentityResolver:
 class _CompositeIdentityResolver:
     """按请求头选择鉴权方式：有 Authorization 走 Bearer，否则走 X-API-Key。
 
-    Bearer 解析器惰性构造；未配置 API Key 映射时在装配阶段即构造
-    （生产缺 ERP_BILLING_JWT_SECRET 时 fail-fast），配置了 API Key
-    映射则允许纯 API Key 部署。
+    Bearer 解析器惰性构造；纯 API Key 部署无需 ERP_BILLING_JWT_SECRET，
+    仅在收到 Bearer 请求时才构造（生产缺密钥时该请求报错）。
     """
 
     def __init__(
         self,
         bearer_factory: Callable[[], Any],
         api_key_resolver: ApiKeyIdentityResolver,
-        *,
-        prime_bearer: bool = False,
     ) -> None:
         self._bearer_factory = bearer_factory
         self._api_key_resolver = api_key_resolver
-        self._bearer: Any | None = bearer_factory() if prime_bearer else None
+        self._bearer: Any | None = None
 
     def resolve(self, mcp_request_context: Any) -> InvocationContext:
         request = getattr(mcp_request_context, "request", None)
@@ -376,14 +343,11 @@ class _CompositeIdentityResolver:
 def _create_identity_resolver(bearer_store: SessionCredentialStore) -> Any:
     """组合根：按请求头选择 Bearer JWT 或 X-API-Key 鉴权。
 
-    未配置 API Key 映射时立即构造 Bearer 解析器，保持生产 fail-fast
-    （缺 ERP_BILLING_JWT_SECRET 拒绝启动）；配置了 API Key 映射则允许
-    纯 API Key 部署，Bearer 惰性构造。
+    X-API-Key 无需预配映射，客户端传 key 即可；Bearer 解析器惰性构造，
+    纯 API Key 部署无需 ERP_BILLING_JWT_SECRET，仅在收到 Bearer 请求时
+    才需要（生产缺密钥时该请求报错）。
     """
-    api_key_mapping = _parse_api_key_mapping(
-        get_env_value("ERP_BILLING_API_KEYS", ""),
-    )
-    api_key_resolver = ApiKeyIdentityResolver(bearer_store, api_key_mapping)
+    api_key_resolver = ApiKeyIdentityResolver(bearer_store)
 
     def bearer_factory() -> Any:
         if is_production():
@@ -393,11 +357,7 @@ def _create_identity_resolver(bearer_store: SessionCredentialStore) -> Any:
             )
         return DirectJwtIdentityResolver(bearer_store)
 
-    return _CompositeIdentityResolver(
-        bearer_factory,
-        api_key_resolver,
-        prime_bearer=not api_key_mapping,
-    )
+    return _CompositeIdentityResolver(bearer_factory, api_key_resolver)
 
 
 def create_billing_app() -> Any:
