@@ -66,6 +66,16 @@ def _bearer_token_from_mcp_context(mcp_request_context: Any) -> str:
     return token
 
 
+def _api_key_from_mcp_context(mcp_request_context: Any) -> str:
+    """从 MCP HTTP 请求头读取 X-API-Key。"""
+    request = getattr(mcp_request_context, "request", None)
+    headers = getattr(request, "headers", None)
+    api_key = headers.get("x-api-key", "") if headers is not None else ""
+    if not api_key.strip():
+        raise DomainError("mcp_unauthorized", "缺少 X-API-Key")
+    return api_key.strip()
+
+
 def _decode_jwt_unverified(token: str) -> dict:
     """不验签地解析 JWT payload，用于本地环境和提取 exp。"""
     try:
@@ -118,11 +128,11 @@ def _context_from_jwt(token: str) -> InvocationContext:
 
 
 @dataclass
-class _StoredBearer:
-    """已存储的 Bearer Token 及其过期时间。"""
+class _StoredCredential:
+    """已存储的业务凭据及其过期时间。"""
 
-    token: str
-    expires_at: float  # epoch seconds，0 表示未知
+    credential: BusinessApiCredential
+    expires_at: float  # epoch seconds，0 表示未知/不过期
 
 
 def _extract_exp(token: str) -> float:
@@ -136,47 +146,50 @@ def _extract_exp(token: str) -> float:
     return 0.0
 
 
-class SessionBearerStore:
-    """按会话保存当前 MCP Bearer，供 Adapter 注入 ERP API 调用。
+class SessionCredentialStore:
+    """按会话保存当前 MCP 凭据，供 Adapter 注入 ERP API 调用。
 
-    Bearer 只存在于服务端内存，不进入 InvocationContext、Tool Schema 或
-    模型上下文；单进程装配使用，多副本部署应替换为共享会话存储。
+    Bearer/API-Key 只存在于服务端内存，不进入 InvocationContext、Tool Schema
+    或模型上下文；单进程装配使用，多副本部署应替换为共享会话存储。
     """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._bearers: dict[tuple[str, str, str], _StoredBearer] = {}
+        self._creds: dict[tuple[str, str, str], _StoredCredential] = {}
 
     @staticmethod
     def _key(context: InvocationContext) -> tuple[str, str, str]:
         return (context.tenant_id, context.account_id, context.session_id)
 
-    def register(self, context: InvocationContext, bearer: str) -> None:
-        exp = _extract_exp(bearer)
+    def register(self, context: InvocationContext, credential: BusinessApiCredential) -> None:
+        exp = _extract_exp(credential.value) if credential.kind == "bearer" else 0.0
         with self._lock:
-            self._bearers[self._key(context)] = _StoredBearer(bearer, exp)
+            self._creds[self._key(context)] = _StoredCredential(credential, exp)
 
     def resolve(self, context: InvocationContext) -> BusinessApiCredential:
         with self._lock:
-            stored = self._bearers.get(self._key(context))
+            stored = self._creds.get(self._key(context))
         if stored is None:
-            raise DomainError("business_credential_required", "当前会话缺少 ERP Bearer")
+            raise DomainError("business_credential_required", "当前会话缺少 ERP 鉴权凭据")
         if stored.expires_at and stored.expires_at < time.time():
             raise DomainError("business_reauth_required", "当前业务系统授权已失效")
-        return BusinessApiCredential(kind="bearer", value=stored.token)
+        return stored.credential
 
 
 class DirectJwtIdentityResolver:
     """本地/测试环境：直接把 MCP Bearer 中的 ERP JWT 映射为 InvocationContext。"""
 
-    def __init__(self, store: SessionBearerStore) -> None:
+    def __init__(self, store: SessionCredentialStore) -> None:
         self._store = store
 
     def resolve(self, mcp_request_context: Any) -> InvocationContext:
         token = _bearer_token_from_mcp_context(mcp_request_context)
         context = _context_from_jwt(token)
         context.require_scope("billing:read")
-        self._store.register(context, token)
+        self._store.register(
+            context,
+            BusinessApiCredential(kind="bearer", value=token),
+        )
         return context
 
 
@@ -187,7 +200,7 @@ class VerifiedJwtIdentityResolver:
     配置文件模板；未配置密钥时拒绝构造，避免生产裸奔。
     """
 
-    def __init__(self, store: SessionBearerStore, jwt_secret: str) -> None:
+    def __init__(self, store: SessionCredentialStore, jwt_secret: str) -> None:
         if not jwt_secret.strip():
             raise DomainError(
                 "mcp_unauthorized",
@@ -201,7 +214,10 @@ class VerifiedJwtIdentityResolver:
         _decode_jwt_verified(token, self._jwt_secret)
         context = _context_from_jwt(token)
         context.require_scope("billing:read")
-        self._store.register(context, token)
+        self._store.register(
+            context,
+            BusinessApiCredential(kind="bearer", value=token),
+        )
         return context
 
 
@@ -210,7 +226,7 @@ class BillingSessionToolSetResolver(McpToolSetResolver):
 
     def __init__(
         self,
-        store: SessionBearerStore,
+        store: SessionCredentialStore,
         settings: ErpBillingSettings,
         timeout_seconds: float,
     ) -> None:
@@ -265,14 +281,123 @@ class _LazyBillingApp:
         await self._app(scope, receive, send)
 
 
-def _create_identity_resolver(bearer_store: SessionBearerStore) -> Any:
-    """组合根唯一的环境分支：按 GJP_ENV 选择鉴权强度。"""
-    if is_production():
-        return VerifiedJwtIdentityResolver(
-            bearer_store,
-            get_env_value("ERP_BILLING_JWT_SECRET"),
+def _parse_api_key_mapping(raw: str) -> dict[str, tuple[str, str]]:
+    """解析 ERP_BILLING_API_KEYS 配置：ak_xxx:tenantId:loginId,...
+
+    返回 {api_key: (tenant_id, login_id)}；空配置返回空映射。
+    """
+    mapping: dict[str, tuple[str, str]] = {}
+    for item in raw.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        parts = item.split(":")
+        if len(parts) != 3 or not all(p.strip() for p in parts):
+            raise DomainError(
+                "business_connection_invalid",
+                "ERP_BILLING_API_KEYS 格式无效，应为 ak_xxx:tenantId:loginId",
+            )
+        key, tenant, login = (p.strip() for p in parts)
+        mapping[key] = (tenant, login)
+    return mapping
+
+
+class ApiKeyIdentityResolver:
+    """X-API-Key 鉴权：通过部署配置的 key→租户映射验证身份。
+
+    配置项 ERP_BILLING_API_KEYS 格式为
+    ``ak_xxx:tenantId:loginId,ak_yyy:tenantId2:loginId2``；未配置时
+    不接受任何 X-API-Key 请求。API Key 只在服务端内存中流转，不进入
+    InvocationContext、Tool Schema 或模型上下文。
+    """
+
+    def __init__(
+        self,
+        store: SessionCredentialStore,
+        mapping: dict[str, tuple[str, str]],
+    ) -> None:
+        self._store = store
+        self._mapping = mapping
+
+    def resolve(self, mcp_request_context: Any) -> InvocationContext:
+        api_key = _api_key_from_mcp_context(mcp_request_context)
+        identity = self._mapping.get(api_key)
+        if identity is None:
+            raise DomainError("mcp_unauthorized", "未知的 X-API-Key")
+        tenant_id, login_id = identity
+        context = InvocationContext(
+            tenant_id=tenant_id,
+            subject_id=login_id,
+            account_id=tenant_id,
+            session_id="billing-" + login_id,
+            scopes=frozenset({"billing:read", "billing:write"}),
         )
-    return DirectJwtIdentityResolver(bearer_store)
+        context.require_scope("billing:read")
+        self._store.register(
+            context,
+            BusinessApiCredential(kind="api_key", value=api_key),
+        )
+        return context
+
+
+class _CompositeIdentityResolver:
+    """按请求头选择鉴权方式：有 Authorization 走 Bearer，否则走 X-API-Key。
+
+    Bearer 解析器惰性构造；未配置 API Key 映射时在装配阶段即构造
+    （生产缺 ERP_BILLING_JWT_SECRET 时 fail-fast），配置了 API Key
+    映射则允许纯 API Key 部署。
+    """
+
+    def __init__(
+        self,
+        bearer_factory: Callable[[], Any],
+        api_key_resolver: ApiKeyIdentityResolver,
+        *,
+        prime_bearer: bool = False,
+    ) -> None:
+        self._bearer_factory = bearer_factory
+        self._api_key_resolver = api_key_resolver
+        self._bearer: Any | None = bearer_factory() if prime_bearer else None
+
+    def resolve(self, mcp_request_context: Any) -> InvocationContext:
+        request = getattr(mcp_request_context, "request", None)
+        headers = getattr(request, "headers", None)
+        authorization = headers.get("authorization", "") if headers is not None else ""
+        if authorization.strip():
+            return self._ensure_bearer().resolve(mcp_request_context)
+        return self._api_key_resolver.resolve(mcp_request_context)
+
+    def _ensure_bearer(self) -> Any:
+        if self._bearer is None:
+            self._bearer = self._bearer_factory()
+        return self._bearer
+
+
+def _create_identity_resolver(bearer_store: SessionCredentialStore) -> Any:
+    """组合根：按请求头选择 Bearer JWT 或 X-API-Key 鉴权。
+
+    未配置 API Key 映射时立即构造 Bearer 解析器，保持生产 fail-fast
+    （缺 ERP_BILLING_JWT_SECRET 拒绝启动）；配置了 API Key 映射则允许
+    纯 API Key 部署，Bearer 惰性构造。
+    """
+    api_key_mapping = _parse_api_key_mapping(
+        get_env_value("ERP_BILLING_API_KEYS", ""),
+    )
+    api_key_resolver = ApiKeyIdentityResolver(bearer_store, api_key_mapping)
+
+    def bearer_factory() -> Any:
+        if is_production():
+            return VerifiedJwtIdentityResolver(
+                bearer_store,
+                get_env_value("ERP_BILLING_JWT_SECRET"),
+            )
+        return DirectJwtIdentityResolver(bearer_store)
+
+    return _CompositeIdentityResolver(
+        bearer_factory,
+        api_key_resolver,
+        prime_bearer=not api_key_mapping,
+    )
 
 
 def create_billing_app() -> Any:
@@ -282,7 +407,7 @@ def create_billing_app() -> Any:
     if timeout_seconds <= 0:
         raise DomainError("business_connection_invalid", "超时时间必须大于 0")
     settings = ErpBillingSettings.from_env()
-    bearer_store = SessionBearerStore()
+    bearer_store = SessionCredentialStore()
     schema_toolset = BillingToolSet(
         ErpBillingSession.from_settings(
             replace(settings, product_catalog_path=None),

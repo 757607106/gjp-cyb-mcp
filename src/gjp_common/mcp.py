@@ -233,24 +233,33 @@ def create_mcp_server(
 
 
 def _masked_authorization(mcp_request_context: Any) -> str:
-    """脱敏输出 Authorization 头；开启 GJP_DEBUG_DUMP_CREDENTIALS 时输出完整 token。"""
+    """脱敏输出 Authorization 或 X-API-Key 头。
+
+    开启 GJP_DEBUG_DUMP_CREDENTIALS 时输出完整凭据；否则只输出前缀与长度。
+    """
     request = getattr(mcp_request_context, "request", None)
     headers = getattr(request, "headers", None)
-    value = headers.get("authorization", "") if headers is not None else ""
-    if not value:
-        return "<缺失>"
-    scheme, _, token = value.partition(" ")
-    token = token.strip()
-    if not token:
-        return scheme + " <空>"
-    # 防御性剥离客户端可能误传的多余 Bearer 前缀
-    if token[:7].casefold() == "bearer ":
-        token = token[7:].strip()
-    if not token:
-        return scheme + " <空>"
-    if credential_dump_enabled():
-        return "%s %s" % (scheme, token)
-    return "%s …(len=%d)" % (scheme, len(token))
+    if headers is not None:
+        value = headers.get("authorization", "")
+        if value:
+            scheme, _, token = value.partition(" ")
+            token = token.strip()
+            if not token:
+                return scheme + " <空>"
+            # 防御性剥离客户端可能误传的多余 Bearer 前缀
+            if token[:7].casefold() == "bearer ":
+                token = token[7:].strip()
+            if not token:
+                return scheme + " <空>"
+            if credential_dump_enabled():
+                return "%s %s" % (scheme, token)
+            return "%s …(len=%d)" % (scheme, len(token))
+        api_key = headers.get("x-api-key", "")
+        if api_key:
+            if credential_dump_enabled():
+                return "X-API-Key %s" % api_key
+            return "X-API-Key …(len=%d)" % len(api_key)
+    return "<缺失>"
 
 
 def _request_headers(mcp_request_context: Any) -> dict[str, str]:
