@@ -78,7 +78,7 @@ stop_service() {
 pull_code() {
     info "2/5 拉取最新 $BRANCH 分支代码..."
     cd "$DEPLOY_DIR"
-    git fetch origin "$BRANCH"
+    git fetch origin "$BRANCH:refs/remotes/origin/$BRANCH"
     git reset --hard "origin/$BRANCH"
     info "当前版本：$(git log --oneline -1)"
 }
