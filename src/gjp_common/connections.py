@@ -10,7 +10,7 @@ from .context import InvocationContext
 from .errors import DomainError
 
 
-CredentialKind = Literal["bearer"]
+CredentialKind = Literal["bearer", "api_key"]
 
 
 def normalize_business_api_base_url(value: str) -> str:
@@ -49,7 +49,7 @@ class BusinessApiCredential:
     value: str
 
     def __post_init__(self) -> None:
-        if self.kind != "bearer":
+        if self.kind not in ("bearer", "api_key"):
             raise DomainError("business_credential_invalid", "不支持的业务 API 鉴权类型")
         if not self.value.strip():
             raise DomainError("business_credential_required", "业务端未提供当前会话的鉴权信息")
@@ -59,7 +59,7 @@ class BusinessApiCredential:
 
 
 class BusinessApiCredentialProvider(Protocol):
-    """由 SaaS 会话存储实现的 Bearer 解析入口；不解析业务 URL。"""
+    """由会话存储实现的凭据解析入口；按上下文返回 Bearer 或 API Key；不解析业务 URL。"""
 
     def resolve(self, context: InvocationContext) -> BusinessApiCredential:
         ...

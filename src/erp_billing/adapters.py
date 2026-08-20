@@ -495,6 +495,8 @@ class BusinessAuthenticatedJsonClient:
         }
         if credential.kind == "bearer":
             headers["Authorization"] = "Bearer " + credential.value
+        elif credential.kind == "api_key":
+            headers["X-API-Key"] = credential.value
         else:
             raise DomainError("billing_api_unauthorized", "当前开单会话的鉴权类型无效")
         url = business_api_url(self._base_url, path)
