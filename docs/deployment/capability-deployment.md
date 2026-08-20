@@ -18,16 +18,16 @@ MCP 服务同时支持两种鉴权方式，按请求头自动选择，互不影�
 | 方式 | 请求头 | 身份来源 | ERP 业务 API 凭据 |
 |---|---|---|---|
 | Bearer JWT | `Authorization: Bearer <JWT>` | JWT payload 的 `tenantId`/`loginId` | `Authorization: Bearer <JWT>` |
-| X-API-Key | `X-API-Key: ak_xxx` | 部署配置的 `ERP_BILLING_API_KEYS` 映射 | `X-API-Key: ak_xxx` |
+| X-API-Key | `X-API-Key: ak_xxx` | key 本身（会话隔离标识） | `X-API-Key: ak_xxx` |
 
 - Bearer JWT：生产要求 HS256 验签，密钥由 `ERP_BILLING_JWT_SECRET` 注入；
   本地（测试）不验签。身份与凭据用同一个 JWT。
-- X-API-Key：每个租户一个 Key，部署时通过 `ERP_BILLING_API_KEYS` 配置
-  `ak_xxx:tenantId:loginId` 映射（多个逗号分隔）。Key 既做 MCP 鉴权，
-  也作为 ERP 业务 API 的 `X-API-Key` 头凭据。
+- X-API-Key：每个租户在创业版生成 key，等同于 token。客户端传 `X-API-Key`
+  即可，服务端无需预配映射——用 key 作会话隔离标识，ERP 业务 API 调用用
+  `X-API-Key` 头由 ERP 识别真实租户。
 - 组合解析器优先 `Authorization` 头，缺失时回退 `X-API-Key`。
-- 未配置 `ERP_BILLING_API_KEYS` 时生产仍要求 `ERP_BILLING_JWT_SECRET`
-  （fail-fast）；配置了 API Key 映射的纯 API Key 部署可省略 JWT secret。
+- 纯 API Key 部署无需 `ERP_BILLING_JWT_SECRET`，仅在收到 Bearer 请求时
+  才需要（生产缺密钥时该请求报错）。
 - Bearer/API-Key 只存于服务端凭据提供者，不进入 Tool 参数，日志默认脱敏。
 
 ## 生产装配
