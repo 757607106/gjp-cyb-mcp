@@ -33,6 +33,14 @@ _LINE_RE = re.compile(
     rf"^(?P<name>.+?)(?P<qty>{_QUANTITY_PATTERN})\s*"
     rf"(?P<unit>{_UNIT_PATTERN})?$",
 )
+# 未知单位兜底：ERP 单位是租户自定义的（如"本""张""束"），不在内置单位表时
+# 行尾单位无法归组，整行会静默回退为数量 1（"书本2本"→数量 1）。
+# 放宽为"名称+数量+非数字后缀"保证数量正确；单位与 ERP 不一致时
+# 仍由 preview 的 unit_warnings 提示用户确认。
+_LINE_ANY_UNIT_RE = re.compile(
+    rf"^(?P<name>.+?)(?P<qty>{_QUANTITY_PATTERN})\s*"
+    rf"(?P<unit>[^\d\s]+)$",
+)
 _REQUEST_PREFIX_RE = re.compile(
     r"^(?:请\s*)?(?:给我\s*)?(?:(?:来|要|买|加|拿)\s*)?",
 )
@@ -503,6 +511,17 @@ def _parse_part(raw: str) -> list[OrderLine]:
                 _clean_requested_name(matched.group("name")),
                 _parse_quantity(matched.group("qty")),
                 (matched.group("unit") or "").strip(),
+            ),
+        ]
+    any_unit = _LINE_ANY_UNIT_RE.match(raw)
+    if any_unit:
+        return [
+            OrderLine(
+                0,
+                raw,
+                _clean_requested_name(any_unit.group("name")),
+                _parse_quantity(any_unit.group("qty")),
+                any_unit.group("unit").strip(),
             ),
         ]
     return [OrderLine(0, raw, _clean_requested_name(raw), 1, "")]

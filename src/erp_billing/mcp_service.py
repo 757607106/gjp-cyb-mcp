@@ -11,6 +11,7 @@ from gjp_common.mcp import (
     create_mcp_http_app,
     create_mcp_server,
 )
+from .prompt import ERP_BILLING_MCP_INSTRUCTIONS
 from .toolset import BillingToolSet
 
 
@@ -28,5 +29,6 @@ def create_billing_mcp_service(
         schema_toolset,
         identity_resolver,
         toolset_resolver,
+        instructions=ERP_BILLING_MCP_INSTRUCTIONS,
     )
     return create_mcp_http_app(server, extra_routes=extra_routes)

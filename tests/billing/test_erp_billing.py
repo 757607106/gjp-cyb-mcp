@@ -35,6 +35,7 @@ def _settings(
     category_path=None,
     use_default_categories=True,
     recommendation_score=0.60,
+    auto_sync_limit=10000,
 ):
     return ErpBillingSettings(
         product_catalog_path=catalog_path,
@@ -43,6 +44,7 @@ def _settings(
         use_default_fresh_aliases=use_default_fresh_aliases,
         category_path=category_path,
         use_default_categories=use_default_categories,
+        auto_sync_limit=auto_sync_limit,
     )
 
 
@@ -101,6 +103,24 @@ def test_parse_order_text_splits_each_quantity_phrase():
         ("L001", "百事可乐", 5, "瓶"),
         ("L002", "可口可乐", 5, "瓶"),
         ("L003", "土豆", 2, "斤"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("text", "name", "quantity", "unit"),
+    [
+        # 未收录单位（如"本""张"）不应让数量静默回退为 1
+        ("书本2本", "书本", 2, "本"),
+        ("A4纸2张", "A4纸", 2, "张"),
+        ("鲜花1束", "鲜花", 1, "束"),
+    ],
+)
+def test_parse_order_text_keeps_quantity_with_unlisted_unit(text, name, quantity, unit):
+    """单位不在内置表时仍按"名称+数量+单位"解析，不得丢失数量。"""
+    lines = parse_order_text(text)
+
+    assert [(line.requested_name, line.quantity, line.unit) for line in lines] == [
+        (name, quantity, unit),
     ]
 
 
@@ -960,6 +980,7 @@ def test_billing_settings_contain_no_runtime_output_path():
         "use_default_fresh_aliases",
         "category_path",
         "use_default_categories",
+        "auto_sync_limit",
     }
 
 
@@ -1148,7 +1169,7 @@ class CompleteSalesOrderApi:
         return BillingProductSnapshot(products=())
 
     @staticmethod
-    async def search_customers(context, keyword, limit=10):
+    async def search_customers(context, keyword, limit=10, page=1):
         return BillingReferenceSnapshot(
             options=(
                 {"id": "CUS-1", "code": "C001", "name": "客户甲", "isDefault": False},
@@ -1156,7 +1177,7 @@ class CompleteSalesOrderApi:
         )
 
     @staticmethod
-    async def search_warehouses(context, keyword, limit=10):
+    async def search_warehouses(context, keyword, limit=10, page=1):
         return BillingReferenceSnapshot(
             options=(
                 {"id": "WH-1", "code": "W001", "name": "一号仓", "isDefault": True},
@@ -1164,7 +1185,7 @@ class CompleteSalesOrderApi:
         )
 
     @staticmethod
-    async def search_staff(context, keyword, limit=10):
+    async def search_staff(context, keyword, limit=10, page=1):
         return BillingReferenceSnapshot(
             options=(
                 {"id": "STAFF-1", "code": "S001", "name": "张三", "isDefault": True},
@@ -1293,7 +1314,7 @@ def test_complete_sales_order_preview_confirmation_submit_and_idempotency(tmp_pa
     assert prepared["missing_required_fields"] == []
     assert prepared["needs_confirmation"] == []
     assert prepared["preview"]["save_type_label"] == "正式"
-    assert prepared["preview"]["customer"]["id"] == "CUS-1"
+    assert prepared["preview"]["customer"] == "客户甲"
     assert prepared["preview"]["items"] == [
         {
             "name": "土豆",
@@ -1319,8 +1340,7 @@ def test_complete_sales_order_preview_confirmation_submit_and_idempotency(tmp_pa
     assert submitted == {
         "ok": True,
         "submitted": True,
-        "order_id": "SO-20260804-1",
-        "preview_id": prepared["preview_id"],
+        "order_no": "SO20260804001",
         "save_type": "final",
         "idempotent_replay": False,
     }
@@ -1350,7 +1370,135 @@ def test_complete_sales_order_preview_confirmation_submit_and_idempotency(tmp_pa
         confirmed_by_user=True,
     ))
     assert replayed["idempotent_replay"] is True
+    assert replayed["order_no"] == "SO20260804001"
+    assert "preview_id" not in replayed
     assert len(api.created_payloads) == 1
+
+
+def test_reference_outputs_hide_internal_ids(tmp_path):
+    """基础资料候选与预览解析结果对外不暴露内部 ID。"""
+    session = _session(
+        tmp_path,
+        [{"id": "P001", "name": "土豆", "unit": "斤"}],
+    )
+    toolset = _billing_toolset(session, CompleteSalesOrderApi())
+
+    options = asyncio.run(toolset.search_billing_references("customer", "客户甲"))
+
+    assert options["ok"] is True
+    assert options["options"] == [{"name": "客户甲", "is_default": False}]
+
+    ambiguous = asyncio.run(toolset.preview_sales_order(
+        order_text="土豆2斤",
+        customer="客户",
+        warehouse="仓库",
+        handler="经手",
+        order_date="2026-08-04",
+    ))
+
+    def _option_keys(items):
+        return {key for item in items for key in item}
+
+    assert ambiguous["ok"] is True
+    assert ambiguous["ready_to_submit"] is False
+    for resolution in ambiguous["reference_resolutions"].values():
+        assert resolution["status"] == "ambiguous"
+        assert _option_keys(resolution["candidates"]) <= {"name", "is_default"}
+    for pending in ambiguous["needs_confirmation"]:
+        assert _option_keys(pending["candidates"]) <= {"name", "is_default"}
+
+
+class _RecordingReferenceApi:
+    """记录 search_billing_references 翻页与自动同步限额的调用参数。"""
+
+    def __init__(self, products):
+        self.products = products
+        self.reference_calls = []
+        self.fetch_limits = []
+
+    async def fetch_products(self, context, limit=None):
+        self.fetch_limits.append(limit)
+        return BillingProductSnapshot(products=tuple(self.products))
+
+    async def search_customers(self, context, keyword, limit=10, page=1):
+        self.reference_calls.append((keyword, limit, page))
+        return BillingReferenceSnapshot(
+            options=({"id": "CUS-%d" % page, "name": "客户%d页" % page, "isDefault": False},),
+        )
+
+    async def search_warehouses(self, context, keyword, limit=10, page=1):
+        return BillingReferenceSnapshot(
+            options=({"id": "WH-1", "code": "W001", "name": "一号仓", "isDefault": True},),
+        )
+
+    async def search_staff(self, context, keyword, limit=10, page=1):
+        return BillingReferenceSnapshot(
+            options=({"id": "STAFF-1", "code": "S001", "name": "张三", "isDefault": True},),
+        )
+
+    async def create_sales_order(self, context, payload):
+        return BillingSalesOrderResult(order_id="SO-1")
+
+    async def get_sales_order_detail(self, context, order_id):
+        return BillingSalesOrderDetailResult(order={"orderNo": "SO20260804001"})
+
+    async def search_sales_orders(self, context, **kwargs):
+        return BillingSalesOrderPageResult(
+            total=0, page_num=1, page_size=20, orders=(),
+        )
+
+    async def void_sales_order(self, context, order_id):
+        return None
+
+    async def update_sales_order(self, context, order_id, payload):
+        return BillingSalesOrderResult(order_id=order_id)
+
+
+def test_search_billing_references_passes_page_to_api(tmp_path):
+    """search_billing_references 应把页码透传给基础资料 API。"""
+    session = _session(tmp_path, [{"id": "P001", "name": "土豆", "unit": "斤"}])
+    api = _RecordingReferenceApi([{"id": "P001", "name": "土豆", "unit": "斤"}])
+    toolset = _billing_toolset(session, api)
+
+    result = asyncio.run(toolset.search_billing_references(
+        "customer", "客户", limit=5, page=3,
+    ))
+
+    assert result["ok"] is True
+    assert api.reference_calls == [("客户", 5, 3)]
+    assert result["options"] == [{"name": "客户3页", "is_default": False}]
+
+
+def test_auto_sync_applies_configured_limit(tmp_path):
+    """目录为空自动同步时应按 settings.auto_sync_limit 设拉取上限。"""
+    session = ErpBillingSession.from_settings(
+        _settings(tmp_path, catalog_path=None, auto_sync_limit=7),
+        allow_missing_catalog=True,
+    )
+    api = _RecordingReferenceApi([{"id": "P001", "name": "土豆", "unit": "斤"}])
+    toolset = _billing_toolset(session, api)
+
+    result = asyncio.run(toolset.list_products())
+
+    assert result["ok"] is True
+    assert result["total"] == 1
+    assert api.fetch_limits == [7]
+
+
+def test_explicit_sync_products_keeps_requested_limit(tmp_path):
+    """显式调用 sync_products 传 limit 时不应被自动限额覆盖。"""
+    session = _session(
+        tmp_path,
+        [{"id": "P001", "name": "土豆", "unit": "斤"}],
+        auto_sync_limit=7,
+    )
+    api = _RecordingReferenceApi([{"id": "P001", "name": "土豆", "unit": "斤"}])
+    toolset = _billing_toolset(session, api)
+
+    result = asyncio.run(toolset.sync_products(limit=2))
+
+    assert result["ok"] is True
+    assert api.fetch_limits == [2]
 
 
 @pytest.mark.parametrize(
@@ -1800,7 +1948,7 @@ def test_reference_dedup_reduces_business_type_variants(tmp_path):
             return BillingProductSnapshot(products=())
 
         @staticmethod
-        async def search_customers(context, keyword, limit=10):
+        async def search_customers(context, keyword, limit=10, page=1):
             return BillingReferenceSnapshot(
                 options=tuple(
                     {"id": "C-%d" % i, "code": "C%03d" % i, "name": name}
@@ -1823,11 +1971,11 @@ def test_reference_dedup_reduces_business_type_variants(tmp_path):
             )
 
         @staticmethod
-        async def search_warehouses(context, keyword, limit=10):
+        async def search_warehouses(context, keyword, limit=10, page=1):
             return BillingReferenceSnapshot(options=())
 
         @staticmethod
-        async def search_staff(context, keyword, limit=10):
+        async def search_staff(context, keyword, limit=10, page=1):
             return BillingReferenceSnapshot(options=())
 
         async def create_sales_order(self, context, payload):
@@ -1888,15 +2036,15 @@ def test_tool_outputs_validate_against_output_schema(tmp_path):
             return BillingProductSnapshot(products=tuple(products_data))
 
         @staticmethod
-        async def search_customers(context, keyword, limit=10):
+        async def search_customers(context, keyword, limit=10, page=1):
             return await CompleteSalesOrderApi.search_customers(context, keyword, limit)
 
         @staticmethod
-        async def search_warehouses(context, keyword, limit=10):
+        async def search_warehouses(context, keyword, limit=10, page=1):
             return await CompleteSalesOrderApi.search_warehouses(context, keyword, limit)
 
         @staticmethod
-        async def search_staff(context, keyword, limit=10):
+        async def search_staff(context, keyword, limit=10, page=1):
             return await CompleteSalesOrderApi.search_staff(context, keyword, limit)
 
         async def create_sales_order(self, context, payload):
@@ -2120,7 +2268,7 @@ def test_void_sales_order_executes_after_confirmation(tmp_path):
 
     assert result["ok"] is True
     assert result["voided"] is True
-    assert result["order_id"] == "208457406331712307"
+    assert result["order_no"] == "SO20260804001"
     assert api.voided_order_ids == ["208457406331712307"]
 
 
@@ -2172,7 +2320,7 @@ def test_update_sales_order_builds_payload_and_executes(tmp_path):
 
     assert result["ok"] is True
     assert result["modified"] is True
-    assert result["order_id"] == "208457406331712307"
+    assert result["order_no"] == "SO20260804001"
     order_id, payload = api.updated_payloads[0]
     assert order_id == "208457406331712307"
     assert payload["id"] == 208457406331712307

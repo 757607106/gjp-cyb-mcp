@@ -24,7 +24,7 @@ from mcp.server.sse import SseServerTransport
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import Response
+from starlette.responses import JSONResponse, Response
 from starlette.routing import Mount
 from starlette.routing import BaseRoute
 from starlette.routing import Route
@@ -116,12 +116,18 @@ def create_mcp_server(
     schema_toolset: AgentScopeToolSet,
     identity_resolver: McpIdentityResolver,
     toolset_resolver: McpToolSetResolver,
+    instructions: str = "",
 ) -> Server:
-    """创建产品 MCP Server；身份、会话和业务 API 鉴权均由对接层注入。"""
+    """创建产品 MCP Server；身份、会话和业务 API 鉴权均由对接层注入。
+
+    instructions 由业务层传入精简使用契约，随 MCP initialize 下发，
+    让未单独配置 System Prompt 的客户端也能获得最低限度的使用约束。
+    """
     server = Server(
         name,
         version="1.0.0",
-        instructions="业务身份由服务端认证，调用工具时不要传递账号、密码或访问令牌。",
+        instructions=instructions.strip()
+        or "业务身份由服务端认证，调用工具时不要传递账号、密码或访问令牌。",
     )
     exported_tools = {
         _snake_to_camel(tool.name): tool
@@ -284,7 +290,18 @@ async def _invoke_tool(
     其他工具仍走标准 ToolChunk 序列化路径。
     """
     if isinstance(tool, SessionFunctionTool):
-        result = await tool.invoke_raw(**arguments)
+        try:
+            result = await tool.invoke_raw(**arguments)
+        except TypeError as exc:
+            # 参数名或个数不匹配时转成结构化错误，模型可自行纠正后重试，
+            # 而不是拿到协议级错误盲目重试或放弃。
+            return {
+                "ok": False,
+                "error": {
+                    "code": "tool_arguments_invalid",
+                    "message": "工具参数不匹配：%s" % exc,
+                },
+            }
         if isinstance(result, dict):
             _warn_large_result(result, tool.name, tenant_id)
             return result
@@ -329,6 +346,7 @@ def create_mcp_http_app(
 
     - `/mcp`：Streamable HTTP，适用于支持新版 MCP HTTP 传输的客户端。
     - `/sse`：SSE，适用于当前只支持 SSE 传输的 MCP 客户端。
+    - `/healthz`：无鉴权探活端点，供负载均衡和监控使用。
 
     认证中间件应由部署方包在该应用外层；IdentityResolver 再把认证结果映射为
     InvocationContext，从而确保每次工具调用都使用当前账号的数据。
@@ -339,6 +357,9 @@ def create_mcp_http_app(
         json_response=True,
     )
     sse = SseServerTransport(sse_messages_path)
+
+    async def healthz(_request: Request) -> Response:
+        return JSONResponse({"ok": True})
 
     class McpAsgiEndpoint:
         async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
@@ -365,6 +386,7 @@ def create_mcp_http_app(
     return Starlette(
         routes=[
             *extra_routes,
+            Route("/healthz", endpoint=healthz, methods=["GET"]),
             Route(streamable_path, endpoint=McpAsgiEndpoint()),
             Route(sse_path, endpoint=handle_sse, methods=["GET"]),
             Mount(sse_messages_path, app=sse.handle_post_message),

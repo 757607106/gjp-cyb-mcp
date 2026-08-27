@@ -135,7 +135,6 @@ _SEARCH_BILLING_REFERENCES_OUTPUT_SCHEMA = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "id": {"type": "string"},
                     "name": {"type": "string"},
                     "is_default": {"type": "boolean"},
                 },
@@ -192,8 +191,7 @@ _SUBMIT_SALES_ORDER_OUTPUT_SCHEMA = {
         "ok": {"type": "boolean"},
         "error": _ERROR_OUTPUT_OBJECT,
         "submitted": {"type": "boolean"},
-        "order_id": {"type": "string"},
-        "preview_id": {"type": "string"},
+        "order_no": {"type": "string"},
         "save_type": {"type": "string"},
         "idempotent_replay": {"type": "boolean"},
     },
@@ -235,7 +233,7 @@ _VOID_SALES_ORDER_OUTPUT_SCHEMA = {
         "ok": {"type": "boolean"},
         "error": _ERROR_OUTPUT_OBJECT,
         "voided": {"type": "boolean"},
-        "order_id": {"type": "string"},
+        "order_no": {"type": "string"},
     },
     "required": ["ok"],
     "additionalProperties": True,
@@ -247,7 +245,7 @@ _UPDATE_SALES_ORDER_OUTPUT_SCHEMA = {
         "ok": {"type": "boolean"},
         "error": _ERROR_OUTPUT_OBJECT,
         "modified": {"type": "boolean"},
-        "order_id": {"type": "string"},
+        "order_no": {"type": "string"},
     },
     "required": ["ok"],
     "additionalProperties": True,
@@ -275,6 +273,7 @@ _SEARCH_BILLING_REFERENCES_INPUT_SCHEMA = {
         },
         "keyword": {"type": "string"},
         "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 10},
+        "page": {"type": "integer", "minimum": 1, "default": 1},
     },
     "required": ["reference_type"],
 }
@@ -504,10 +503,17 @@ class BillingToolSet(AgentScopeToolSet):
             return self.error_response(exc)
 
     async def _sync_catalog(self, limit: int | None = None) -> str:
-        """从当前 ERP 账号拉取商品并替换会话内存目录。"""
+        """从当前 ERP 账号拉取商品并替换会话内存目录。
+
+        自动同步（未显式传 limit）时按 settings.auto_sync_limit 设上限，
+        避免超大商品目录的串行翻页把首次开单拖到超时。
+        """
         context = self._contexts.get()
         context.require_scope("billing:read")
-        snapshot = await self._api.fetch_products(context, limit)
+        effective_limit = (
+            limit if limit is not None else self.session.settings.auto_sync_limit
+        )
+        snapshot = await self._api.fetch_products(context, effective_limit)
         if not snapshot.products:
             raise DomainError(
                 "erp_live_product_empty",
@@ -521,27 +527,34 @@ class BillingToolSet(AgentScopeToolSet):
         reference_type: str,
         keyword: str = "",
         limit: int = 10,
+        page: int = 1,
     ) -> dict[str, Any]:
         """查询销售单的客户、出库仓库或经手人候选。
 
         Args:
             reference_type: 基础资料类型：customer、warehouse 或 handler。
-            keyword: 名称或编号关键词；留空时返回前一页可用项。
+            keyword: 名称或编号关键词；留空时返回第一页可用项。
             limit: 最多返回的候选数，范围 1 到 20。
+            page: 页码，从 1 开始；候选过多时翻页查看。
         """
         try:
             context = self._contexts.get()
             context.require_scope("billing:read")
             effective_limit = max(1, min(int(limit or 10), 20))
+            effective_page = max(1, int(page or 1))
             snapshot = await self._search_reference(
                 reference_type,
                 keyword.strip(),
                 effective_limit,
+                effective_page,
             )
             return self.ok_response(
                 reference_type=reference_type,
                 keyword=keyword.strip(),
-                options=list(snapshot.options),
+                options=[
+                    self._public_reference_option(option)
+                    for option in snapshot.options
+                ],
             )
         except (DomainError, TypeError, ValueError) as exc:
             error = (
@@ -625,12 +638,29 @@ class BillingToolSet(AgentScopeToolSet):
                 "warehouse": await self._resolve_reference("warehouse", values["warehouse"]),
                 "handler": await self._resolve_reference("handler", values["handler"]),
             }
+            # 对外解析结果隐藏内部 ID；内部原始结果继续供预览构建使用
+            public_reference_resolutions = {
+                field: {
+                    "status": resolution["status"],
+                    "query": resolution["query"],
+                    "selected": (
+                        self._public_reference_option(resolution["selected"])
+                        if resolution["selected"] is not None
+                        else None
+                    ),
+                    "candidates": [
+                        self._public_reference_option(option)
+                        for option in resolution["candidates"]
+                    ],
+                }
+                for field, resolution in reference_resolutions.items()
+            }
             needs_confirmation = [
                 {
                     "field": field,
                     "label": _field_label(field),
                     "query": resolution["query"],
-                    "candidates": resolution["candidates"],
+                    "candidates": public_reference_resolutions[field]["candidates"],
                 }
                 for field, resolution in reference_resolutions.items()
                 if resolution["status"] not in {"matched", "missing"}
@@ -674,7 +704,7 @@ class BillingToolSet(AgentScopeToolSet):
                     "system_managed": ["id", "save_type"],
                 },
                 missing_required_fields=missing,
-                reference_resolutions=reference_resolutions,
+                reference_resolutions=public_reference_resolutions,
                 needs_confirmation=needs_confirmation,
                 unit_warnings=unit_warnings,
                 **product_payload,
@@ -692,6 +722,8 @@ class BillingToolSet(AgentScopeToolSet):
         confirmed_by_user: bool,
     ) -> dict[str, Any]:
         """用户明确确认预览后，把销售单写入真实 ERP。
+
+        成功后返回 order_no（业务单号，如 XS 开头）。
 
         Args:
             preview_id: preview_sales_order 返回的预览 ID。
@@ -719,18 +751,27 @@ class BillingToolSet(AgentScopeToolSet):
                         "erp_sales_order_idempotency_key_conflict",
                         "该 idempotency_key 已用于另一份销售单预览",
                     )
-                return self.ok_response(**cached, idempotent_replay=True)
+                return self.ok_response(
+                    **self._public_submission_result(cached),
+                    idempotent_replay=True,
+                )
 
             payload, preview = self.session.require_prepared_sales_order(preview_id)
             result = await self._api.create_sales_order(context, payload)
-            response = {
+            # 创建成功后回查详情，把内部 ID 换成用户可读的业务单号；
+            # 回查失败时降级返回内部 ID（双轨标识下仍可用于后续查询）。
+            order_no = await self._lookup_order_no(result.order_id)
+            cached_result = {
                 "submitted": True,
-                "order_id": result.order_id,
+                "order_no": order_no or result.order_id,
                 "preview_id": preview_id.strip(),
                 "save_type": preview["save_type"],
             }
-            self.session.remember_submission(key, response)
-            return self.ok_response(**response, idempotent_replay=False)
+            self.session.remember_submission(key, cached_result)
+            return self.ok_response(
+                **self._public_submission_result(cached_result),
+                idempotent_replay=False,
+            )
         except DomainError as exc:
             return self.error_response(exc)
 
@@ -821,7 +862,7 @@ class BillingToolSet(AgentScopeToolSet):
         """作废销售单；只有用户明确确认后才能执行。
 
         作废后单据状态变为已作废，不可恢复。调用前建议先调用
-        get_sales_order 向用户展示单据内容。
+        get_sales_order 向用户展示单据内容。成功后返回业务单号 order_no。
 
         Args:
             order_id: 销售单标识，同时接受内部 ID 和业务单号 orderNo
@@ -842,8 +883,10 @@ class BillingToolSet(AgentScopeToolSet):
                     "erp_sales_order_id_invalid",
                     "销售单 ID 不能为空",
                 )
+            # 先回查业务单号再作废：作废后详情可能不可查，回查失败时降级回显入参
+            order_no = await self._lookup_order_no(target_id)
             await self._api.void_sales_order(context, target_id)
-            return self.ok_response(voided=True, order_id=target_id)
+            return self.ok_response(voided=True, order_no=order_no or target_id)
         except DomainError as exc:
             return self.error_response(exc)
 
@@ -866,7 +909,7 @@ class BillingToolSet(AgentScopeToolSet):
         """修改已存在的销售单；只有用户明确确认后才能执行。
 
         建议先调用 get_sales_order 获取当前数据，再做修改。
-        已生效单据的客户和出库仓库不可修改。
+        已生效单据的客户和出库仓库不可修改。成功后返回业务单号 order_no。
 
         Args:
             order_id: 销售单标识，同时接受内部 ID 和业务单号 orderNo
@@ -944,26 +987,61 @@ class BillingToolSet(AgentScopeToolSet):
             if receipt_account_id.strip():
                 payload["receiptAccountId"] = receipt_account_id.strip()
             result = await self._api.update_sales_order(context, target_id, payload)
+            order_no = await self._lookup_order_no(result.order_id)
             return self.ok_response(
                 modified=True,
-                order_id=result.order_id,
+                order_no=order_no or result.order_id,
             )
         except DomainError as exc:
             return self.error_response(exc)
+
+    @staticmethod
+    def _public_reference_option(option: dict[str, Any]) -> dict[str, Any]:
+        """基础资料候选对外只保留名称和默认标记，隐藏内部 ID。"""
+        return {
+            "name": str(option.get("name") or ""),
+            "is_default": bool(
+                option.get("is_default") or option.get("isDefault"),
+            ),
+        }
+
+    @staticmethod
+    def _public_submission_result(cached: dict[str, Any]) -> dict[str, Any]:
+        """提交结果对外剥离 preview_id；幂等冲突检测只在内部使用它。"""
+        return {
+            key: value
+            for key, value in cached.items()
+            if key != "preview_id"
+        }
+
+    async def _lookup_order_no(self, order_id: str) -> str:
+        """创建成功后回查详情，取用户可读的业务单号 orderNo。
+
+        回查是尽力而为的增值信息：任何失败都不影响已创建的单据，
+        调用方降级使用内部 ID。
+        """
+        try:
+            context = self._contexts.get()
+            context.require_scope("billing:read")
+            detail = await self._api.get_sales_order_detail(context, order_id)
+        except DomainError:
+            return ""
+        return str(detail.order.get("orderNo") or "").strip()
 
     async def _search_reference(
         self,
         reference_type: str,
         keyword: str,
         limit: int,
+        page: int = 1,
     ) -> BillingReferenceSnapshot:
         context = self._contexts.get()
         if reference_type == "customer":
-            return await self._api.search_customers(context, keyword, limit)
+            return await self._api.search_customers(context, keyword, limit, page)
         if reference_type == "warehouse":
-            return await self._api.search_warehouses(context, keyword, limit)
+            return await self._api.search_warehouses(context, keyword, limit, page)
         if reference_type == "handler":
-            return await self._api.search_staff(context, keyword, limit)
+            return await self._api.search_staff(context, keyword, limit, page)
         raise DomainError(
             "erp_reference_type_invalid",
             "reference_type 必须是 customer、warehouse 或 handler",
@@ -1272,11 +1350,12 @@ class BillingToolSet(AgentScopeToolSet):
             "remark": remark,
             "items": items,
         }
+        # 预览面向用户展示，基础资料只出现名称，不出现内部 ID
         preview = {
             "order_date": order_date,
-            "customer": customer,
-            "warehouse": warehouse,
-            "handler": handler,
+            "customer": str(customer.get("name") or ""),
+            "warehouse": str(warehouse.get("name") or ""),
+            "handler": str(handler.get("name") or ""),
             "remark": remark,
             "save_type": save_type,
             "save_type_label": _SAVE_TYPE_LABELS[save_type],

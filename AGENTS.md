@@ -79,6 +79,17 @@ uv sync --extra dev
 uv run pytest -q
 ```
 
+### 真实环境 e2e
+
+`tests/e2e/` 需同时设置两个环境变量才启用（默认跳过，CI 不受影响）；
+会启动真实服务子进程并对真实 ERP 测试环境完成开单全流程（单据末尾作废）：
+
+```bash
+ERP_BILLING_E2E_API_KEY=<X-API-Key> \
+ERP_BILLING_E2E_BASE_URL=https://test-ai.yuncyb.com/aicyberp-api \
+uv run pytest tests/e2e -v
+```
+
 ### 环境区分
 
 配置按 `GJP_ENV` 选择环境文件，系统环境变量始终优先于文件值：

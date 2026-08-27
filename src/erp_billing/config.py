@@ -39,6 +39,20 @@ def _bool_env(name: str, default: bool) -> bool:
     raise DomainError("erp_billing_config_invalid", "%s 必须是 true 或 false" % name)
 
 
+def _int_env(name: str, default: int, minimum: int) -> int:
+    value = get_env_value(name, str(default)).strip()
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise DomainError("erp_billing_config_invalid", "%s 必须是整数" % name) from exc
+    if parsed < minimum:
+        raise DomainError(
+            "erp_billing_config_invalid",
+            "%s 必须大于等于 %d" % (name, minimum),
+        )
+    return parsed
+
+
 @dataclass(frozen=True)
 class ErpBillingSettings:
     """ERP 开单的商品目录与推荐阈值配置。"""
@@ -49,6 +63,8 @@ class ErpBillingSettings:
     use_default_fresh_aliases: bool
     category_path: Optional[Path]
     use_default_categories: bool
+    # 自动同步（未显式传 limit）时拉取商品的上限，避免超大目录拖垮首次开单
+    auto_sync_limit: int = 10000
 
     @classmethod
     def from_env(cls) -> "ErpBillingSettings":
@@ -71,4 +87,5 @@ class ErpBillingSettings:
                 "ERP_BILLING_USE_DEFAULT_CATEGORIES",
                 True,
             ),
+            auto_sync_limit=_int_env("ERP_BILLING_AUTO_SYNC_LIMIT", 10000, 1),
         )
