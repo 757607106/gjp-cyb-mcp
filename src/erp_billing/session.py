@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from copy import deepcopy
-import json
 import re
 from dataclasses import replace
 from typing import Any
@@ -191,19 +190,12 @@ class ErpBillingSession:
         text: str,
         *,
         source: str = "text",
-        customer: str = "",
-        warehouse: str = "",
-        confirmed_products: list[dict[str, str]]
-        | dict[str, str]
-        | str
-        | None = None,
+        confirmed_products: list[dict[str, str]] | None = None,
     ) -> BillingDraft:
         """从完整订单文本重建草稿，并校验前端确认的候选商品。
 
-        confirmed_products 接受三种格式，内部统一归一为 {line_id: product_id}：
-        - list[dict]：[{"line_id": "L001", "product_id": "P001"}]（推荐格式）
-        - dict[str, str]：{"L001": "P001"}（向后兼容）
-        - str：JSON 文本（容错，LLM 可能误传字符串）
+        confirmed_products 只接受 MCP Schema 声明的数组格式：
+        [{"line_id": "L001", "product_id": "P001"}]。
         """
         self._require_catalog()
         normalized_source = source.strip().casefold()
@@ -238,13 +230,7 @@ class ErpBillingSession:
 
         self._record_match_events(normalized_source, draft_lines)
 
-        return BillingDraft(
-            source=normalized_source,
-            source_text=text,
-            lines=draft_lines,
-            customer=customer.strip(),
-            warehouse=warehouse.strip(),
-        )
+        return BillingDraft(lines=draft_lines)
 
     def _confirm_recommendation(
         self,
@@ -352,6 +338,10 @@ class ErpBillingSession:
             )
         return deepcopy(stored[0]), deepcopy(stored[1])
 
+    def consume_prepared_sales_order(self, preview_id: str) -> None:
+        """提交成功后移除预览，同一预览不能以新幂等键再次提交。"""
+        self._prepared_sales_orders.pop(preview_id.strip(), None)
+
     def submission_result(self, idempotency_key: str) -> dict[str, Any] | None:
         """查询当前会话已成功提交的幂等结果。"""
         result = self._submission_results.get(idempotency_key.strip())
@@ -398,63 +388,32 @@ def parse_order_text(text: str) -> list[OrderLine]:
 
 
 def _normalize_confirmed_products(
-    raw: list[dict[str, str]] | dict[str, str] | str | None,
+    raw: list[dict[str, str]] | None,
 ) -> dict[str, str]:
-    """将各种 confirmed_products 输入格式统一为 {line_id: product_id} 字典。
-
-    支持 list[dict]、dict[str, str] 和 JSON 字符串三种输入；
-    list 格式每个元素须包含 line_id 和 product_id（或 ptypeid）键。
-    """
+    """把 MCP 数组参数归一为 {line_id: product_id} 字典。"""
     if raw is None:
         return {}
-    if isinstance(raw, str):
-        stripped = raw.strip()
-        if not stripped:
-            return {}
-        try:
-            raw = json.loads(stripped)
-        except json.JSONDecodeError as exc:
+    if not isinstance(raw, list):
+        raise DomainError(
+            "erp_confirmed_products_invalid",
+            "confirmed_products 必须是数组",
+        )
+    result: dict[str, str] = {}
+    for item in raw:
+        if not isinstance(item, dict):
             raise DomainError(
-                "erp_confirmed_products_invalid",
-                "confirmed_products 不是有效的 JSON 对象或数组",
-            ) from exc
-    if isinstance(raw, list):
-        result: dict[str, str] = {}
-        for item in raw:
-            if not isinstance(item, dict):
-                continue
-            line_id = str(
-                item.get("line_id") or item.get("lineId") or ""
-            ).strip()
-            product_id = str(
-                item.get("product_id")
-                or item.get("productId")
-                or item.get("ptypeid")
-                or ""
-            ).strip()
-            if not line_id or not product_id:
-                raise DomainError(
-                    "erp_confirmed_product_invalid",
-                    "confirmed_products 的 line_id 和 product_id 不能为空",
-                )
-            result[line_id] = product_id
-        return result
-    if isinstance(raw, dict):
-        result = {}
-        for raw_line_id, raw_product_id in raw.items():
-            line_id = str(raw_line_id).strip()
-            product_id = str(raw_product_id).strip()
-            if not line_id or not product_id:
-                raise DomainError(
-                    "erp_confirmed_product_invalid",
-                    "confirmed_products 的 line_id 和 product_id 不能为空",
-                )
-            result[line_id] = product_id
-        return result
-    raise DomainError(
-        "erp_confirmed_products_invalid",
-        "confirmed_products 必须是 JSON 对象或数组",
-    )
+                "erp_confirmed_product_invalid",
+                "confirmed_products 的元素必须是对象",
+            )
+        line_id = str(item.get("line_id") or "").strip()
+        product_id = str(item.get("product_id") or "").strip()
+        if not line_id or not product_id:
+            raise DomainError(
+                "erp_confirmed_product_invalid",
+                "confirmed_products 的 line_id 和 product_id 不能为空",
+            )
+        result[line_id] = product_id
+    return result
 
 
 def _parse_part(raw: str) -> list[OrderLine]:

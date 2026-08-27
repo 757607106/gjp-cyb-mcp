@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from typing import Any, Optional
 
 
@@ -264,12 +263,7 @@ class DraftLine:
 
 @dataclass
 class BillingDraft:
-    source: str
-    source_text: str
     lines: list[DraftLine]
-    customer: str = ""
-    warehouse: str = ""
-    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     @property
     def status(self) -> str:

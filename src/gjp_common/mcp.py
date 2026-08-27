@@ -11,7 +11,7 @@ import inspect
 import json
 import logging
 import time
-from collections.abc import AsyncGenerator, Awaitable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from typing import Any, Protocol
 
@@ -291,10 +291,11 @@ async def _invoke_tool(
     """
     if isinstance(tool, SessionFunctionTool):
         try:
-            result = await tool.invoke_raw(**arguments)
+            # 只把参数绑定失败（名称或个数不匹配）转成结构化错误，
+            # 模型可自行纠正后重试；函数体内部的异常（含 TypeError）
+            # 属于服务端缺陷，如实上抛，不误导模型反复纠正参数。
+            tool.validate_arguments(**arguments)
         except TypeError as exc:
-            # 参数名或个数不匹配时转成结构化错误，模型可自行纠正后重试，
-            # 而不是拿到协议级错误盲目重试或放弃。
             return {
                 "ok": False,
                 "error": {
@@ -302,6 +303,7 @@ async def _invoke_tool(
                     "message": "工具参数不匹配：%s" % exc,
                 },
             }
+        result = await tool.invoke_raw(**arguments)
         if isinstance(result, dict):
             _warn_large_result(result, tool.name, tenant_id)
             return result
@@ -341,6 +343,7 @@ def create_mcp_http_app(
     sse_path: str = "/sse",
     sse_messages_path: str = "/messages/",
     extra_routes: Sequence[BaseRoute] = (),
+    shutdown: Callable[[], Awaitable[None]] | None = None,
 ) -> Starlette:
     """创建 MCP HTTP ASGI 应用。
 
@@ -381,7 +384,11 @@ def create_mcp_http_app(
     @asynccontextmanager
     async def lifespan(_app: Starlette):
         async with manager.run():
-            yield
+            try:
+                yield
+            finally:
+                if shutdown is not None:
+                    await shutdown()
 
     return Starlette(
         routes=[

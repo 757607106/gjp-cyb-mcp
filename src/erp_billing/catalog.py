@@ -6,7 +6,6 @@ import json
 import re
 import unicodedata
 from collections.abc import Iterable
-from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -69,7 +68,7 @@ class ProductCatalog:
         self.aliases = aliases
         self.categories = dict(categories or {})
         self.by_id = {item.product_id: item for item in products}
-        self._equivalents, self._canonical_names = _build_alias_groups(
+        self._equivalents = _build_alias_groups(
             _merge_product_aliases(products, aliases),
         )
         self._category_keywords = _build_category_keywords(self.categories)
@@ -118,11 +117,6 @@ class ProductCatalog:
         """返回名称所在同义词组，支持别名之间的双向精确匹配。"""
         normalized = normalize_name(value)
         return self._equivalents.get(normalized, ())
-
-    def canonical_name(self, value: str) -> str:
-        """返回同义词组的标准名；无别名配置时保留原始名称。"""
-        normalized = normalize_name(value)
-        return self._canonical_names.get(normalized, value.strip())
 
     def category_terms(self, value: str) -> set[str]:
         """返回泛称词对应的部位关键词集（normalize 后），无命中返回空集。
@@ -336,12 +330,10 @@ def _merge_product_aliases(
 
 def _build_alias_groups(
     aliases: dict[str, str],
-) -> tuple[dict[str, tuple[str, ...]], dict[str, str]]:
+) -> dict[str, tuple[str, ...]]:
     """把 alias→canonical 关系构造成完整无向同义词组。"""
     adjacency: dict[str, set[str]] = {}
     labels: dict[str, str] = {}
-    target_counts: Counter[str] = Counter()
-    target_order: dict[str, int] = {}
 
     for alias, target in aliases.items():
         alias_name = alias.strip()
@@ -354,11 +346,8 @@ def _build_alias_groups(
         labels.setdefault(target_key, target_name)
         adjacency.setdefault(alias_key, set()).add(target_key)
         adjacency.setdefault(target_key, set()).add(alias_key)
-        target_counts[target_key] += 1
-        target_order.setdefault(target_key, len(target_order))
 
     equivalents: dict[str, tuple[str, ...]] = {}
-    canonical_names: dict[str, str] = {}
     visited: set[str] = set()
     for start in adjacency:
         if start in visited:
@@ -373,22 +362,10 @@ def _build_alias_groups(
             component.append(current)
             pending.extend(adjacency.get(current, ()))
 
-        component_set = set(component)
-        canonical_key = max(
-            (
-                key
-                for key in target_order
-                if key in component_set
-            ),
-            key=lambda key: (target_counts[key], -target_order[key]),
-            default=component[0],
-        )
         names = tuple(
             labels[key]
             for key in sorted(component, key=lambda key: labels[key])
         )
-        canonical = labels[canonical_key]
         for key in component:
             equivalents[key] = names
-            canonical_names[key] = canonical
-    return equivalents, canonical_names
+    return equivalents
