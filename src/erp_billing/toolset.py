@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from datetime import date, datetime, timezone
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 
 from gjp_common.context import InvocationContextStore
@@ -48,6 +49,7 @@ _REQUIRED_FIELDS = (
     ("order_date", "录单日期", "请问录单日期是哪一天？"),
     ("order_text", "商品明细", "请提供商品、数量和单位。"),
 )
+_MONEY_QUANTUM = Decimal("0.01")
 
 
 _ERROR_OUTPUT_OBJECT = {
@@ -87,6 +89,7 @@ _LIST_PRODUCTS_OUTPUT_SCHEMA = {
         "page": {"type": "integer"},
         "page_size": {"type": "integer"},
         "total": {"type": "integer"},
+        "has_more": {"type": "boolean"},
         "products": {
             "type": "array",
             "items": {"type": "object", "additionalProperties": True},
@@ -130,6 +133,10 @@ _SEARCH_BILLING_REFERENCES_OUTPUT_SCHEMA = {
         "error": _ERROR_OUTPUT_OBJECT,
         "reference_type": {"type": "string"},
         "keyword": {"type": "string"},
+        "page": {"type": "integer"},
+        "page_size": {"type": "integer"},
+        "total": {"type": "integer"},
+        "has_more": {"type": "boolean"},
         "options": {
             "type": "array",
             "items": {
@@ -151,19 +158,18 @@ _PREVIEW_SALES_ORDER_OUTPUT_SCHEMA = {
     "properties": {
         "ok": {"type": "boolean"},
         "error": _ERROR_OUTPUT_OBJECT,
-        "field_requirements": {"type": "object", "additionalProperties": True},
         "missing_required_fields": {
             "type": "array",
             "items": {"type": "object", "additionalProperties": True},
         },
         "reference_resolutions": {"type": "object", "additionalProperties": True},
-        "needs_confirmation": {
-            "type": "array",
-            "items": {"type": "object", "additionalProperties": True},
-        },
         "unit_warnings": {
             "type": "array",
             "items": {"type": "object", "additionalProperties": True},
+        },
+        "required_actions": {
+            "type": "array",
+            "items": {"type": "string"},
         },
         "confirmed_products": {
             "type": "array",
@@ -218,6 +224,7 @@ _LIST_SALES_ORDERS_OUTPUT_SCHEMA = {
         "page": {"type": "integer"},
         "page_size": {"type": "integer"},
         "total": {"type": "integer"},
+        "has_more": {"type": "boolean"},
         "orders": {
             "type": "array",
             "items": {"type": "object", "additionalProperties": True},
@@ -272,7 +279,7 @@ _SEARCH_BILLING_REFERENCES_INPUT_SCHEMA = {
             "enum": ["customer", "warehouse", "handler"],
         },
         "keyword": {"type": "string"},
-        "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 10},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 5},
         "page": {"type": "integer", "minimum": 1, "default": 1},
     },
     "required": ["reference_type"],
@@ -332,9 +339,15 @@ _LIST_SALES_ORDERS_INPUT_SCHEMA = {
 _UPDATE_SALES_ORDER_INPUT_SCHEMA = {
     "type": "object",
     "properties": {
-        "order_id": {"type": "string"},
+        "order_id": {
+            "type": "string",
+            "description": "内部 ID 或业务单号 orderNo（如 XS 开头）",
+        },
         "order_date": {"type": "string", "description": "YYYY-MM-DD"},
-        "handler_id": {"type": "string"},
+        "handler_id": {
+            "type": "string",
+            "description": "经办人内部 ID 或名称；名称必须唯一匹配",
+        },
         "items": {
             "type": "array",
             "items": {
@@ -350,8 +363,14 @@ _UPDATE_SALES_ORDER_INPUT_SCHEMA = {
                 "required": ["product_id", "quantity"],
             },
         },
-        "customer_id": {"type": "string"},
-        "warehouse_id": {"type": "string"},
+        "customer_id": {
+            "type": "string",
+            "description": "客户内部 ID 或名称；已生效单据不可修改",
+        },
+        "warehouse_id": {
+            "type": "string",
+            "description": "出库仓库内部 ID 或名称；已生效单据不可修改",
+        },
         "save_type": {
             "type": "string",
             "enum": ["draft", "pre_receipt", "final"],
@@ -497,6 +516,7 @@ class BillingToolSet(AgentScopeToolSet):
                 page=effective_page,
                 page_size=effective_size,
                 total=total,
+                has_more=end < total,
                 products=items,
             )
         except DomainError as exc:
@@ -526,7 +546,7 @@ class BillingToolSet(AgentScopeToolSet):
         self,
         reference_type: str,
         keyword: str = "",
-        limit: int = 10,
+        limit: int = 5,
         page: int = 1,
     ) -> dict[str, Any]:
         """查询销售单的客户、出库仓库或经手人候选。
@@ -534,26 +554,35 @@ class BillingToolSet(AgentScopeToolSet):
         Args:
             reference_type: 基础资料类型：customer、warehouse 或 handler。
             keyword: 名称或编号关键词；留空时返回第一页可用项。
-            limit: 最多返回的候选数，范围 1 到 20。
+            limit: 每页最多返回的候选数，范围 1 到 20，默认 5。
             page: 页码，从 1 开始；候选过多时翻页查看。
         """
         try:
             context = self._contexts.get()
             context.require_scope("billing:read")
-            effective_limit = max(1, min(int(limit or 10), 20))
+            effective_limit = max(1, min(int(limit or 5), 20))
             effective_page = max(1, int(page or 1))
+            clean_keyword = keyword.strip()
             snapshot = await self._search_reference(
                 reference_type,
-                keyword.strip(),
+                clean_keyword,
                 effective_limit,
                 effective_page,
             )
+            options = sorted(
+                snapshot.options,
+                key=lambda option: self._reference_sort_key(option, clean_keyword),
+            )
             return self.ok_response(
                 reference_type=reference_type,
-                keyword=keyword.strip(),
+                keyword=clean_keyword,
+                page=snapshot.page_num,
+                page_size=snapshot.page_size,
+                total=snapshot.total,
+                has_more=(snapshot.page_num * snapshot.page_size) < snapshot.total,
                 options=[
                     self._public_reference_option(option)
-                    for option in snapshot.options
+                    for option in options
                 ],
             )
         except (DomainError, TypeError, ValueError) as exc:
@@ -655,17 +684,11 @@ class BillingToolSet(AgentScopeToolSet):
                 }
                 for field, resolution in reference_resolutions.items()
             }
-            needs_confirmation = [
-                {
-                    "field": field,
-                    "label": _field_label(field),
-                    "query": resolution["query"],
-                    "candidates": public_reference_resolutions[field]["candidates"],
-                }
-                for field, resolution in reference_resolutions.items()
-                if resolution["status"] not in {"matched", "missing"}
-            ]
             unit_warnings = self._unit_warnings(draft)
+            references_ready = all(
+                resolution["status"] == "matched"
+                for resolution in reference_resolutions.values()
+            )
             has_matched = (
                 draft is not None
                 and any(
@@ -675,7 +698,7 @@ class BillingToolSet(AgentScopeToolSet):
             )
             ready = bool(
                 not missing
-                and not needs_confirmation
+                and references_ready
                 and not unit_warnings
                 and draft is not None
                 and (
@@ -697,16 +720,19 @@ class BillingToolSet(AgentScopeToolSet):
                 )
                 preview_id = self.session.store_prepared_sales_order(payload, preview)
 
+            required_actions = self._required_actions(
+                missing=missing,
+                reference_resolutions=reference_resolutions,
+                product_payload=product_payload,
+                unit_warnings=unit_warnings,
+                ready=ready,
+            )
+
             return self.ok_response(
-                field_requirements={
-                    "required": [field for field, _, _ in _REQUIRED_FIELDS],
-                    "optional": ["remark"],
-                    "system_managed": ["id", "save_type"],
-                },
                 missing_required_fields=missing,
                 reference_resolutions=public_reference_resolutions,
-                needs_confirmation=needs_confirmation,
                 unit_warnings=unit_warnings,
+                required_actions=required_actions,
                 **product_payload,
                 ready_to_submit=ready,
                 preview_id=preview_id,
@@ -723,10 +749,11 @@ class BillingToolSet(AgentScopeToolSet):
     ) -> dict[str, Any]:
         """用户明确确认预览后，把销售单写入真实 ERP。
 
-        成功后返回 order_no（业务单号，如 XS 开头）。
+        成功后返回 order_no（业务单号，如 XS 开头）；预览提交成功后
+        即失效，再次开单必须重新生成预览并确认。
 
         Args:
-            preview_id: preview_sales_order 返回的预览 ID。
+            preview_id: preview_sales_order 返回的预览 ID；提交成功后失效。
             idempotency_key: 调用方为本次提交生成的唯一业务键，重试必须复用。
             confirmed_by_user: 仅在用户明确确认该预览后传 true。
         """
@@ -768,6 +795,9 @@ class BillingToolSet(AgentScopeToolSet):
                 "save_type": preview["save_type"],
             }
             self.session.remember_submission(key, cached_result)
+            # 预览一次性消费：成功后立即失效，换新幂等键重放同一预览会被
+            # 拒绝，防止上下文丢失后模型用新 key 重复提交同一份预览。
+            self.session.consume_prepared_sales_order(preview_id)
             return self.ok_response(
                 **self._public_submission_result(cached_result),
                 idempotent_replay=False,
@@ -849,6 +879,7 @@ class BillingToolSet(AgentScopeToolSet):
                 page=result.page_num,
                 page_size=result.page_size,
                 total=result.total,
+                has_more=(result.page_num * result.page_size) < result.total,
                 orders=list(result.orders),
             )
         except DomainError as exc:
@@ -915,11 +946,12 @@ class BillingToolSet(AgentScopeToolSet):
             order_id: 销售单标识，同时接受内部 ID 和业务单号 orderNo
                 （如 XS 开头），传入业务单号时自动回查内部 ID。
             order_date: 单据日期，格式 YYYY-MM-DD。
-            handler_id: 经办人 ID。
+            handler_id: 经手人内部 ID（get_sales_order 返回的
+                handlerId）或经手人名称；传名称时必须唯一匹配。
             items: 商品明细列表，每个元素包含 product_id（必填）、
                 quantity（必填）、unit、unit_price、order_item_id、remark 等。
-            customer_id: 客户 ID（已生效状态不可修改）。
-            warehouse_id: 出库仓库 ID（已生效状态不可修改）。
+            customer_id: 客户内部 ID 或名称（已生效状态不可修改）。
+            warehouse_id: 出库仓库内部 ID 或名称（已生效状态不可修改）。
             save_type: 保存类型；draft 保持草稿/预收、pre_receipt 预收、final 转为正式过账。
             remark: 备注。
             discount_amount: 优惠金额（已生效状态不可修改）。
@@ -953,7 +985,7 @@ class BillingToolSet(AgentScopeToolSet):
             if not clean_handler:
                 raise DomainError(
                     "erp_sales_order_handler_required",
-                    "经办人 ID 不能为空",
+                    "经办人不能为空，可传内部 ID 或名称",
                 )
             if len(remark.strip()) > 200:
                 raise DomainError(
@@ -969,15 +1001,23 @@ class BillingToolSet(AgentScopeToolSet):
             payload: dict[str, Any] = {
                 "id": int(target_id) if target_id.isdigit() else target_id,
                 "orderDate": clean_date,
-                "handlerId": clean_handler,
+                "handlerId": await self._resolve_update_reference(
+                    "handler", clean_handler, "经手人",
+                ),
                 "items": order_items,
                 "remark": remark.strip(),
                 "saveType": _SAVE_TYPE_CODES[save_type],
             }
-            if customer_id.strip():
-                payload["customerId"] = customer_id.strip()
-            if warehouse_id.strip():
-                payload["warehouseId"] = warehouse_id.strip()
+            clean_customer = customer_id.strip()
+            if clean_customer:
+                payload["customerId"] = await self._resolve_update_reference(
+                    "customer", clean_customer, "客户",
+                )
+            clean_warehouse = warehouse_id.strip()
+            if clean_warehouse:
+                payload["warehouseId"] = await self._resolve_update_reference(
+                    "warehouse", clean_warehouse, "出库仓库",
+                )
             if discount_amount is not None:
                 payload["discountAmount"] = float(discount_amount)
             if discount_account_id.strip():
@@ -996,14 +1036,39 @@ class BillingToolSet(AgentScopeToolSet):
             return self.error_response(exc)
 
     @staticmethod
-    def _public_reference_option(option: dict[str, Any]) -> dict[str, Any]:
-        """基础资料候选对外只保留名称和默认标记，隐藏内部 ID。"""
+    def _public_reference_option(
+        option: dict[str, Any],
+    ) -> dict[str, Any]:
+        """基础资料候选对外仅保留展示和推荐所需字段。"""
         return {
             "name": str(option.get("name") or ""),
             "is_default": bool(
                 option.get("is_default") or option.get("isDefault"),
             ),
         }
+
+    @staticmethod
+    def _reference_sort_key(
+        option: dict[str, Any],
+        query: str,
+    ) -> tuple[int, int, str]:
+        """按精确、默认、名称包含、其他候选的顺序稳定排序。"""
+        normalized_query = normalize_name(query)
+        normalized_name = normalize_name(str(option.get("name") or ""))
+        normalized_values = {
+            normalize_name(str(option.get(key) or ""))
+            for key in ("id", "code", "name")
+        }
+        if normalized_query and normalized_query in normalized_values:
+            type_rank = 0
+        elif option.get("is_default") or option.get("isDefault"):
+            type_rank = 1
+        else:
+            type_rank = 2 if normalized_query else 3
+        contains_rank = int(
+            bool(normalized_query) and normalized_query not in normalized_name,
+        )
+        return type_rank, contains_rank, normalized_name
 
     @staticmethod
     def _public_submission_result(cached: dict[str, Any]) -> dict[str, Any]:
@@ -1055,6 +1120,7 @@ class BillingToolSet(AgentScopeToolSet):
                 "selected": None,
                 "candidates": [],
             }
+        # 解析时多取一些结果保证精确项不因展示上限被截断，最终候选仍收敛为 5 个。
         options = list((await self._search_reference(reference_type, value, 10)).options)
         normalized = normalize_name(value)
         exact = [
@@ -1076,7 +1142,7 @@ class BillingToolSet(AgentScopeToolSet):
             }
         # 无唯一精确匹配时，对同主体多业务类型候选去重，最多返回 5 个
         if options:
-            options = self._deduplicate_reference_options(options, normalized)
+            options = self._deduplicate_reference_options(options, value)
         status = "ambiguous" if options else "unmatched"
         return {
             "status": status,
@@ -1085,23 +1151,54 @@ class BillingToolSet(AgentScopeToolSet):
             "candidates": options,
         }
 
-    @staticmethod
+    async def _resolve_update_reference(
+        self,
+        reference_type: str,
+        value: str,
+        label: str,
+    ) -> str:
+        """把修改单据的基础资料参数解析为内部 ID。
+
+        纯数字直接视为内部 ID 透传（与销售单标识的既有约定一致）；
+        其余按名称或编号解析，未唯一匹配时抛出结构化错误，由模型
+        引导用户提供更准确的名称，而不是把错误标识写入 ERP。
+        """
+        if value.isdigit():
+            return value
+        resolution = await self._resolve_reference(reference_type, value)
+        if resolution["status"] == "matched" and resolution["selected"] is not None:
+            return str(resolution["selected"]["id"])
+        candidate_names = "、".join(
+            str(option.get("name") or "")
+            for option in resolution["candidates"][:5]
+            if option.get("name")
+        )
+        if candidate_names:
+            raise DomainError(
+                "erp_update_reference_ambiguous",
+                "%s“%s”匹配到多个候选：%s；请提供更准确的名称或内部 ID"
+                % (label, value, candidate_names),
+            )
+        raise DomainError(
+            "erp_update_reference_unmatched",
+            "未找到与“%s”匹配的%s；请提供准确的名称或内部 ID" % (value, label),
+        )
+
+    @classmethod
     def _deduplicate_reference_options(
+        cls,
         options: list[dict[str, Any]],
-        normalized_query: str,
+        query: str,
     ) -> list[dict[str, Any]]:
-        """按基础名称去重，优先保留包含查询词的候选，最多返回 5 个。
+        """按基础名称去重并按匹配质量排序，最多返回 5 个。
 
         ERP 常为同一客户/经手人返回多业务类型变体（COVR/SALE/PURC 等），
         名称仅在尾部后缀不同；按第一个分隔符前的名称去重后大幅减少候选数。
         """
-        def _name_contains_query(option: dict[str, Any]) -> bool:
-            if not normalized_query:
-                return False
-            name = normalize_name(str(option.get("name") or ""))
-            return normalized_query in name
-
-        sorted_options = sorted(options, key=lambda o: not _name_contains_query(o))
+        sorted_options = sorted(
+            options,
+            key=lambda option: cls._reference_sort_key(option, query),
+        )
         seen: set[str] = set()
         deduped: list[dict[str, Any]] = []
         for option in sorted_options:
@@ -1299,6 +1396,33 @@ class BillingToolSet(AgentScopeToolSet):
         return warnings
 
     @staticmethod
+    def _required_actions(
+        *,
+        missing: list[dict[str, Any]],
+        reference_resolutions: dict[str, dict[str, Any]],
+        product_payload: dict[str, Any],
+        unit_warnings: list[dict[str, Any]],
+        ready: bool,
+    ) -> list[str]:
+        """把分散的校验结果收敛为 Agent 可顺序执行的业务待办。"""
+        if ready:
+            return ["confirm_submit"]
+
+        actions = ["provide_%s" % item["field"] for item in missing]
+        for field, resolution in reference_resolutions.items():
+            if resolution["status"] == "ambiguous":
+                actions.append("select_%s" % field)
+            elif resolution["status"] == "unmatched":
+                actions.append("replace_%s" % field)
+        if product_payload["recommended_products"]:
+            actions.append("select_products")
+        if product_payload["unmatched_products"]:
+            actions.append("resolve_unmatched_products")
+        if unit_warnings:
+            actions.append("confirm_units")
+        return actions
+
+    @staticmethod
     def _build_sales_order_preview(
         *,
         draft: BillingDraft,
@@ -1313,6 +1437,8 @@ class BillingToolSet(AgentScopeToolSet):
         handler = references["handler"]["selected"]
         items: list[dict[str, Any]] = []
         preview_items: list[dict[str, Any]] = []
+        total_amount = Decimal("0")
+        has_complete_amount = True
         for line in draft.lines:
             if line.product is None:
                 if partial:
@@ -1332,14 +1458,22 @@ class BillingToolSet(AgentScopeToolSet):
             if line.order_line.note:
                 item["remark"] = line.order_line.note
             items.append(item)
-            preview_items.append(
-                {
-                    "name": line.product.name,
-                    "quantity": line.order_line.quantity,
-                    "unit": line.product.unit or line.order_line.unit,
-                    "unit_price": line.product.price,
-                }
+            preview_item = {
+                "name": line.product.name,
+                "quantity": line.order_line.quantity,
+                "unit": line.product.unit or line.order_line.unit,
+                "unit_price": line.product.price,
+            }
+            line_amount = _line_amount(
+                line.order_line.quantity,
+                line.product.price,
             )
+            if line_amount is None:
+                has_complete_amount = False
+            else:
+                preview_item["line_amount"] = float(line_amount)
+                total_amount += line_amount
+            preview_items.append(preview_item)
         payload = {
             "id": 0,
             "orderDate": order_date,
@@ -1361,11 +1495,9 @@ class BillingToolSet(AgentScopeToolSet):
             "save_type_label": _SAVE_TYPE_LABELS[save_type],
             "items": preview_items,
         }
+        if preview_items and has_complete_amount:
+            preview["total_amount"] = float(total_amount)
         return payload, preview
-
-
-def _field_label(field: str) -> str:
-    return next(label for name, label, _ in _REQUIRED_FIELDS if name == field)
 
 
 def _normalized_unit(value: str) -> str:
@@ -1379,3 +1511,13 @@ def _normalized_unit(value: str) -> str:
         "升": "l",
         "l": "l",
     }.get(normalized, normalized)
+
+
+def _line_amount(quantity: float, unit_price: float | None) -> Decimal | None:
+    """按实际提交单价计算两位小数的预览行金额。"""
+    if unit_price is None:
+        return None
+    amount = Decimal(str(quantity)) * Decimal(str(unit_price))
+    if not amount.is_finite():
+        return None
+    return amount.quantize(_MONEY_QUANTUM, rounding=ROUND_HALF_UP)

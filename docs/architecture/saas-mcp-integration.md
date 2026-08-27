@@ -5,7 +5,7 @@
 | 组件 | 负责 |
 |---|---|
 | SaaS 对话页 | 文本输入、ASR、图片上传、预览展示、最终确认（VL 模型可直接传图给 Agent，非 VL 仍需前端 OCR） |
-| SaaS 后端 | 用户认证、账套绑定、短期 MCP Bearer、ERP Bearer 加密与撤销 |
+| SaaS 后端 | 用户认证、账套绑定、ERP JWT / OAuth2 Bearer 的签发与撤销 |
 | Agent 平台 | 必填追问、工具调用和候选确认 |
 | 开单 MCP | 资料解析、商品匹配、预览与确认后的销售单写入 |
 
@@ -14,14 +14,17 @@ ERP API URL 由 MCP 部署环境固定配置，不属于 SaaS 会话数据。
 ## 会话数据
 
 ```text
-MCP bearer hash
-  -> tenant_id / subject_id / account_id / session_id
+ERP bearer payload
+  -> tenant_id / subject_id / account_id
+X-Conversation-Id
+  -> session_id
   -> scopes = [billing:read, billing:write]
-  -> encrypted upstream Bearer
-  -> credential_expires_at / session_expires_at
+  -> credential_expires_at
 ```
 
-URL 不在该记录中。返回给 Agent 平台的 MCP Bearer 不携带 ERP Bearer。
+URL 不在该记录中。Agent 平台直接把 ERP JWT / OAuth2 Bearer 放入 MCP
+`Authorization` Header；服务端只在请求上下文对应的凭据存储中暂存原 Bearer，
+模型可见参数不包含任何凭据。
 
 ## 调用时序
 

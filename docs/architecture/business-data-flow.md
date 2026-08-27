@@ -93,13 +93,23 @@ flowchart LR
 ```
 
 输出同时包含 `missing_required_fields`、`reference_resolutions`、
-`needs_confirmation`、`unit_warnings`、三个商品匹配数组以及 `ready_to_submit`。
+`unit_warnings`、三个商品匹配数组、按处理顺序排列的 `required_actions` 以及
+`ready_to_submit`。基础资料候选只保留在 `reference_resolutions`，不再复制一份
+等价的待确认数组；Agent 通过 `required_actions` 判断下一步。
 基础资料和商品全部唯一确定且单位一致时，工具保存不可变 API Payload，并返回
-`preview_id` 与可展示的 `preview`。
+`preview_id` 与可展示的 `preview`。有销售价的商品按实际提交单价乘数量逐行保留
+两位小数，返回 `line_amount`；全部商品都有价格时再返回 `total_amount`，避免用
+不完整价格生成误导性合计。
+
+`searchBillingReferences` 默认每页 5 条，返回 `page`、`page_size`、`total`、
+`has_more` 和候选。候选已按精确匹配、默认项、名称相关度排序，对外只返回名称和
+默认标记，内部 ID 与排序依据均不暴露。
 
 `submitSalesOrder(preview_id, idempotency_key, confirmed_by_user)` 校验
 `billing:write`。只有 `confirmed_by_user=true` 才调用 `POST /sales/orders`；成功后
-同一会话复用幂等结果。`save_type` 映射为草稿 `0`、预收 `1`、正式 `2`。
+同一会话复用幂等结果，且预览一次性消费，换新幂等键重放同一预览会被拒绝。
+`save_type` 映射为草稿 `0`、预收 `1`、正式 `2`。`updateSalesOrder` 的经手人、
+客户、出库仓库参数接受内部 ID 或名称，纯数字视为内部 ID，名称须唯一匹配。
 
 ## 5. 安全与隔离
 

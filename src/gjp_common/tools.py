@@ -39,6 +39,15 @@ class SessionFunctionTool(FunctionTool):
             message="Allowed within the local session.",
         )
 
+    def validate_arguments(self, **kwargs: Any) -> None:
+        """校验参数能否绑定到被包装函数，绑定失败抛出 TypeError。
+
+        与函数体内部抛出的 TypeError 区分开：前者是调用方（模型）的
+        参数错误，可转译为结构化错误供模型自查纠正；后者是服务端缺陷，
+        必须如实上抛。
+        """
+        inspect.signature(self._func).bind(**kwargs)
+
     async def invoke_raw(self, **kwargs: Any) -> Any:
         """直接执行被包装函数并返回原始结果，跳过 ToolChunk 序列化。
 

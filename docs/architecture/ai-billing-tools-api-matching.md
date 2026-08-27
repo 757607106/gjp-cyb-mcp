@@ -52,8 +52,8 @@ MCP 不接收音频、图片、附件、文件路径或媒体 URL，也不提供
 
 ## 2. 身份与 API 边界
 
-开单服务通过 `/mcp` 发布 Streamable HTTP MCP。每次工具调用携带短期 MCP
-Bearer，生产 `McpIdentityResolver` 校验签名、签发者、受众和有效期，再把
+开单服务通过 `/mcp` 发布 Streamable HTTP MCP。生产环境的每次工具调用直接携带
+ERP JWT / OAuth2 Bearer；`McpIdentityResolver` 校验签名和有效期，再把
 `billing:read` / `billing:write` 映射为不含凭据的 `InvocationContext`：
 
 ```text
@@ -65,9 +65,9 @@ request_id
 scopes
 ```
 
-ERP 地址由部署环境 `ERP_BILLING_BASE_URL` 固定；只有上游 Bearer 由凭据提供者
-根据 `InvocationContext` 注入。URL 和两类 Bearer 均不进入工具参数、模型上下文
-或工具结果。
+ERP 地址由部署环境 `ERP_BILLING_BASE_URL` 固定；同一 ERP Bearer 由凭据提供者
+根据 `InvocationContext` 注入当前请求。URL 和 Bearer 均不进入工具参数、模型
+上下文或工具结果。
 
 `BillingApiPort` 只保留完整销售单流程所需的固定接口：
 
@@ -119,8 +119,8 @@ Adapter 按 100 条一页自动翻页（减少串行往返，保护首单耗时�
 `listProducts` 和 `syncProducts` 的 `sample_products` 返回 `listing_fields()`，
 包含 `product_id`、`product_name`、`unit`、`code`、`specification`、
 `purchase_price`、`sales_price`、`stock_quantity` 和 `status`。开单预览
-（`previewSalesOrder`）仍使用 `core_fields()` 最小字段集，不返回价格、
-库存等扩展字段。
+（`previewSalesOrder`）只返回提交核对所需的名称、数量、单位、销售单价和
+可确定的金额，不返回采购价、库存等目录扩展字段。
 
 ## 3. 对外工具
 
@@ -129,21 +129,27 @@ Adapter 按 100 条一页自动翻页（减少串行往返，保护首单耗时�
 | 工具 | 输入 | 职责 | 主要输出 |
 |---|---|---|---|
 | `syncProducts` | `limit?` | 从当前 ERP 账号同步商品并替换当前 Session 的内存目录 | `catalog_version`、`product_count`、`sample_products` |
-| `listProducts` | `page?`、`page_size?` | 分页列出当前会话商品目录中的所有商品；目录为空时自动同步 | `page`、`page_size`、`total`、`products` |
-| `searchProducts` | `keyword`、`limit?` | 按 ID、编号、条码、名称、同义词组和模糊相似度查询已有商品 | 唯一商品或顶层 `recommendations` |
-| `searchBillingReferences` | `reference_type`、`keyword?`、`limit?`、`page?` | 查询客户、出库仓库或经手人候选，支持翻页 | 可用基础资料最小字段 |
-| `previewSalesOrder` | 完整销售单业务字段、`save_type`、`confirmed_products?`、`partial?` | 校验必填项、解析基础资料、匹配商品并保存不可变预览 | 缺失项、候选、商品数组、`preview_id` |
+| `listProducts` | `page?`、`page_size?` | 分页列出当前会话商品目录中的所有商品；目录为空时自动同步 | `page`、`page_size`、`total`、`has_more`、`products` |
+| `searchProducts` | `keywords`、`limit?` | 按 ID、编号、条码、名称、同义词组和模糊相似度批量查询已有商品 | 每个关键词的匹配状态、唯一商品或 `recommendations` |
+| `searchBillingReferences` | `reference_type`、`keyword?`、`limit?`、`page?` | 查询客户、出库仓库或经手人候选，支持翻页 | 分页元数据、名称、默认标记 |
+| `previewSalesOrder` | 完整销售单业务字段、`save_type`、`confirmed_products?`、`partial?` | 校验必填项、解析基础资料、匹配商品并保存不可变预览 | 有序待办、缺失项、候选、商品数组、预览金额、`preview_id` |
 | `submitSalesOrder` | `preview_id`、`idempotency_key`、`confirmed_by_user` | 明确确认后调用真实写单接口 | `order_no`（业务单号）、保存类型、幂等重放标志 |
 | `getSalesOrder` | `order_id` | 查询销售单详情，含商品明细、收款记录和状态 | `order`（完整 SalesOrderVO） |
-| `listSalesOrders` | `page?`、`page_size?`、`sort_by?`、`order_type?`、`start_date?`、`end_date?`、`status?`、`payment_status?`、`return_status?`、`order_no?`、`customer_id?` | 分页查询销售单列表，支持录单日常和客户查询 | `page`、`page_size`、`total`、`orders` |
+| `listSalesOrders` | `page?`、`page_size?`、`sort_by?`、`order_type?`、`start_date?`、`end_date?`、`status?`、`payment_status?`、`return_status?`、`order_no?`、`customer_id?` | 分页查询销售单列表，支持录单日期和客户查询 | `page`、`page_size`、`total`、`has_more`、`orders` |
 | `voidSalesOrder` | `order_id`、`confirmed_by_user` | 用户确认后作废销售单，不可恢复 | `voided`、`order_no`（业务单号） |
-| `updateSalesOrder` | `order_id`、`order_date`、`handler_id`、`items`、`customer_id?`、`warehouse_id?`、`save_type?`、`remark?`、`confirmed_by_user` | 用户确认后修改已存在销售单；建议先查详情 | `modified`、`order_no`（业务单号） |
+| `updateSalesOrder` | `order_id`、`order_date`、`handler_id`、`items`、`customer_id?`、`warehouse_id?`、`save_type?`、`remark?`、`confirmed_by_user` | 用户确认后修改已存在销售单；建议先查详情；经手人、客户、仓库可传内部 ID 或名称（纯数字视为内部 ID，名称须唯一匹配） | `modified`、`order_no`（业务单号） |
 
 十个工具的返回值都是 MCP 结构化 JSON 内容。`submitSalesOrder`、
 `voidSalesOrder` 和 `updateSalesOrder` 具有 ERP 写副作用，要求 `billing:write`、
-明确用户确认；`submitSalesOrder` 额外要求幂等键。`getSalesOrder` 和
+明确用户确认；`submitSalesOrder` 额外要求幂等键，预览提交成功后即失效，
+不可用新幂等键重复提交。`getSalesOrder` 和
 `listSalesOrders` 是只读操作，要求 `billing:read`。服务不维护可逐行修改的文件草稿，
 但会在隔离 Session 中短期保存不可变提交预览和成功幂等结果。
+
+`listProducts`、`searchBillingReferences` 和 `listSalesOrders` 统一返回
+`page`、`page_size`、`total` 与 `has_more`。基础资料候选已由 MCP 按精确命中、
+默认项、名称相关度排序，对外只返回名称和默认标记，不暴露内部 ID 或排序字段；
+默认项仅供推荐，仍须用户确认。
 
 ## 4. 商品目录同步
 
@@ -447,8 +453,9 @@ ERP 目录中只有部位级商品（"牛腱子""牛肉-牛腩"），没有单�
 }
 ```
 
-`confirmed_products` 也接受 `dict[str, str]` 格式（向后兼容）和 JSON 字符串（容错）。
-对 `unmatched_products` 中无候选的行，同样可通过 `confirmed_products` 手动指定 ERP 商品 ID。
+`confirmed_products` 只接受 Schema 声明的数组格式，每项必须包含 `line_id` 和
+`product_id`。对 `unmatched_products` 中无候选的行，同样可通过该数组手动指定
+ERP 商品 ID。
 
 当部分商品无法匹配且用户同意只提交已匹配商品时，可传 `partial=true` 生成只含
 已匹配商品的部分预览；未匹配行被跳过，不出现在预览中。

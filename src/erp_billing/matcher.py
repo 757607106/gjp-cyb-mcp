@@ -115,9 +115,6 @@ class ProductMatcher:
             message="没有可推荐的系统商品",
         )
 
-    def search(self, keyword: str, limit: int = 10) -> list[MatchCandidate]:
-        return self._candidates(keyword)[:limit]
-
     def resolve(
         self,
         keyword: str,

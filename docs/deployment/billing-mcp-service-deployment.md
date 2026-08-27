@@ -52,7 +52,7 @@ export ERP_BILLING_AUTO_SYNC_LIMIT=10000
 仓库自带可运行入口 `erp_billing.app:app`：按 `GJP_ENV` 选择鉴权强度，
 production 下 `VerifiedJwtIdentityResolver` 强制 HS256 验签并校验 JWT
 过期，通过后按 `(tenant, account, session)` 隔离 ToolSet，并把同一个
-JWT 注入 ERP API 调用。缺失 `ERP_BILLING_JWT_SECRET` 时拒绝启动。
+JWT 注入 ERP API 调用。缺失 `ERP_BILLING_JWT_SECRET` 时，生产 Bearer 请求会被拒绝。
 
 ```zsh
 uv run uvicorn erp_billing.app:app --host 0.0.0.0 --port 8102
@@ -69,8 +69,12 @@ app = create_billing_mcp_service(
     schema_toolset=billing_toolset,
     identity_resolver=identity_resolver,
     toolset_resolver=toolset_resolver,
+    shutdown=toolset_resolver.close,  # Resolver 持有连接池时传入
 )
 ```
+
+内置应用在 ASGI shutdown 阶段清空会话 ToolSet 并关闭共享 HTTP 连接池。自定义
+Resolver 如果持有数据库或 HTTP 客户端，也应通过 `shutdown` 注册异步释放函数。
 
 MCP 客户端把 ERP JWT 直接作为 Bearer Token 传给 MCP 服务，服务端验签后从
 JWT payload 解析 tenantId、loginId 构造 InvocationContext，并把同一个 JWT
@@ -82,10 +86,15 @@ JWT payload 解析 tenantId、loginId 构造 InvocationContext，并把同一个
 | 工具 | 权限 | 副作用 |
 |---|---|---|
 | `syncProducts` | `billing:read` | 替换当前 Session 内存商品目录 |
+| `listProducts` | `billing:read` | 无 |
 | `searchProducts` | `billing:read` | 无 |
 | `searchBillingReferences` | `billing:read` | 无 |
 | `previewSalesOrder` | `billing:read` | 保存会话内不可变预览 |
 | `submitSalesOrder` | `billing:write` | `POST /sales/orders` |
+| `getSalesOrder` | `billing:read` | 无 |
+| `listSalesOrders` | `billing:read` | 无 |
+| `voidSalesOrder` | `billing:write` | `PUT /sales/orders/{id}/void` |
+| `updateSalesOrder` | `billing:write` | `PUT /sales/orders/{id}` |
 
 ## 完整销售单契约
 
@@ -110,8 +119,9 @@ JWT payload 解析 tenantId、loginId 构造 InvocationContext，并把同一个
 }
 ```
 
-工具返回 `missing_required_fields`、`needs_confirmation`、`unit_warnings`、三个商品匹配
-数组以及 `ready_to_submit`。只有就绪时才返回 `preview_id` 和 `preview`。
+工具返回 `missing_required_fields`、`reference_resolutions`、`unit_warnings`、三个商品
+匹配数组、`required_actions` 以及 `ready_to_submit`。Agent 严格按
+`required_actions` 顺序处理；只有就绪时才返回 `preview_id` 和 `preview`。
 
 用户看到当前预览并明确确认后提交：
 
