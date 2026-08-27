@@ -89,6 +89,7 @@ class BillingApiPort(Protocol):
         context: InvocationContext,
         keyword: str,
         limit: int = 10,
+        page: int = 1,
     ) -> BillingReferenceSnapshot:
         ...
 
@@ -97,6 +98,7 @@ class BillingApiPort(Protocol):
         context: InvocationContext,
         keyword: str,
         limit: int = 10,
+        page: int = 1,
     ) -> BillingReferenceSnapshot:
         ...
 
@@ -105,6 +107,7 @@ class BillingApiPort(Protocol):
         context: InvocationContext,
         keyword: str,
         limit: int = 10,
+        page: int = 1,
     ) -> BillingReferenceSnapshot:
         ...
 

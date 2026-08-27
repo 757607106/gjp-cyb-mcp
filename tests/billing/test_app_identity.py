@@ -123,6 +123,72 @@ def test_local_resolver_accepts_unsigned_token() -> None:
     assert context.tenant_id == "t"
 
 
+def _mcp_context_with_conversation(token: str, conversation_id: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        request=SimpleNamespace(
+            headers={
+                "authorization": "Bearer " + token,
+                "x-conversation-id": conversation_id,
+            },
+        ),
+    )
+
+
+def test_resolver_partitions_session_by_conversation_id() -> None:
+    """同一用户的两个对话窗口应得到不同的会话键，预览与幂等缓存互不干扰。"""
+    store = SessionCredentialStore()
+    resolver = VerifiedJwtIdentityResolver(store, SECRET)
+    token = _make_token(_valid_payload())
+
+    context_a = resolver.resolve(
+        _mcp_context_with_conversation(token, "conv-a"),
+    )
+    context_b = resolver.resolve(
+        _mcp_context_with_conversation(token, "conv-b"),
+    )
+    context_default = resolver.resolve(_mcp_context(token))
+
+    assert context_a.session_id == "billing-user-1-conv-a"
+    assert context_b.session_id == "billing-user-1-conv-b"
+    assert context_a.session_id != context_b.session_id
+    # 未传对话标识时退化为按登录账号隔离，保持既有行为
+    assert context_default.session_id == "billing-user-1"
+    # 三个会话各自持有独立凭据条目
+    assert store.resolve(context_a).value == token
+    assert store.resolve(context_b).value == token
+
+
+def test_resolver_clips_overlong_conversation_id() -> None:
+    """超长对话标识应截断，防止异常 header 撑大内存键。"""
+    resolver = DirectJwtIdentityResolver(SessionCredentialStore())
+    header_b64 = _b64url(json.dumps({"alg": "none"}).encode("utf-8"))
+    payload_b64 = _b64url(json.dumps({"tenantId": "t", "loginId": "u"}).encode("utf-8"))
+    token = header_b64 + "." + payload_b64 + ".sig"
+
+    context = resolver.resolve(
+        _mcp_context_with_conversation(token, "c" * 100),
+    )
+
+    assert context.session_id == "billing-u-" + "c" * 64
+
+
+def test_api_key_resolver_partitions_session_by_conversation_id() -> None:
+    """API-Key 模式下不同对话也应得到不同会话键。"""
+    store = SessionCredentialStore()
+    resolver = ApiKeyIdentityResolver(store)
+
+    context = resolver.resolve(
+        SimpleNamespace(
+            request=SimpleNamespace(
+                headers={"x-api-key": "ak_x", "x-conversation-id": "conv-a"},
+            ),
+        ),
+    )
+
+    assert context.session_id == "billing-apikey-conv-a"
+    assert store.resolve(context).value == "ak_x"
+
+
 def test_local_resolver_strips_duplicate_bearer_prefix() -> None:
     """客户端误传 Bearer Bearer <token> 时应剥离多余前缀，下游拿到纯 token。"""
     header_b64 = _b64url(json.dumps({"alg": "none"}).encode("utf-8"))

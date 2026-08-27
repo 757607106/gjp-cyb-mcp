@@ -76,6 +76,24 @@ def _api_key_from_mcp_context(mcp_request_context: Any) -> str:
     return api_key.strip()
 
 
+_MAX_CONVERSATION_ID_LENGTH = 64
+
+
+def _conversation_id_from_mcp_context(mcp_request_context: Any) -> str:
+    """从 MCP HTTP 请求头读取对接方的会话标识，未传时返回空。
+
+    标识参与 (tenant, account, session) 会话键，使同一用户的不同对话窗口
+    各自隔离预览与幂等缓存；MCP 传输本身无状态，只能由客户端显式传入。
+    仅作为内存字典键使用，截断长度防止异常长 header。
+    """
+    request = getattr(mcp_request_context, "request", None)
+    headers = getattr(request, "headers", None)
+    conversation_id = (
+        headers.get("x-conversation-id", "") if headers is not None else ""
+    )
+    return conversation_id.strip()[:_MAX_CONVERSATION_ID_LENGTH]
+
+
 def _decode_jwt_unverified(token: str) -> dict:
     """不验签地解析 JWT payload，用于本地环境和提取 exp。"""
     try:
@@ -109,20 +127,24 @@ def _decode_jwt_verified(token: str, secret: str) -> dict:
     return payload
 
 
-def _context_from_jwt(token: str) -> InvocationContext:
+def _context_from_jwt(token: str, conversation_id: str) -> InvocationContext:
     """解析 ERP JWT payload 得到无凭据的调用上下文。
 
     只读取 payload 中的身份信息，不验签；验签由生产专用解析器
-    在调用本函数前完成。
+    在调用本函数前完成。会话键拼接客户端传入的对话标识，
+    未传时退化为按登录账号隔离，保持既有行为。
     """
     payload = _decode_jwt_unverified(token)
     tenant_id = str(payload.get("tenantId") or "unknown")
     login_id = str(payload.get("loginId") or "unknown")
+    session_id = "billing-" + login_id
+    if conversation_id:
+        session_id += "-" + conversation_id
     return InvocationContext(
         tenant_id=tenant_id,
         subject_id=login_id,
         account_id=tenant_id,
-        session_id="billing-" + login_id,
+        session_id=session_id,
         scopes=frozenset({"billing:read", "billing:write"}),
     )
 
@@ -184,7 +206,10 @@ class DirectJwtIdentityResolver:
 
     def resolve(self, mcp_request_context: Any) -> InvocationContext:
         token = _bearer_token_from_mcp_context(mcp_request_context)
-        context = _context_from_jwt(token)
+        context = _context_from_jwt(
+            token,
+            _conversation_id_from_mcp_context(mcp_request_context),
+        )
         context.require_scope("billing:read")
         self._store.register(
             context,
@@ -212,7 +237,10 @@ class VerifiedJwtIdentityResolver:
     def resolve(self, mcp_request_context: Any) -> InvocationContext:
         token = _bearer_token_from_mcp_context(mcp_request_context)
         _decode_jwt_verified(token, self._jwt_secret)
-        context = _context_from_jwt(token)
+        context = _context_from_jwt(
+            token,
+            _conversation_id_from_mcp_context(mcp_request_context),
+        )
         context.require_scope("billing:read")
         self._store.register(
             context,
@@ -238,6 +266,10 @@ class BillingSessionToolSetResolver(McpToolSetResolver):
             maxsize=int(get_env_value("MCP_SESSION_MAX_SIZE", "500") or 500),
             ttl=int(get_env_value("MCP_SESSION_TTL_SECONDS", "3600") or 3600),
         )
+        # 全部 ToolSet 共用一个 HTTP 客户端：凭据按 InvocationContext 注入，
+        # 传输层无会话差异；共享后 TTL 淘汰 ToolSet 不再泄漏连接池。
+        # 惰性创建保持未配置 ERP_BILLING_BASE_URL 时构造不报错的既有行为。
+        self._http: BusinessAuthenticatedJsonClient | None = None
 
     def resolve(self, context: InvocationContext) -> BillingToolSet:
         key = (context.tenant_id, context.account_id, context.session_id)
@@ -251,12 +283,13 @@ class BillingSessionToolSetResolver(McpToolSetResolver):
                 "business_connection_invalid",
                 "未配置 ERP_BILLING_BASE_URL",
             )
-        http = BusinessAuthenticatedJsonClient(
-            base_url=base_url,
-            credential_provider=self._store,
-            timeout_seconds=self._timeout_seconds,
-        )
-        api = ErpAuthenticatedHttpAdapter(http)
+        if self._http is None:
+            self._http = BusinessAuthenticatedJsonClient(
+                base_url=base_url,
+                credential_provider=self._store,
+                timeout_seconds=self._timeout_seconds,
+            )
+        api = ErpAuthenticatedHttpAdapter(self._http)
         session = ErpBillingSession.from_settings(
             replace(self._settings, product_catalog_path=None),
             allow_missing_catalog=True,
@@ -295,11 +328,16 @@ class ApiKeyIdentityResolver:
 
     def resolve(self, mcp_request_context: Any) -> InvocationContext:
         api_key = _api_key_from_mcp_context(mcp_request_context)
+        conversation_id = _conversation_id_from_mcp_context(mcp_request_context)
         context = InvocationContext(
             tenant_id=api_key,
             subject_id=api_key,
             account_id=api_key,
-            session_id="billing-apikey",
+            session_id=(
+                "billing-apikey-" + conversation_id
+                if conversation_id
+                else "billing-apikey"
+            ),
             scopes=frozenset({"billing:read", "billing:write"}),
         )
         context.require_scope("billing:read")

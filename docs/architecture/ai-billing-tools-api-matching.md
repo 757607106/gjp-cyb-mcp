@@ -86,19 +86,21 @@ update_sales_order(context, order_id, payload) -> BillingSalesOrderResult
 Adapter 使用固定相对路径调用云创业版商品目录与销售单接口：
 
 ```text
-GET  /product/page?pageNum=1&pageSize=20&status=1
+GET  /product/page?pageNum=1&pageSize=100&status=1
 GET  /customer/page?pageNum=1&pageSize=10&status=1&keyword=...
 GET  /warehouse/page?pageNum=1&pageSize=10&status=1&keyword=...
 GET  /staff/page?pageNum=1&pageSize=10&status=1&keyword=...
 POST /sales/orders
 GET  /sales/orders/{id}
 GET  /sales/orders/page?pageNum=1&pageSize=20&sortBy=updateTime&orderType=desc
-PUT  /sales/orders/{id}/void
-PUT  /sales/orders/{id}
+PUT /sales/orders/{id}/void
+PUT /sales/orders/{id}
 ```
 
 接口顶层成功码为 `A00000`，商品数组位于 `data.list`，总数位于 `data.total`。
-Adapter 按 20 条一页自动翻页；响应由 `normalize_live_product_rows()` 归一化，
+Adapter 按 100 条一页自动翻页（减少串行往返，保护首单耗时）；目录为空时
+的自动同步受 `ERP_BILLING_AUTO_SYNC_LIMIT`（缺省 10000）限制，避免超大
+商品目录把首次开单拖到超时。响应由 `normalize_live_product_rows()` 归一化，
 过滤停用和重复商品，只保留当前账号可用的真实商品。字段映射如下：
 
 | 云创业版字段 | 目录字段 | 说明 |
@@ -129,13 +131,13 @@ Adapter 按 20 条一页自动翻页；响应由 `normalize_live_product_rows()`
 | `syncProducts` | `limit?` | 从当前 ERP 账号同步商品并替换当前 Session 的内存目录 | `catalog_version`、`product_count`、`sample_products` |
 | `listProducts` | `page?`、`page_size?` | 分页列出当前会话商品目录中的所有商品；目录为空时自动同步 | `page`、`page_size`、`total`、`products` |
 | `searchProducts` | `keyword`、`limit?` | 按 ID、编号、条码、名称、同义词组和模糊相似度查询已有商品 | 唯一商品或顶层 `recommendations` |
-| `searchBillingReferences` | `reference_type`、`keyword?`、`limit?` | 查询客户、出库仓库或经手人候选 | 可用基础资料最小字段 |
+| `searchBillingReferences` | `reference_type`、`keyword?`、`limit?`、`page?` | 查询客户、出库仓库或经手人候选，支持翻页 | 可用基础资料最小字段 |
 | `previewSalesOrder` | 完整销售单业务字段、`save_type`、`confirmed_products?`、`partial?` | 校验必填项、解析基础资料、匹配商品并保存不可变预览 | 缺失项、候选、商品数组、`preview_id` |
-| `submitSalesOrder` | `preview_id`、`idempotency_key`、`confirmed_by_user` | 明确确认后调用真实写单接口 | `order_id`、保存类型、幂等重放标志 |
+| `submitSalesOrder` | `preview_id`、`idempotency_key`、`confirmed_by_user` | 明确确认后调用真实写单接口 | `order_no`（业务单号）、保存类型、幂等重放标志 |
 | `getSalesOrder` | `order_id` | 查询销售单详情，含商品明细、收款记录和状态 | `order`（完整 SalesOrderVO） |
 | `listSalesOrders` | `page?`、`page_size?`、`sort_by?`、`order_type?`、`start_date?`、`end_date?`、`status?`、`payment_status?`、`return_status?`、`order_no?`、`customer_id?` | 分页查询销售单列表，支持录单日常和客户查询 | `page`、`page_size`、`total`、`orders` |
-| `voidSalesOrder` | `order_id`、`confirmed_by_user` | 用户确认后作废销售单，不可恢复 | `voided`、`order_id` |
-| `updateSalesOrder` | `order_id`、`order_date`、`handler_id`、`items`、`customer_id?`、`warehouse_id?`、`save_type?`、`remark?`、`confirmed_by_user` | 用户确认后修改已存在销售单；建议先查详情 | `modified`、`order_id` |
+| `voidSalesOrder` | `order_id`、`confirmed_by_user` | 用户确认后作废销售单，不可恢复 | `voided`、`order_no`（业务单号） |
+| `updateSalesOrder` | `order_id`、`order_date`、`handler_id`、`items`、`customer_id?`、`warehouse_id?`、`save_type?`、`remark?`、`confirmed_by_user` | 用户确认后修改已存在销售单；建议先查详情 | `modified`、`order_no`（业务单号） |
 
 十个工具的返回值都是 MCP 结构化 JSON 内容。`submitSalesOrder`、
 `voidSalesOrder` 和 `updateSalesOrder` 具有 ERP 写副作用，要求 `billing:write`、
