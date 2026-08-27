@@ -51,7 +51,7 @@ class ErpAuthenticatedHttpAdapter:
     def __init__(
         self,
         http: AuthenticatedJsonClient,
-        page_size: int = 20,
+        page_size: int = 100,
     ) -> None:
         if page_size <= 0:
             raise ValueError("商品分页大小必须大于 0")
@@ -160,12 +160,14 @@ class ErpAuthenticatedHttpAdapter:
         context: InvocationContext,
         keyword: str,
         limit: int = 10,
+        page: int = 1,
     ) -> BillingReferenceSnapshot:
         return await self._search_reference(
             context,
             "/customer/page",
             keyword,
             limit,
+            page,
         )
 
     async def search_warehouses(
@@ -173,12 +175,14 @@ class ErpAuthenticatedHttpAdapter:
         context: InvocationContext,
         keyword: str,
         limit: int = 10,
+        page: int = 1,
     ) -> BillingReferenceSnapshot:
         return await self._search_reference(
             context,
             "/warehouse/page",
             keyword,
             limit,
+            page,
         )
 
     async def search_staff(
@@ -186,12 +190,14 @@ class ErpAuthenticatedHttpAdapter:
         context: InvocationContext,
         keyword: str,
         limit: int = 10,
+        page: int = 1,
     ) -> BillingReferenceSnapshot:
         return await self._search_reference(
             context,
             "/staff/page",
             keyword,
             limit,
+            page,
         )
 
     async def _search_reference(
@@ -200,10 +206,11 @@ class ErpAuthenticatedHttpAdapter:
         path: str,
         keyword: str,
         limit: int,
+        page: int,
     ) -> BillingReferenceSnapshot:
         effective_limit = max(1, min(int(limit or 10), 20))
         params: dict[str, object] = {
-            "pageNum": 1,
+            "pageNum": max(1, int(page or 1)),
             "pageSize": effective_limit,
             "status": 1,
         }
@@ -577,6 +584,7 @@ class UnavailableBillingApi:
         context: InvocationContext,
         keyword: str,
         limit: int = 10,
+        page: int = 1,
     ) -> BillingReferenceSnapshot:
         self._raise()
 
@@ -585,6 +593,7 @@ class UnavailableBillingApi:
         context: InvocationContext,
         keyword: str,
         limit: int = 10,
+        page: int = 1,
     ) -> BillingReferenceSnapshot:
         self._raise()
 
@@ -593,6 +602,7 @@ class UnavailableBillingApi:
         context: InvocationContext,
         keyword: str,
         limit: int = 10,
+        page: int = 1,
     ) -> BillingReferenceSnapshot:
         self._raise()
 

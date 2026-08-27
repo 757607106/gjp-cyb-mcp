@@ -17,6 +17,13 @@
 Authorization: Bearer <MCP Bearer>
 ```
 
+建议每次 MCP 请求同时携带对话标识，使同一用户的不同对话窗口各自隔离
+预览与幂等缓存（未携带时按登录账号隔离）：
+
+```text
+X-Conversation-Id: <对话/会话标识，最长 64 字符>
+```
+
 ERP API URL 是部署级固定值 `ERP_BILLING_BASE_URL`，不随租户、请求或 Tool 调用
 变化。会话存储只需要按 `InvocationContext` 解析当前上游 Bearer。
 
@@ -38,8 +45,9 @@ sequenceDiagram
     U->>A: 明确确认
     A->>M: submitSalesOrder
     M->>E: POST /sales/orders
-    E-->>M: order_id
-    M-->>A: submitted=true
+    E-->>M: 单据 ID（内部）
+    M->>E: GET /sales/orders/{id} 回查业务单号
+    M-->>A: submitted=true + order_no（业务单号）
 ```
 
 ## 工具契约

@@ -42,7 +42,12 @@ export GJP_ENV=production
 export ERP_BILLING_BASE_URL=https://正式域名/aicyberp-api
 export ERP_BILLING_JWT_SECRET=<HS256 验签密钥>
 export ERP_BILLING_TIMEOUT_SECONDS=30
+export ERP_BILLING_AUTO_SYNC_LIMIT=10000
 ```
+
+`ERP_BILLING_AUTO_SYNC_LIMIT` 是目录为空时自动同步的商品拉取上限
+（缺省 10000），防止超大商品目录把首次开单拖到超时；显式调用
+`syncProducts` 传 `limit` 时不受该上限约束。
 
 仓库自带可运行入口 `erp_billing.app:app`：按 `GJP_ENV` 选择鉴权强度，
 production 下 `VerifiedJwtIdentityResolver` 强制 HS256 验签并校验 JWT
@@ -121,7 +126,8 @@ JWT payload 解析 tenantId、loginId 构造 InvocationContext，并把同一个
 }
 ```
 
-成功响应含 `submitted=true` 和 `order_id`。相同幂等键重试返回第一次结果；同一键
+成功响应含 `submitted=true` 和 `order_no`（业务单号，如 XS 开头；回查失败时
+降级为内部 ID，仍可用于后续查询）。相同幂等键重试返回第一次结果；同一键
 用于不同预览会被拒绝。
 
 ## 生产接入
