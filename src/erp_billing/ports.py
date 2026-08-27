@@ -20,6 +20,9 @@ class BillingReferenceSnapshot:
     """客户、仓库或职员分页查询结果。"""
 
     options: tuple[dict[str, Any], ...]
+    total: int
+    page_num: int
+    page_size: int
 
 
 @dataclass(frozen=True)
@@ -88,7 +91,7 @@ class BillingApiPort(Protocol):
         self,
         context: InvocationContext,
         keyword: str,
-        limit: int = 10,
+        limit: int = 5,
         page: int = 1,
     ) -> BillingReferenceSnapshot:
         ...
@@ -97,7 +100,7 @@ class BillingApiPort(Protocol):
         self,
         context: InvocationContext,
         keyword: str,
-        limit: int = 10,
+        limit: int = 5,
         page: int = 1,
     ) -> BillingReferenceSnapshot:
         ...
@@ -106,7 +109,7 @@ class BillingApiPort(Protocol):
         self,
         context: InvocationContext,
         keyword: str,
-        limit: int = 10,
+        limit: int = 5,
         page: int = 1,
     ) -> BillingReferenceSnapshot:
         ...

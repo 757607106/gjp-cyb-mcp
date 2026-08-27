@@ -6,6 +6,7 @@ import jsonschema
 import pytest
 
 from erp_billing.adapters import (
+    ErpAuthenticatedHttpAdapter,
     JsonlMatchEventLogger,
     NullMatchEventLogger,
     UnavailableBillingApi,
@@ -751,12 +752,6 @@ def test_create_draft_validates_frontend_confirmation(tmp_path):
         ([{"line_id": "L001", "product_id": ""}], "erp_confirmed_product_invalid"),
         ([{"line_id": "L001", "product_id": "P404"}], "erp_product_not_found"),
         ([{"line_id": "L001", "product_id": "P003"}], "erp_confirmed_product_not_recommended"),
-        # 向后兼容：dict 格式仍可使用
-        ({"L999": "P001"}, "erp_confirmed_line_not_found"),
-        ({"L001": "P404"}, "erp_product_not_found"),
-        ({"L001": "P003"}, "erp_confirmed_product_not_recommended"),
-        # 字符串容错：JSON 文本
-        ('[{"lineId": "L999", "productId": "P001"}]', "erp_confirmed_line_not_found"),
     ],
 )
 def test_create_draft_rejects_invalid_confirmation(
@@ -1158,6 +1153,48 @@ def test_create_draft_returns_error_when_auto_sync_fails(tmp_path):
     assert result["error"]["code"] == "billing_api_not_configured"
 
 
+def test_reference_adapter_preserves_upstream_pagination_metadata():
+    """基础资料 Adapter 应把 ERP 分页信息完整带入领域快照。"""
+
+    class ReferenceHttp:
+        @staticmethod
+        async def get_json(context, path, params=None):
+            assert path == "/customer/page"
+            assert params == {
+                "pageNum": 2,
+                "pageSize": 5,
+                "status": 1,
+                "keyword": "客户",
+            }
+            return {
+                "code": "A00000",
+                "data": {
+                    "total": 7,
+                    "list": [
+                        {"id": "CUS-1", "name": "客户甲", "isDefault": True},
+                    ],
+                },
+            }
+
+    context = InvocationContext(
+        tenant_id="tenant-test",
+        subject_id="user-test",
+        account_id="billing-test",
+        session_id="session-test",
+        scopes=frozenset({"billing:read"}),
+    )
+    result = asyncio.run(ErpAuthenticatedHttpAdapter(
+        ReferenceHttp(),
+    ).search_customers(context, "客户", limit=5, page=2))
+
+    assert result.total == 7
+    assert result.page_num == 2
+    assert result.page_size == 5
+    assert result.options == (
+        {"id": "CUS-1", "name": "客户甲", "is_default": True},
+    )
+
+
 class CompleteSalesOrderApi:
     """完整销售单流程使用的确定性业务端口。"""
 
@@ -1174,6 +1211,7 @@ class CompleteSalesOrderApi:
             options=(
                 {"id": "CUS-1", "code": "C001", "name": "客户甲", "isDefault": False},
             ),
+            total=1, page_num=page, page_size=limit,
         )
 
     @staticmethod
@@ -1182,6 +1220,7 @@ class CompleteSalesOrderApi:
             options=(
                 {"id": "WH-1", "code": "W001", "name": "一号仓", "isDefault": True},
             ),
+            total=1, page_num=page, page_size=limit,
         )
 
     @staticmethod
@@ -1190,6 +1229,7 @@ class CompleteSalesOrderApi:
             options=(
                 {"id": "STAFF-1", "code": "S001", "name": "张三", "isDefault": True},
             ),
+            total=1, page_num=page, page_size=limit,
         )
 
     async def create_sales_order(self, context, payload):
@@ -1268,7 +1308,7 @@ class CompleteSalesOrderApi:
         return BillingSalesOrderResult(order_id=order_id)
 
 
-def test_preview_sales_order_distinguishes_required_optional_and_system_fields(tmp_path):
+def test_preview_sales_order_returns_missing_fields_and_actions(tmp_path):
     session = _session(
         tmp_path,
         [{"id": "P001", "name": "土豆", "unit": "斤"}],
@@ -1283,11 +1323,14 @@ def test_preview_sales_order_distinguishes_required_optional_and_system_fields(t
         "handler",
         "order_date",
     ]
-    assert result["field_requirements"] == {
-        "required": ["customer", "warehouse", "handler", "order_date", "order_text"],
-        "optional": ["remark"],
-        "system_managed": ["id", "save_type"],
-    }
+    assert result["required_actions"] == [
+        "provide_customer",
+        "provide_warehouse",
+        "provide_handler",
+        "provide_order_date",
+    ]
+    assert "field_requirements" not in result
+    assert "needs_confirmation" not in result
     assert result["ready_to_submit"] is False
     assert result["preview_id"] is None
 
@@ -1312,7 +1355,7 @@ def test_complete_sales_order_preview_confirmation_submit_and_idempotency(tmp_pa
     assert prepared["ok"] is True
     assert prepared["ready_to_submit"] is True
     assert prepared["missing_required_fields"] == []
-    assert prepared["needs_confirmation"] == []
+    assert prepared["required_actions"] == ["confirm_submit"]
     assert prepared["preview"]["save_type_label"] == "正式"
     assert prepared["preview"]["customer"] == "客户甲"
     assert prepared["preview"]["items"] == [
@@ -1321,8 +1364,10 @@ def test_complete_sales_order_preview_confirmation_submit_and_idempotency(tmp_pa
             "quantity": 2,
             "unit": "斤",
             "unit_price": 3.5,
+            "line_amount": 7.0,
         },
     ]
+    assert prepared["preview"]["total_amount"] == 7.0
 
     rejected = asyncio.run(toolset.submit_sales_order(
         prepared["preview_id"],
@@ -1375,6 +1420,92 @@ def test_complete_sales_order_preview_confirmation_submit_and_idempotency(tmp_pa
     assert len(api.created_payloads) == 1
 
 
+def test_submit_consumes_preview_after_success(tmp_path):
+    """预览提交成功后即失效：换新幂等键重放同一预览会被拒绝。"""
+    session = _session(
+        tmp_path,
+        [{"id": "P001", "code": "SP001", "name": "土豆", "unit": "斤", "salesPrice": 3.5}],
+    )
+    api = CompleteSalesOrderApi()
+    toolset = _billing_toolset(session, api)
+
+    prepared = asyncio.run(toolset.preview_sales_order(
+        order_text="土豆2斤",
+        customer="C001",
+        warehouse="一号仓",
+        handler="张三",
+        order_date="2026-08-04",
+    ))
+    assert prepared["ready_to_submit"] is True
+
+    submitted = asyncio.run(toolset.submit_sales_order(
+        prepared["preview_id"],
+        "business-request-once",
+        confirmed_by_user=True,
+    ))
+    assert submitted["ok"] is True
+
+    resubmitted = asyncio.run(toolset.submit_sales_order(
+        prepared["preview_id"],
+        "business-request-again",
+        confirmed_by_user=True,
+    ))
+    assert resubmitted["ok"] is False
+    assert resubmitted["error"]["code"] == "erp_sales_order_preview_not_found"
+    assert len(api.created_payloads) == 1
+
+
+def test_sales_order_preview_rounds_amounts_per_line(tmp_path):
+    """预览金额应由服务端按提交单价逐行保留两位小数后汇总。"""
+    session = _session(
+        tmp_path,
+        [
+            {"id": "P001", "name": "土豆", "unit": "斤", "salesPrice": 3.335},
+            {"id": "P002", "name": "番茄", "unit": "斤", "salesPrice": 2.5},
+        ],
+    )
+    prepared = asyncio.run(_billing_toolset(
+        session, CompleteSalesOrderApi(),
+    ).preview_sales_order(
+        order_text="土豆3斤，番茄2斤",
+        customer="客户甲",
+        warehouse="一号仓",
+        handler="张三",
+        order_date="2026-08-04",
+    ))
+
+    assert prepared["ready_to_submit"] is True
+    assert [item["line_amount"] for item in prepared["preview"]["items"]] == [
+        10.01, 5.0,
+    ]
+    assert prepared["preview"]["total_amount"] == 15.01
+
+
+def test_sales_order_preview_omits_incomplete_total(tmp_path):
+    """任一商品没有销售价时不返回可能误导用户的不完整合计。"""
+    session = _session(
+        tmp_path,
+        [
+            {"id": "P001", "name": "土豆", "unit": "斤", "salesPrice": 3.5},
+            {"id": "P002", "name": "番茄", "unit": "斤"},
+        ],
+    )
+    prepared = asyncio.run(_billing_toolset(
+        session, CompleteSalesOrderApi(),
+    ).preview_sales_order(
+        order_text="土豆2斤，番茄1斤",
+        customer="客户甲",
+        warehouse="一号仓",
+        handler="张三",
+        order_date="2026-08-04",
+    ))
+
+    assert prepared["ready_to_submit"] is True
+    assert "line_amount" in prepared["preview"]["items"][0]
+    assert "line_amount" not in prepared["preview"]["items"][1]
+    assert "total_amount" not in prepared["preview"]
+
+
 def test_reference_outputs_hide_internal_ids(tmp_path):
     """基础资料候选与预览解析结果对外不暴露内部 ID。"""
     session = _session(
@@ -1387,6 +1518,10 @@ def test_reference_outputs_hide_internal_ids(tmp_path):
 
     assert options["ok"] is True
     assert options["options"] == [{"name": "客户甲", "is_default": False}]
+    assert options["page"] == 1
+    assert options["page_size"] == 5
+    assert options["total"] == 1
+    assert options["has_more"] is False
 
     ambiguous = asyncio.run(toolset.preview_sales_order(
         order_text="土豆2斤",
@@ -1404,8 +1539,41 @@ def test_reference_outputs_hide_internal_ids(tmp_path):
     for resolution in ambiguous["reference_resolutions"].values():
         assert resolution["status"] == "ambiguous"
         assert _option_keys(resolution["candidates"]) <= {"name", "is_default"}
-    for pending in ambiguous["needs_confirmation"]:
-        assert _option_keys(pending["candidates"]) <= {"name", "is_default"}
+    assert ambiguous["required_actions"] == [
+        "select_customer",
+        "select_warehouse",
+        "select_handler",
+    ]
+
+
+def test_reference_candidates_are_ranked_by_match_quality(tmp_path):
+    """基础资料候选应按精确、默认、相似的顺序稳定返回。"""
+
+    class RankedReferenceApi(CompleteSalesOrderApi):
+        @staticmethod
+        async def search_customers(context, keyword, limit=5, page=1):
+            return BillingReferenceSnapshot(
+                options=(
+                    {"id": "C-3", "name": "普通客户", "is_default": False},
+                    {"id": "C-2", "name": "默认客户", "is_default": True},
+                    {"id": "C-1", "name": "客户甲", "is_default": False},
+                ),
+                total=3,
+                page_num=page,
+                page_size=limit,
+            )
+
+    session = _session(tmp_path, [{"id": "P001", "name": "土豆", "unit": "斤"}])
+    result = asyncio.run(_billing_toolset(
+        session, RankedReferenceApi(),
+    ).search_billing_references("customer", "客户甲"))
+
+    assert [item["name"] for item in result["options"]] == [
+        "客户甲", "默认客户", "普通客户",
+    ]
+    assert [item["is_default"] for item in result["options"]] == [
+        False, True, False,
+    ]
 
 
 class _RecordingReferenceApi:
@@ -1424,16 +1592,19 @@ class _RecordingReferenceApi:
         self.reference_calls.append((keyword, limit, page))
         return BillingReferenceSnapshot(
             options=({"id": "CUS-%d" % page, "name": "客户%d页" % page, "isDefault": False},),
+            total=5, page_num=page, page_size=limit,
         )
 
     async def search_warehouses(self, context, keyword, limit=10, page=1):
         return BillingReferenceSnapshot(
             options=({"id": "WH-1", "code": "W001", "name": "一号仓", "isDefault": True},),
+            total=1, page_num=page, page_size=limit,
         )
 
     async def search_staff(self, context, keyword, limit=10, page=1):
         return BillingReferenceSnapshot(
             options=({"id": "STAFF-1", "code": "S001", "name": "张三", "isDefault": True},),
+            total=1, page_num=page, page_size=limit,
         )
 
     async def create_sales_order(self, context, payload):
@@ -1467,6 +1638,10 @@ def test_search_billing_references_passes_page_to_api(tmp_path):
     assert result["ok"] is True
     assert api.reference_calls == [("客户", 5, 3)]
     assert result["options"] == [{"name": "客户3页", "is_default": False}]
+    assert result["page"] == 3
+    assert result["page_size"] == 5
+    assert result["total"] == 5
+    assert result["has_more"] is False
 
 
 def test_auto_sync_applies_configured_limit(tmp_path):
@@ -1603,7 +1778,7 @@ def test_match_logger_records_user_confirmed_lines(tmp_path):
 
     asyncio.run(_billing_toolset(session).preview_sales_order(
         "牛肉10斤",
-        confirmed_products=[{"lineId": "L001", "productId": "P002"}],
+        confirmed_products=[{"line_id": "L001", "product_id": "P002"}],
     ))
 
     events = [
@@ -1638,7 +1813,7 @@ def test_match_logger_skips_unmatched_and_recommendation_lines(tmp_path):
 
 
 def test_no_match_logger_does_not_write(tmp_path):
-    """未注入匹配日志器时不应产生任何文件，现有调用链保持向后兼容。"""
+    """未注入匹配日志器时保持无文件 IO 的默认行为。"""
     session = _session(
         tmp_path,
         [{"ptypeid": "P001", "pfullname": "土豆", "unit": "斤"}],
@@ -1658,7 +1833,7 @@ def test_create_match_logger_from_env_returns_null_when_unset(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# confirmed_products 多格式输入测试
+# confirmed_products 正式数组契约测试
 # ---------------------------------------------------------------------------
 
 
@@ -1694,46 +1869,6 @@ def test_confirmed_products_list_format_success(tmp_path):
     }
 
 
-def test_confirmed_products_dict_format_backward_compat(tmp_path):
-    """dict[str, str] 格式的 confirmed_products 仍可正常使用（向后兼容）。"""
-    session = _session(
-        tmp_path,
-        [
-            {"ptypeid": "P001", "pfullname": "牛肉1", "unit": "斤"},
-            {"ptypeid": "P002", "pfullname": "牛肉2", "unit": "斤"},
-        ],
-    )
-    toolset = _billing_toolset(session)
-
-    result = asyncio.run(toolset.preview_sales_order(
-        "牛肉10斤",
-        confirmed_products={"L001": "P002"},
-    ))
-
-    assert result["ok"] is True
-    assert result["confirmed_products"][0]["product_id"] == "P002"
-
-
-def test_confirmed_products_string_tolerance(tmp_path):
-    """JSON 字符串格式的 confirmed_products 应被自动解析。"""
-    session = _session(
-        tmp_path,
-        [
-            {"ptypeid": "P001", "pfullname": "牛肉1", "unit": "斤"},
-            {"ptypeid": "P002", "pfullname": "牛肉2", "unit": "斤"},
-        ],
-    )
-    toolset = _billing_toolset(session)
-
-    result = asyncio.run(toolset.preview_sales_order(
-        "牛肉10斤",
-        confirmed_products='[{"lineId": "L001", "productId": "P002"}]',
-    ))
-
-    assert result["ok"] is True
-    assert result["confirmed_products"][0]["product_id"] == "P002"
-
-
 def test_confirmed_products_for_unmatched_allows_manual_spec(tmp_path):
     """unmatchedProducts 中无候选的行，可通过 confirmed_products 手动指定商品。"""
     session = _session(
@@ -1747,7 +1882,7 @@ def test_confirmed_products_for_unmatched_allows_manual_spec(tmp_path):
 
     result = asyncio.run(toolset.preview_sales_order(
         "土豆2斤，未知商品1箱",
-        confirmed_products=[{"lineId": "L002", "productId": "P002"}],
+        confirmed_products=[{"line_id": "L002", "product_id": "P002"}],
     ))
 
     assert result["ok"] is True
@@ -1874,13 +2009,16 @@ def test_list_products_returns_paginated_catalog(tmp_path):
     assert page1["ok"] is True
     assert page1["total"] == 25
     assert page1["page"] == 1
+    assert page1["has_more"] is True
     assert len(page1["products"]) == 10
     assert page1["products"][0]["product_name"] == "商品1"
 
     assert len(page2["products"]) == 10
+    assert page2["has_more"] is True
     assert page2["products"][0]["product_name"] == "商品11"
 
     assert len(page3["products"]) == 5
+    assert page3["has_more"] is False
     assert page3["products"][0]["product_name"] == "商品21"
 
 
@@ -1968,15 +2106,20 @@ def test_reference_dedup_reduces_business_type_variants(tmp_path):
                         start=1,
                     )
                 ),
+                total=10, page_num=page, page_size=limit,
             )
 
         @staticmethod
         async def search_warehouses(context, keyword, limit=10, page=1):
-            return BillingReferenceSnapshot(options=())
+            return BillingReferenceSnapshot(
+                options=(), total=0, page_num=page, page_size=limit,
+            )
 
         @staticmethod
         async def search_staff(context, keyword, limit=10, page=1):
-            return BillingReferenceSnapshot(options=())
+            return BillingReferenceSnapshot(
+                options=(), total=0, page_num=page, page_size=limit,
+            )
 
         async def create_sales_order(self, context, payload):
             return BillingSalesOrderResult(order_id="SO-1")
@@ -2015,6 +2158,9 @@ def test_billing_tools_carry_output_schema(tmp_path):
         schema = by_name[name].output_schema
         assert schema is not None
         assert schema["required"] == ["ok"]
+    preview_properties = by_name["preview_sales_order"].output_schema["properties"]
+    assert "field_requirements" not in preview_properties
+    assert "needs_confirmation" not in preview_properties
 
 
 def test_tool_outputs_validate_against_output_schema(tmp_path):
@@ -2199,6 +2345,7 @@ def test_list_sales_orders_with_date_range_and_status(tmp_path):
     assert result["page"] == 1
     assert result["page_size"] == 20
     assert result["total"] == 1
+    assert result["has_more"] is False
     assert result["orders"][0]["orderNo"] == "SO20260804001"
 
 
@@ -2441,3 +2588,119 @@ def test_update_sales_order_rejects_zero_quantity(tmp_path):
 
     assert result["ok"] is False
     assert result["error"]["code"] == "erp_sales_order_item_invalid"
+
+
+def test_update_sales_order_resolves_reference_names(tmp_path):
+    """经手人、客户、仓库传名称时应解析为内部 ID 后提交。"""
+    session = _session(
+        tmp_path,
+        [{"ptypeid": "P001", "pfullname": "土豆", "unit": "斤"}],
+    )
+    api = CompleteSalesOrderApi()
+    toolset = _billing_toolset(session, api)
+
+    result = asyncio.run(toolset.update_sales_order(
+        order_id="208457406331712307",
+        order_date="2026-08-04",
+        handler_id="张三",
+        items=[{"productId": "P001", "quantity": 3}],
+        customer_id="客户甲",
+        warehouse_id="一号仓",
+        confirmed_by_user=True,
+    ))
+
+    assert result["ok"] is True
+    _, payload = api.updated_payloads[0]
+    assert payload["handlerId"] == "STAFF-1"
+    assert payload["customerId"] == "CUS-1"
+    assert payload["warehouseId"] == "WH-1"
+
+
+def test_update_sales_order_passes_numeric_reference_id_through(tmp_path):
+    """纯数字视为内部 ID 直接透传，不触发基础资料搜索。"""
+
+    class NumericEchoApi(CompleteSalesOrderApi):
+        @staticmethod
+        async def search_staff(context, keyword, limit=10, page=1):
+            raise AssertionError("纯数字内部 ID 不应触发经手人搜索")
+
+    session = _session(
+        tmp_path,
+        [{"ptypeid": "P001", "pfullname": "土豆", "unit": "斤"}],
+    )
+    api = NumericEchoApi()
+    toolset = _billing_toolset(session, api)
+
+    result = asyncio.run(toolset.update_sales_order(
+        order_id="208457406331712307",
+        order_date="2026-08-04",
+        handler_id="1001",
+        items=[{"productId": "P001", "quantity": 3}],
+        confirmed_by_user=True,
+    ))
+
+    assert result["ok"] is True
+    _, payload = api.updated_payloads[0]
+    assert payload["handlerId"] == "1001"
+
+
+def test_update_sales_order_rejects_unmatched_reference_name(tmp_path):
+    """名称无任何匹配时返回结构化错误，不把错误标识写入 ERP。"""
+
+    class NoStaffApi(CompleteSalesOrderApi):
+        @staticmethod
+        async def search_staff(context, keyword, limit=10, page=1):
+            return BillingReferenceSnapshot(
+                options=(), total=0, page_num=page, page_size=limit,
+            )
+
+    session = _session(
+        tmp_path,
+        [{"ptypeid": "P001", "pfullname": "土豆", "unit": "斤"}],
+    )
+    toolset = _billing_toolset(session, NoStaffApi())
+
+    result = asyncio.run(toolset.update_sales_order(
+        order_id="208457406331712307",
+        order_date="2026-08-04",
+        handler_id="王五",
+        items=[{"productId": "P001", "quantity": 3}],
+        confirmed_by_user=True,
+    ))
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "erp_update_reference_unmatched"
+    assert "王五" in result["error"]["message"]
+
+
+def test_update_sales_order_rejects_ambiguous_reference_name(tmp_path):
+    """名称匹配到多个候选时返回候选名单，由用户进一步确认。"""
+
+    class AmbiguousStaffApi(CompleteSalesOrderApi):
+        @staticmethod
+        async def search_staff(context, keyword, limit=10, page=1):
+            return BillingReferenceSnapshot(
+                options=(
+                    {"id": "STAFF-1", "name": "张三丰"},
+                    {"id": "STAFF-2", "name": "张三丰丰"},
+                ),
+                total=2, page_num=page, page_size=limit,
+            )
+
+    session = _session(
+        tmp_path,
+        [{"ptypeid": "P001", "pfullname": "土豆", "unit": "斤"}],
+    )
+    toolset = _billing_toolset(session, AmbiguousStaffApi())
+
+    result = asyncio.run(toolset.update_sales_order(
+        order_id="208457406331712307",
+        order_date="2026-08-04",
+        handler_id="张",
+        items=[{"productId": "P001", "quantity": 3}],
+        confirmed_by_user=True,
+    ))
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "erp_update_reference_ambiguous"
+    assert "张三丰" in result["error"]["message"]

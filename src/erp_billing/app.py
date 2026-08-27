@@ -42,6 +42,8 @@ from .mcp_service import create_billing_mcp_service
 from .session import ErpBillingSession
 from .toolset import BillingToolSet
 
+__all__ = ["app", "create_billing_app"]
+
 
 def _bearer_token_from_mcp_context(mcp_request_context: Any) -> str:
     """从 MCP HTTP 请求头读取 Bearer Token。
@@ -300,6 +302,15 @@ class BillingSessionToolSetResolver(McpToolSetResolver):
             self._toolsets[key] = toolset
         return toolset
 
+    async def close(self) -> None:
+        """服务停机时释放共享 HTTP 连接池和会话 ToolSet。"""
+        with self._lock:
+            http = self._http
+            self._http = None
+            self._toolsets.clear()
+        if http is not None:
+            await http.close()
+
 
 class _LazyBillingApp:
     """让 uvicorn 导入模块时不立即读取部署配置。"""
@@ -415,14 +426,16 @@ def create_billing_app() -> Any:
         UnavailableBillingApi(),
         InvocationContextStore(),
     )
+    toolset_resolver = BillingSessionToolSetResolver(
+        bearer_store,
+        settings,
+        timeout_seconds,
+    )
     return create_billing_mcp_service(
         schema_toolset=schema_toolset,
         identity_resolver=_create_identity_resolver(bearer_store),
-        toolset_resolver=BillingSessionToolSetResolver(
-            bearer_store,
-            settings,
-            timeout_seconds,
-        ),
+        toolset_resolver=toolset_resolver,
+        shutdown=toolset_resolver.close,
     )
 
 

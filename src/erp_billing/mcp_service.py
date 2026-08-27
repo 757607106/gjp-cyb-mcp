@@ -1,6 +1,6 @@
 """开单能力独立 MCP 服务，只发布 BillingToolSet。"""
 
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 
 from starlette.applications import Starlette
 from starlette.routing import BaseRoute
@@ -20,6 +20,7 @@ def create_billing_mcp_service(
     identity_resolver: McpIdentityResolver,
     toolset_resolver: McpToolSetResolver,
     extra_routes: Sequence[BaseRoute] = (),
+    shutdown: Callable[[], Awaitable[None]] | None = None,
 ) -> Starlette:
     """创建开单 MCP 服务；部署时使用独立域名、进程和认证配置。"""
     if not isinstance(schema_toolset, BillingToolSet):
@@ -31,4 +32,8 @@ def create_billing_mcp_service(
         toolset_resolver,
         instructions=ERP_BILLING_MCP_INSTRUCTIONS,
     )
-    return create_mcp_http_app(server, extra_routes=extra_routes)
+    return create_mcp_http_app(
+        server,
+        extra_routes=extra_routes,
+        shutdown=shutdown,
+    )

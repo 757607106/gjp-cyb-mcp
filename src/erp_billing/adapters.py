@@ -159,7 +159,7 @@ class ErpAuthenticatedHttpAdapter:
         self,
         context: InvocationContext,
         keyword: str,
-        limit: int = 10,
+        limit: int = 5,
         page: int = 1,
     ) -> BillingReferenceSnapshot:
         return await self._search_reference(
@@ -174,7 +174,7 @@ class ErpAuthenticatedHttpAdapter:
         self,
         context: InvocationContext,
         keyword: str,
-        limit: int = 10,
+        limit: int = 5,
         page: int = 1,
     ) -> BillingReferenceSnapshot:
         return await self._search_reference(
@@ -189,7 +189,7 @@ class ErpAuthenticatedHttpAdapter:
         self,
         context: InvocationContext,
         keyword: str,
-        limit: int = 10,
+        limit: int = 5,
         page: int = 1,
     ) -> BillingReferenceSnapshot:
         return await self._search_reference(
@@ -208,28 +208,35 @@ class ErpAuthenticatedHttpAdapter:
         limit: int,
         page: int,
     ) -> BillingReferenceSnapshot:
-        effective_limit = max(1, min(int(limit or 10), 20))
+        effective_limit = max(1, min(int(limit or 5), 20))
+        effective_page = max(1, int(page or 1))
         params: dict[str, object] = {
-            "pageNum": max(1, int(page or 1)),
+            "pageNum": effective_page,
             "pageSize": effective_limit,
             "status": 1,
         }
         if keyword.strip():
             params["keyword"] = keyword.strip()
         data = await self._get(context, path, params)
-        page = data.get("data")
-        if not isinstance(page, dict):
+        page_data = data.get("data")
+        if not isinstance(page_data, dict):
             raise DomainError("erp_live_response_invalid", "ERP 基础资料分页数据不是对象")
-        rows = page.get("list")
+        rows = page_data.get("list")
         if not isinstance(rows, list):
             raise DomainError("erp_live_response_invalid", "ERP 基础资料列表不是数组")
+        total = _non_negative_int(page_data.get("total"), "ERP 基础资料总数无效")
         options = tuple(
             option
             for row in rows
             if isinstance(row, dict)
             and (option := _reference_option(row)) is not None
         )
-        return BillingReferenceSnapshot(options=options)
+        return BillingReferenceSnapshot(
+            options=options,
+            total=total,
+            page_num=effective_page,
+            page_size=effective_limit,
+        )
 
     async def create_sales_order(
         self,
@@ -583,7 +590,7 @@ class UnavailableBillingApi:
         self,
         context: InvocationContext,
         keyword: str,
-        limit: int = 10,
+        limit: int = 5,
         page: int = 1,
     ) -> BillingReferenceSnapshot:
         self._raise()
@@ -592,7 +599,7 @@ class UnavailableBillingApi:
         self,
         context: InvocationContext,
         keyword: str,
-        limit: int = 10,
+        limit: int = 5,
         page: int = 1,
     ) -> BillingReferenceSnapshot:
         self._raise()
@@ -601,7 +608,7 @@ class UnavailableBillingApi:
         self,
         context: InvocationContext,
         keyword: str,
-        limit: int = 10,
+        limit: int = 5,
         page: int = 1,
     ) -> BillingReferenceSnapshot:
         self._raise()

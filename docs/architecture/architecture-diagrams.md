@@ -75,7 +75,7 @@ sequenceDiagram
     participant ERP as 固定 URL ERP API
 
     Agent->>MCP: tools/call + Authorization
-    MCP->>Identity: 验证短期 MCP Bearer
+    MCP->>Identity: 验证 ERP JWT / OAuth2 Bearer
     Identity-->>MCP: InvocationContext
     MCP->>Resolver: resolve(context)
     Resolver-->>MCP: 隔离 ToolSet
@@ -89,8 +89,8 @@ sequenceDiagram
     Tool-->>Agent: structuredContent JSON
 ```
 
-固定 Base URL、Bearer 和 Cookie 不进入 `InvocationContext`、工具参数、工具结果
-或模型上下文。
+固定 Base URL、Bearer 和 Cookie 不进入工具参数、工具结果或模型上下文；
+`InvocationContext` 只保存从 Bearer 解析出的无凭据身份字段。
 
 ## 4. 开单链路
 
@@ -100,22 +100,25 @@ flowchart TB
     Query["商品关键词"] --> Search["searchProducts"] --> Matcher["确定性与模糊匹配"]
     Text["当前订单完整文本"] --> Draft["previewSalesOrder"] --> Matcher
     Catalog --> Matcher
-    Matcher --> Confirmed["confirmedProducts"]
-    Matcher --> Recommended["recommendedProducts / similarProducts"]
-    Matcher --> Unmatched["unmatchedProducts"]
-    Recommended --> Choice["用户选择 ptypeid"]
+    Matcher --> Confirmed["confirmed_products"]
+    Matcher --> Recommended["recommended_products / similar_products"]
+    Matcher --> Unmatched["unmatched_products"]
+    Recommended --> Choice["用户选择 product_id"]
     Choice --> Retry["完整文本 + confirmed_products"] --> Draft
     Draft --> Preview["不可变 preview"] --> UserConfirm{"用户明确确认?"}
     UserConfirm -->|是| Submit["submitSalesOrder"] --> SalesApi["POST /sales/orders"]
 ```
 
-工具还包含 `search_sales_order_options` 与 `submitSalesOrder`。服务不生成草稿文件；
-只有确认提交工具在满足 `billing:write`、当前预览和幂等键后写入 ERP。
+完整工具集还包含 `listProducts`、`searchBillingReferences`、`getSalesOrder`、
+`listSalesOrders`、`voidSalesOrder` 与 `updateSalesOrder`。服务不生成草稿文件；只有
+写工具在满足 `billing:write` 和明确确认后写入 ERP，新增单据还必须使用当前预览和
+幂等键。
 
 ## 5. 隔离规则
 
 - ToolSet 和商品目录按 `(tenant_id, account_id, session_id)` 隔离。
-- MCP Bearer 只标识当前会话；ERP Bearer 只存在于服务端凭据存储。
+- 生产 MCP Bearer 即当前 ERP JWT / OAuth2 Bearer；服务端解析身份后仅在凭据存储中
+  保存原 Bearer，不把它写入 `InvocationContext` 或模型参数。
 - ERP API URL 是部署级固定配置，不按会话解析。
 - Adapter 只接收源码中固定的相对路径，拒绝模型提供完整 URL。
 - 工具 Schema 不含身份、地址、鉴权、音频、图片、附件或文件路径字段。

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+import pytest
 from starlette.routing import Route
 from starlette.testclient import TestClient
 
@@ -58,6 +59,21 @@ def test_invoke_tool_returns_normal_result() -> None:
     assert result == {"ok": True, "limit": 5}
 
 
+async def _broken_tool(limit: int = 10) -> dict[str, Any]:
+    """示例工具：函数体内部抛出 TypeError。"""
+    raise TypeError("业务内部类型错误")
+
+
+def test_invoke_tool_propagates_business_type_error() -> None:
+    """函数体内部的 TypeError 是服务端缺陷，不应误译为参数不匹配。"""
+    tool = SessionFunctionTool(_broken_tool)
+
+    with pytest.raises(TypeError):
+        asyncio.run(
+            _invoke_tool(tool, {"limit": 5}, tenant_id="tenant-test"),
+        )
+
+
 class _StaticIdentity(McpIdentityResolver):
     def resolve(self, _mcp_request_context: Any) -> InvocationContext:
         return _context()
@@ -106,3 +122,25 @@ def test_http_app_keeps_mcp_route() -> None:
 
     assert "/healthz" in paths
     assert "/mcp" in paths
+
+
+def test_http_app_runs_shutdown_callback() -> None:
+    """ASGI 生命周期结束时应释放 MCP 服务持有的共享资源。"""
+    closed = []
+
+    async def shutdown() -> None:
+        closed.append(True)
+
+    app = create_mcp_http_app(
+        create_mcp_server(
+            "test-service",
+            _StaticToolSet().resolve(_context()),
+            _StaticIdentity(),
+            _StaticToolSet(),
+        ),
+        shutdown=shutdown,
+    )
+    with TestClient(app):
+        assert closed == []
+
+    assert closed == [True]
