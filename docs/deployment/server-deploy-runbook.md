@@ -442,39 +442,59 @@ cd /root/gjp-cyb-mcp
 
 脚本自动检测 systemd 或 nohup 方式，无需手动输入多条命令。
 
+环境语义由 `GJP_ENV` 决定（脚本缺省 `local`，即测试模式不验签）；
+ERP 地址来源优先级：系统环境变量 > `config/$GJP_ENV.env`。生产模式下
+脚本不注入任何默认地址，两者都缺失会在停止旧服务前报错退出。
+
 常用场景：
 
 ```bash
-# 部署 main 分支（默认，生产环境）
+# 日常更新（默认 GJP_ENV=local，nohup 方式自动用测试域名）
 ./scripts/deploy.sh
 
-# 部署 test 分支（测试环境）
+# 部署 test 分支
 BRANCH=test ./scripts/deploy.sh
+
+# 部署生产环境：加载 config/production.env 的地址，强制 Bearer HS256 验签
+GJP_ENV=production ./scripts/deploy.sh
+
+# 生产环境 + 显式注入（系统环境变量优先于 production.env）
+GJP_ENV=production \
+ERP_BILLING_BASE_URL=https://new.yuncyb.com/aicyberp-api \
+ERP_BILLING_JWT_SECRET=<HS256 验签密钥> \
+./scripts/deploy.sh
 
 # DEBUG 模式（临时调试，仅 nohup 方式生效）
 ./scripts/deploy.sh --debug
 
 # DEBUG + 完整 token 转储（排查鉴权问题）
 ./scripts/deploy.sh --debug-dump
-
-# 覆盖 ERP API 地址
-ERP_BILLING_BASE_URL=https://new.yuncyb.com/aicyberp-api ./scripts/deploy.sh
 ```
+
+> 注意：分支与环境是两个独立维度。`main` 分支代码也可以跑在 local 模式
+> （当前测试服务器即如此）；上生产必须显式 `GJP_ENV=production`，
+> 仅改 `config/production.env` 里的域名不会让服务切换环境。
 
 脚本输出示例：
 
 ```text
 [INFO] ===== ERP 开单 MCP 服务快速部署 =====
+[INFO] 部署目录：/root/gjp-cyb-mcp
+[INFO] 目标分支：main
+[INFO] 运行环境：production
+[INFO] 日志级别：INFO
 [INFO] 1/5 停止当前服务...
 [INFO] 2/5 拉取最新 main 分支代码...
 [INFO] 当前版本：acdbde7 完善 DEBUG 日志...
 [INFO] 3/5 同步项目依赖...
 [INFO] 4/5 启动服务...
+[INFO] ERP 地址来源：config/production.env
 [INFO] nohup 服务已启动 PID=12345
 [INFO] 5/5 验证服务状态...
 [INFO] 进程运行中 ✓
 [INFO] 端口 8102 监听中 ✓
 [INFO] ===== 部署完成 =====
+[INFO] 分支=main  环境=production  日志级别=INFO  端口=8102
 ```
 
 ### 方式 B：手动命令（备选）
@@ -660,3 +680,7 @@ nohup uv run uvicorn erp_billing.app:app --host 0.0.0.0 --port 8102 \
 若要走生产模式（`GJP_ENV=production` 加载 `production.env`），
 必须同时注入 `ERP_BILLING_JWT_SECRET`，否则构造
 `VerifiedJwtIdentityResolver` 会拒绝启动。
+
+新脚本已内置环境切换支持：`GJP_ENV=production ./scripts/deploy.sh`
+自动加载 `config/production.env` 的地址，不会再用脚本默认值覆盖；
+地址缺失时在停止旧服务前报错退出，避免服务下线后才发现配置问题。

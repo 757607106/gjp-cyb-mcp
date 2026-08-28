@@ -5,14 +5,22 @@
 # 自动检测 systemd 或 nohup 方式。
 #
 # 用法：
-#   ./scripts/deploy.sh                # 部署 main 分支（默认）
+#   ./scripts/deploy.sh                # 部署 main 分支（默认，测试环境语义）
 #   BRANCH=test ./scripts/deploy.sh    # 部署 test 分支
+#   GJP_ENV=production ./scripts/deploy.sh   # 部署生产环境（见下方说明）
 #   ./scripts/deploy.sh --debug        # DEBUG 模式（仅 nohup 方式生效）
 #   ./scripts/deploy.sh --debug-dump   # DEBUG + 完整 token 转储
 #
 # 环境变量（可选覆盖默认值）：
 #   DEPLOY_DIR              部署目录（默认 /root/gjp-cyb-mcp）
-#   ERP_BILLING_BASE_URL    ERP API 地址（nohup 方式需要）
+#   GJP_ENV                 运行环境：local（默认，即测试）或 production；
+#                           决定加载 config/local.env 还是 config/production.env，
+#                           以及 Bearer 是否强制 HS256 验签
+#   ERP_BILLING_BASE_URL    ERP API 地址。local 时缺省用测试域名；
+#                           production 时无脚本默认值，只能来自本变量或
+#                           config/production.env，两者都缺失则启动前报错
+#   ERP_BILLING_JWT_SECRET  生产 Bearer 验签密钥（GJP_ENV=production 时必填，
+#                           纯 X-API-Key 部署可省略）
 #   PORT                    服务端口（默认 8102）
 
 set -euo pipefail
@@ -23,7 +31,14 @@ LOG_FILE="${LOG_FILE:-/var/log/erp-billing-mcp.log}"
 PORT="${PORT:-8102}"
 BRANCH="${BRANCH:-main}"
 SERVICE_NAME="erp-billing-mcp"
-ERP_BILLING_BASE_URL="${ERP_BILLING_BASE_URL:-https://test-ai.yuncyb.com/aicyberp-api}"
+GJP_ENV="${GJP_ENV:-local}"
+# ERP 地址默认值仅服务本地（测试）便利；生产禁止脚本注入默认域名，
+# 避免 export 覆盖 config/production.env 里的真实生产地址
+if [ "$GJP_ENV" = "production" ]; then
+    ERP_BILLING_BASE_URL="${ERP_BILLING_BASE_URL:-}"
+else
+    ERP_BILLING_BASE_URL="${ERP_BILLING_BASE_URL:-https://test-ai.yuncyb.com/aicyberp-api}"
+fi
 
 # ===== 解析命令行参数 =====
 LOG_LEVEL="INFO"
@@ -110,7 +125,15 @@ start_service() {
     else
         # nohup 方式：在此设置环境变量
         cd "$DEPLOY_DIR"
-        export ERP_BILLING_BASE_URL="$ERP_BILLING_BASE_URL"
+        export GJP_ENV
+        # 生产模式下 ERP 地址优先级：环境变量 > config/production.env；
+        # 只在非空时 export，空值 export 会覆盖 env 文件里配置的地址
+        if [ -n "$ERP_BILLING_BASE_URL" ]; then
+            export ERP_BILLING_BASE_URL
+            info "ERP 地址来源：环境变量 $ERP_BILLING_BASE_URL"
+        else
+            info "ERP 地址来源：config/$GJP_ENV.env"
+        fi
         export GJP_LOG_LEVEL="$LOG_LEVEL"
         [ -n "$DUMP_CREDENTIALS" ] && export GJP_DEBUG_DUMP_CREDENTIALS="$DUMP_CREDENTIALS"
         # 确保 uv 在 PATH 中
@@ -161,9 +184,14 @@ verify_service() {
 
     echo ""
     info "===== 部署完成 ====="
-    info "分支=$BRANCH  日志级别=$LOG_LEVEL  端口=$PORT"
+    info "分支=$BRANCH  环境=$GJP_ENV  日志级别=$LOG_LEVEL  端口=$PORT"
     if [ "$LOG_LEVEL" = "DEBUG" ]; then
         info "实时查看日志：tail -f $LOG_FILE"
+    fi
+    if [ "$GJP_ENV" = "production" ]; then
+        info "生产验证：PID=$(pgrep -f 'uvicorn erp_billing.app' | head -1) 实际生效环境变量："
+        cat "/proc/$(pgrep -f 'uvicorn erp_billing.app' | head -1)/environ" \
+            | tr '\0' '\n' | grep -E 'GJP_ENV|ERP_BILLING_BASE_URL' || true
     fi
 }
 
@@ -172,9 +200,19 @@ echo ""
 info "===== ERP 开单 MCP 服务快速部署 ====="
 info "部署目录：$DEPLOY_DIR"
 info "目标分支：$BRANCH"
+info "运行环境：$GJP_ENV"
 info "日志级别：$LOG_LEVEL"
 [ -n "$DUMP_CREDENTIALS" ] && warn "已开启完整 token 转储（仅调试用）"
 echo ""
+
+# 生产环境启动前检查：ERP 地址既无环境变量也无 config/production.env 定义时，
+# 在停止旧服务之前报错退出，避免服务下线后才发现配置缺失
+if [ "$GJP_ENV" = "production" ] && [ -z "$ERP_BILLING_BASE_URL" ]; then
+    if ! grep -qE '^ERP_BILLING_BASE_URL=.+' "$DEPLOY_DIR/config/production.env" 2>/dev/null; then
+        error "生产环境缺少 ERP_BILLING_BASE_URL：请通过环境变量注入，或在 config/production.env 配置"
+        exit 1
+    fi
+fi
 
 stop_service
 pull_code
