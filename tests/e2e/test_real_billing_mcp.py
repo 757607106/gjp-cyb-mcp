@@ -349,6 +349,36 @@ def test_list_products_pagination(server_url):
     )
 
 
+def test_fresh_conversation_reuses_shared_catalog(server_url):
+    """新对话无需先同步即可使用租户共享目录（目录不随会话淘汰丢失）。"""
+    conversation = "e2e-shared-" + _RUN_ID
+    result = _call(
+        "listProducts",
+        {"page": 1, "page_size": 1},
+        conversation=conversation,
+        record_timing=False,
+    )
+    assert result["ok"] is True
+    assert result["total"] == _STATE["product_count"]
+    # 共享目录对预览同样立即可用：商品已能匹配，只缺单头必填项
+    preview = _call(
+        "previewSalesOrder",
+        {
+            "order_text": "%s1%s"
+            % (
+                _STATE["product"]["product_name"],
+                _STATE["product"].get("unit") or "",
+            ),
+        },
+        conversation=conversation,
+        record_timing=False,
+    )
+    assert preview["ok"] is True
+    assert preview["unmatched_products"] == []
+    missing = {item["field"] for item in preview["missing_required_fields"]}
+    assert missing == {"customer", "warehouse", "handler", "order_date"}
+
+
 def test_search_products(server_url):
     """searchProducts 按真实商品名查询应命中，并回传 product_id 供确认链路使用。"""
     name = _STATE["product"]["product_name"]

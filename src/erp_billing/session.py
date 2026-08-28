@@ -5,11 +5,13 @@ from __future__ import annotations
 from copy import deepcopy
 import re
 from dataclasses import replace
+from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
 from gjp_common.errors import DomainError
 from .catalog import ProductCatalog
+from .catalog_state import CatalogLoader, TenantCatalogState
 from .config import ErpBillingSettings
 from .matcher import ProductMatcher
 from .models import BillingDraft, DraftLine, OrderLine
@@ -89,17 +91,22 @@ def _insert_inter_item_separators(text: str) -> str:
 
 
 class ErpBillingSession:
-    """持有租户隔离商品目录；每次开单都由完整文本重新生成 JSON。"""
+    """持有商品目录（租户共享或会话本地）；每次开单都由完整文本重新生成 JSON。"""
 
     def __init__(
         self,
         settings: ErpBillingSettings,
         catalog: ProductCatalog,
         match_logger: MatchEventLogger | None = None,
+        catalog_state: TenantCatalogState | None = None,
     ) -> None:
         self.settings = settings
-        self.catalog = catalog
-        self.matcher = ProductMatcher(catalog, settings)
+        self._local_catalog = catalog
+        self._catalog_state = catalog_state
+        # 会话覆盖目录：显式 limit 截断同步只作用于当前会话，不影响同租户其他会话
+        self._catalog_override: ProductCatalog | None = None
+        self._matcher = ProductMatcher(catalog, settings)
+        self._matcher_catalog: ProductCatalog | None = catalog
         self._match_logger = match_logger
         self._prepared_sales_orders: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
         self._submission_results: dict[str, dict[str, Any]] = {}
@@ -110,6 +117,7 @@ class ErpBillingSession:
         settings: ErpBillingSettings,
         allow_missing_catalog: bool = False,
         match_logger: MatchEventLogger | None = None,
+        catalog_state: TenantCatalogState | None = None,
     ) -> "ErpBillingSession":
         try:
             catalog = ProductCatalog.from_settings(settings)
@@ -122,7 +130,64 @@ class ErpBillingSession:
             settings=settings,
             catalog=catalog,
             match_logger=match_logger,
+            catalog_state=catalog_state,
         )
+
+    @property
+    def catalog(self) -> ProductCatalog | None:
+        """当前生效目录：会话覆盖 > 租户共享 > 会话本地。"""
+        if self._catalog_override is not None:
+            return self._catalog_override
+        if self._catalog_state is not None:
+            return self._catalog_state.catalog
+        return self._local_catalog
+
+    @property
+    def catalog_state(self) -> TenantCatalogState | None:
+        return self._catalog_state
+
+    @property
+    def matcher(self) -> ProductMatcher:
+        """目录实例变更后重建匹配器，使匹配始终针对当前生效目录。"""
+        catalog = self.catalog
+        if catalog is not self._matcher_catalog:
+            self._matcher = ProductMatcher(catalog, self.settings)
+            self._matcher_catalog = catalog
+        return self._matcher
+
+    async def sync_catalog(self, loader: CatalogLoader) -> str:
+        """全量同步目录：共享模式刷新租户状态，本地模式替换会话目录。"""
+        if self._catalog_state is None:
+            self.replace_products(await loader())
+            return datetime.now(timezone.utc).isoformat()
+        version = await self._catalog_state.refresh(loader)
+        # 全量同步成功后清除会话覆盖目录，恢复共享视图
+        self._catalog_override = None
+        return version
+
+    async def sync_catalog_partial(self, loader: CatalogLoader) -> str:
+        """按 limit 截断同步：结果只作用于当前会话，不影响同租户其他会话。"""
+        rows = await loader()
+        if self._catalog_state is None:
+            self.replace_products(rows)
+            return datetime.now(timezone.utc).isoformat()
+        self._catalog_override = ProductCatalog.from_product_rows(
+            rows,
+            self._catalog_state.aliases,
+            self._catalog_state.categories,
+        )
+        return datetime.now(timezone.utc).isoformat()
+
+    async def ensure_catalog(self, loader: CatalogLoader) -> None:
+        """保证目录可用：无目录时同步；共享模式过期时后台刷新（SWR）。"""
+        if self._catalog_state is None:
+            catalog = self._local_catalog
+            if not (catalog and catalog.products):
+                await self.sync_catalog(loader)
+            return
+        if self._catalog_override is not None:
+            return
+        await self._catalog_state.ensure(loader)
 
     def search_products(self, keywords: list[str], limit: int = 10) -> dict[str, Any]:
         """批量查询当前 ERP 商品；模糊结果仅作为推荐返回。
@@ -295,20 +360,22 @@ class ErpBillingSession:
             )
 
     def _require_catalog(self) -> None:
-        if not self.catalog.products:
+        catalog = self.catalog
+        if catalog is None or not catalog.products:
             raise DomainError(
                 "erp_product_catalog_empty",
                 "当前没有商品目录，请先调用 sync_products",
             )
 
     def replace_products(self, rows: tuple[dict[str, Any], ...]) -> None:
-        """使用 ERP API 结果替换当前会话目录，不产生运行时文件。"""
-        self.catalog = ProductCatalog.from_product_rows(
+        """使用 ERP API 结果替换会话本地目录，不产生运行时文件。"""
+        self._local_catalog = ProductCatalog.from_product_rows(
             rows,
-            self.catalog.aliases,
-            self.catalog.categories,
+            self._local_catalog.aliases,
+            self._local_catalog.categories,
         )
-        self.matcher = ProductMatcher(self.catalog, self.settings)
+        self._matcher = ProductMatcher(self._local_catalog, self.settings)
+        self._matcher_catalog = self._local_catalog
 
     def store_prepared_sales_order(
         self,
