@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import re
-from datetime import date, datetime, timezone
+from collections.abc import Awaitable, Callable
+from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 
-from gjp_common.context import InvocationContextStore
+from gjp_common.context import InvocationContext, InvocationContextStore
 from gjp_common.errors import DomainError
 from gjp_common.tools import SessionFunctionTool
 from gjp_common.toolset import AgentScopeToolSet
@@ -463,14 +464,24 @@ class BillingToolSet(AgentScopeToolSet):
         )
 
     async def sync_products(self, limit: int | None = None) -> dict[str, Any]:
-        """同步当前已认证账号可见的 ERP 商品到本会话内存目录。
+        """同步当前租户的商品目录到内存缓存。
+
+        未传 limit 时全量同步并刷新租户共享目录；传 limit 时截断结果
+        只作用于当前会话。
 
         Args:
             limit: 可选的最大商品数量。
         """
         try:
-            synced_at = await self._sync_catalog(limit)
-            products = self.session.catalog.products
+            context = self._contexts.get()
+            context.require_scope("billing:read")
+            loader = self._catalog_loader(context, limit)
+            if limit is None:
+                synced_at = await self.session.sync_catalog(loader)
+            else:
+                synced_at = await self.session.sync_catalog_partial(loader)
+            catalog = self.session.catalog
+            products = catalog.products if catalog is not None else []
             sample = [
                 product.listing_fields()
                 for product in products[:5]
@@ -500,9 +511,9 @@ class BillingToolSet(AgentScopeToolSet):
         try:
             context = self._contexts.get()
             context.require_scope("billing:read")
-            if not self.session.catalog.products:
-                await self._sync_catalog()
-            products = self.session.catalog.products
+            await self.session.ensure_catalog(self._catalog_loader(context))
+            catalog = self.session.catalog
+            products = catalog.products if catalog is not None else []
             total = len(products)
             effective_page = max(1, int(page or 1))
             effective_size = max(1, min(int(page_size or 20), 100))
@@ -522,25 +533,31 @@ class BillingToolSet(AgentScopeToolSet):
         except DomainError as exc:
             return self.error_response(exc)
 
-    async def _sync_catalog(self, limit: int | None = None) -> str:
-        """从当前 ERP 账号拉取商品并替换会话内存目录。
+    def _catalog_loader(
+        self,
+        context: InvocationContext,
+        limit: int | None = None,
+    ) -> Callable[[], Awaitable[list[dict[str, Any]]]]:
+        """构建目录加载闭包：捕获当前上下文，供后台刷新复用鉴权。
 
         自动同步（未显式传 limit）时按 settings.auto_sync_limit 设上限，
         避免超大商品目录的串行翻页把首次开单拖到超时。
         """
-        context = self._contexts.get()
         context.require_scope("billing:read")
         effective_limit = (
             limit if limit is not None else self.session.settings.auto_sync_limit
         )
-        snapshot = await self._api.fetch_products(context, effective_limit)
-        if not snapshot.products:
-            raise DomainError(
-                "erp_live_product_empty",
-                "当前账号没有返回可用于开单的商品",
-            )
-        self.session.replace_products(snapshot.products)
-        return datetime.now(timezone.utc).isoformat()
+
+        async def loader() -> list[dict[str, Any]]:
+            snapshot = await self._api.fetch_products(context, effective_limit)
+            if not snapshot.products:
+                raise DomainError(
+                    "erp_live_product_empty",
+                    "当前账号没有返回可用于开单的商品",
+                )
+            return list(snapshot.products)
+
+        return loader
 
     async def search_billing_references(
         self,
@@ -1221,8 +1238,8 @@ class BillingToolSet(AgentScopeToolSet):
     ) -> BillingDraft | None:
         if not order_text:
             return None
-        if not self.session.catalog.products:
-            await self._sync_catalog()
+        context = self._contexts.get()
+        await self.session.ensure_catalog(self._catalog_loader(context))
         return self.session.create_draft_from_text(
             order_text,
             source=source,

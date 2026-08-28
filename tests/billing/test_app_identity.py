@@ -337,6 +337,46 @@ def test_composite_resolver_falls_back_to_api_key() -> None:
     assert store.resolve(context).kind == "api_key"
 
 
+def test_resolver_shares_catalog_state_within_tenant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """同一租户的多个会话共享目录状态；跨租户隔离。"""
+    from erp_billing.app import BillingSessionToolSetResolver
+    from erp_billing.config import ErpBillingSettings
+
+    monkeypatch.setenv("ERP_BILLING_BASE_URL", "https://erp.example/api")
+    settings = ErpBillingSettings(
+        product_catalog_path=None,
+        alias_path=None,
+        recommendation_score=0.6,
+        use_default_fresh_aliases=False,
+        category_path=None,
+        use_default_categories=False,
+    )
+    resolver = BillingSessionToolSetResolver(
+        SessionCredentialStore(),
+        settings,
+        30.0,
+    )
+
+    def _context(tenant: str, session_id: str) -> InvocationContext:
+        return InvocationContext(
+            tenant_id=tenant,
+            subject_id=tenant,
+            account_id=tenant,
+            session_id=session_id,
+            scopes=frozenset({"billing:read", "billing:write"}),
+        )
+
+    toolset_a = resolver.resolve(_context("t1", "conv-a"))
+    toolset_b = resolver.resolve(_context("t1", "conv-b"))
+    toolset_c = resolver.resolve(_context("t2", "conv-a"))
+
+    assert toolset_a is not toolset_b
+    assert toolset_a.session.catalog_state is toolset_b.session.catalog_state
+    assert toolset_a.session.catalog_state is not toolset_c.session.catalog_state
+
+
 def test_production_without_secret_allows_api_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -34,7 +34,7 @@ flowchart LR
 | ERP Base URL | 否 | 否 | 部署级固定配置 `ERP_BILLING_BASE_URL` |
 | 原始语音、附件 | 否 | 否 | 业务方前端 |
 | 原始图片 | VL 模型可见 | 否 | Agent 上下文（VL 模型直接读图，不进入 MCP） |
-| 商品目录 | 否 | 否 | 当前 `ErpBillingSession` 内存 |
+| 商品目录 | 否 | 否 | 租户共享 `TenantCatalogState` 内存 |
 
 ## 2. 核心对象
 
@@ -45,7 +45,7 @@ flowchart LR
 | 固定 API URL | 所有会话共用的 ERP API 根地址 | 进程启动到停止 |
 | `BillingProductSnapshot` | Adapter 返回的规范化商品集合 | 单次同步 |
 | `BillingReferenceSnapshot` | 客户、仓库、职员候选集合 | 单次查询 |
-| `ProductCatalog` | 当前会话真实商品、编号、条码和别名索引 | ToolSet/Session 生命周期 |
+| `ProductCatalog` | 租户真实商品、编号、条码和别名索引 | 租户共享，随后台刷新重建 |
 | `OrderLine` | 从完整文本解析的商品、数量、单位和稳定行号 | 单次开单计算 |
 | `DraftLine` | 匹配状态、选中商品与候选商品 | 单次开单计算 |
 | `BillingDraft` | 确认、推荐和未匹配商品的结构化结果 | 单次响应 |
@@ -59,10 +59,13 @@ flowchart LR
 3. `syncProducts` 校验 `billing:read`。
 4. `BillingApiPort.fetch_products(context)` 获取当前账套商品。
 5. Adapter 只调用源码中固定的 ERP 相对路径。
-6. `ErpBillingSession.replace_products()` 原子替换当前会话的内存目录。
+6. `TenantCatalogState` 原子替换租户共享目录；传 `limit` 时截断结果仅
+   作用于当前会话。
 
-`previewSalesOrder` 发现商品目录为空时也会自动同步一次。商品目录不写入仓库文件或
-共享进程级缓存。
+商品目录按租户共享（`TenantCatalogState`）：首次加载必须等待完成，之后
+过期由后台任务刷新（stale-while-revalidate），读请求继续用旧目录，新
+对话或会话淘汰后重建时无需重新同步。`previewSalesOrder` 与 `listProducts`
+发现无目录时自动同步一次；目录不写入仓库文件。
 
 ## 4. 查询、预览与提交
 
@@ -115,7 +118,7 @@ flowchart LR
 
 - 生产不提供账号密码登录入口。
 - 凭据不进入日志、工具参数、模型消息、结构化结果或领域 Session。
-- Session、商品目录和 ToolSet 按租户、账套、会话隔离。
+- Session、预览和 ToolSet 按租户、账套、会话隔离；商品目录按租户共享，会话淘汰不丢目录。
 - 业务 API 地址固定配置，必须为 HTTPS，且不能包含用户信息、query 或 fragment。
 - 上游返回 401/403 时要求业务后端重新授权，不允许 Agent 索要凭据。
 - 写单必须同时满足 `billing:write`、当前预览、用户明确确认和幂等键。

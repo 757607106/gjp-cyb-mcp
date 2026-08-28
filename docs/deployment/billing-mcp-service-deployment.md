@@ -43,11 +43,17 @@ export ERP_BILLING_BASE_URL=https://正式域名/aicyberp-api
 export ERP_BILLING_JWT_SECRET=<HS256 验签密钥>
 export ERP_BILLING_TIMEOUT_SECONDS=30
 export ERP_BILLING_AUTO_SYNC_LIMIT=10000
+export ERP_BILLING_CATALOG_TTL_SECONDS=600
 ```
 
 `ERP_BILLING_AUTO_SYNC_LIMIT` 是目录为空时自动同步的商品拉取上限
 （缺省 10000），防止超大商品目录把首次开单拖到超时；显式调用
 `syncProducts` 传 `limit` 时不受该上限约束。
+
+商品目录按租户共享（`TenantCatalogState`）：同租户全部会话复用一份缓存，
+首次加载后目录过期由后台任务刷新，读请求继续用旧目录，新对话零冷启动。
+`ERP_BILLING_CATALOG_TTL_SECONDS`（缺省 600 秒）控制目录有效期；显式
+`syncProducts` 不受 TTL 约束，始终强制拉取。
 
 仓库自带可运行入口 `erp_billing.app:app`：按 `GJP_ENV` 选择鉴权强度，
 production 下 `VerifiedJwtIdentityResolver` 强制 HS256 验签并校验 JWT
@@ -85,7 +91,7 @@ JWT payload 解析 tenantId、loginId 构造 InvocationContext，并把同一个
 
 | 工具 | 权限 | 副作用 |
 |---|---|---|
-| `syncProducts` | `billing:read` | 替换当前 Session 内存商品目录 |
+| `syncProducts` | `billing:read` | 刷新租户共享商品目录（传 limit 时仅当前会话） |
 | `listProducts` | `billing:read` | 无 |
 | `searchProducts` | `billing:read` | 无 |
 | `searchBillingReferences` | `billing:read` | 无 |
@@ -161,7 +167,7 @@ api = ErpAuthenticatedHttpAdapter(http)
 - `GJP_ENV=production`，制品来自 wheel，不含 tests、docs 与 `config/local.env`。
 - URL 固定且为 HTTPS；`ERP_BILLING_JWT_SECRET` 仅经环境变量注入。
 - JWT 经 HS256 验签与过期校验，非 HS256 算法一律拒绝。
-- Bearer、ToolSet、目录、预览和幂等结果按会话隔离。
+- Bearer、ToolSet、预览和幂等结果按会话隔离；商品目录按租户共享，会话淘汰不丢目录。
 - 多副本使用共享会话/幂等存储。
 - ERP 401/403 映射为重新授权错误，不让 Agent 索要 Token。
 - `uv run pytest -q` 与 `uv run ruff check src tests` 全部通过。

@@ -976,6 +976,7 @@ def test_billing_settings_contain_no_runtime_output_path():
         "category_path",
         "use_default_categories",
         "auto_sync_limit",
+        "catalog_ttl_seconds",
     }
 
 
