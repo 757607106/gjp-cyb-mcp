@@ -37,6 +37,8 @@ from .adapters import (
     UnavailableBillingApi,
     create_match_logger_from_env,
 )
+from .catalog import ProductCatalog
+from .catalog_state import TenantCatalogState
 from .config import ErpBillingSettings
 from .mcp_service import create_billing_mcp_service
 from .session import ErpBillingSession
@@ -252,7 +254,12 @@ class VerifiedJwtIdentityResolver:
 
 
 class BillingSessionToolSetResolver(McpToolSetResolver):
-    """按 (tenant, account, session) 返回隔离的开单 ToolSet。"""
+    """按 (tenant, account, session) 返回隔离的开单 ToolSet。
+
+    商品目录是租户级数据：同一租户全部会话共享一个 TenantCatalogState，
+    会话 ToolSet 被 TTL 淘汰或新对话建立时目录仍在，新会话零冷启动；
+    目录过期由后台任务刷新，读请求继续用旧目录。
+    """
 
     def __init__(
         self,
@@ -268,10 +275,31 @@ class BillingSessionToolSetResolver(McpToolSetResolver):
             maxsize=int(get_env_value("MCP_SESSION_MAX_SIZE", "500") or 500),
             ttl=int(get_env_value("MCP_SESSION_TTL_SECONDS", "3600") or 3600),
         )
+        # 别名与品类词从配置加载一次，供全部租户目录构建复用
+        seed = ProductCatalog.from_settings(
+            replace(settings, product_catalog_path=None),
+        )
+        self._catalog_aliases = seed.aliases
+        self._catalog_categories = seed.categories
+        self._catalog_ttl_seconds = float(settings.catalog_ttl_seconds)
+        # 租户数远小于会话数，字典不设淘汰：目录常驻避免冷启动回退
+        self._catalog_states: dict[str, TenantCatalogState] = {}
         # 全部 ToolSet 共用一个 HTTP 客户端：凭据按 InvocationContext 注入，
         # 传输层无会话差异；共享后 TTL 淘汰 ToolSet 不再泄漏连接池。
         # 惰性创建保持未配置 ERP_BILLING_BASE_URL 时构造不报错的既有行为。
         self._http: BusinessAuthenticatedJsonClient | None = None
+
+    def _catalog_state_for(self, tenant_id: str) -> TenantCatalogState:
+        with self._lock:
+            state = self._catalog_states.get(tenant_id)
+            if state is None:
+                state = TenantCatalogState(
+                    ttl_seconds=self._catalog_ttl_seconds,
+                    aliases=self._catalog_aliases,
+                    categories=self._catalog_categories,
+                )
+                self._catalog_states[tenant_id] = state
+            return state
 
     def resolve(self, context: InvocationContext) -> BillingToolSet:
         key = (context.tenant_id, context.account_id, context.session_id)
@@ -292,10 +320,15 @@ class BillingSessionToolSetResolver(McpToolSetResolver):
                 timeout_seconds=self._timeout_seconds,
             )
         api = ErpAuthenticatedHttpAdapter(self._http)
-        session = ErpBillingSession.from_settings(
+        session = ErpBillingSession(
             replace(self._settings, product_catalog_path=None),
-            allow_missing_catalog=True,
+            ProductCatalog(
+                products=[],
+                aliases=self._catalog_aliases,
+                categories=self._catalog_categories,
+            ),
             match_logger=create_match_logger_from_env(),
+            catalog_state=self._catalog_state_for(context.tenant_id),
         )
         toolset = BillingToolSet(session, api, InvocationContextStore())
         with self._lock:
@@ -303,11 +336,12 @@ class BillingSessionToolSetResolver(McpToolSetResolver):
         return toolset
 
     async def close(self) -> None:
-        """服务停机时释放共享 HTTP 连接池和会话 ToolSet。"""
+        """服务停机时释放共享 HTTP 连接池、会话 ToolSet 和租户目录。"""
         with self._lock:
             http = self._http
             self._http = None
             self._toolsets.clear()
+            self._catalog_states.clear()
         if http is not None:
             await http.close()
 

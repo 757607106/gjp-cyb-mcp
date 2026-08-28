@@ -65,6 +65,8 @@ class ErpBillingSettings:
     use_default_categories: bool
     # 自动同步（未显式传 limit）时拉取商品的上限，避免超大目录拖垮首次开单
     auto_sync_limit: int = 10000
+    # 租户共享目录的 TTL（秒）：过期后由后台任务刷新，期间继续用旧目录开单
+    catalog_ttl_seconds: int = 600
 
     @classmethod
     def from_env(cls) -> "ErpBillingSettings":
@@ -88,4 +90,5 @@ class ErpBillingSettings:
                 True,
             ),
             auto_sync_limit=_int_env("ERP_BILLING_AUTO_SYNC_LIMIT", 10000, 1),
+            catalog_ttl_seconds=_int_env("ERP_BILLING_CATALOG_TTL_SECONDS", 600, 1),
         )
