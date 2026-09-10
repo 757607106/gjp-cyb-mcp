@@ -951,6 +951,266 @@ def test_void_rejects_invalid_order_id(server_url):
 
 
 # ---------------------------------------------------------------------------
+# 业务边界补充：预览消费、幂等键、部分开单、状态过滤与解析边界
+# ---------------------------------------------------------------------------
+
+
+def _make_ready_preview(
+    base_arguments: dict[str, Any],
+    conversation: str,
+) -> dict[str, Any]:
+    """循环确认候选商品直到 previewSalesOrder 返回可提交预览。"""
+    confirmed: list[dict[str, str]] = []
+    for _ in range(4):
+        result = _call(
+            "previewSalesOrder",
+            {**base_arguments, "confirmed_products": confirmed},
+            conversation=conversation,
+            record_timing=False,
+        )
+        assert result["ok"] is True, result.get("error")
+        if result["ready_to_submit"]:
+            return result
+        pending = [
+            {"line_id": item["line_id"], "product_id": item["product_id"]}
+            for item in result["recommended_products"]
+        ]
+        for item in result["unmatched_products"]:
+            searched = _call(
+                "searchProducts",
+                {"keywords": [item["product_name"]]},
+                conversation=conversation,
+                record_timing=False,
+            )
+            entry = searched["results"][0]
+            candidates = list(entry.get("recommendations") or [])
+            if entry["product"] is not None:
+                candidates.insert(0, entry["product"])
+            assert candidates, "unmatched 行没有任何候选可确认"
+            pending.append({
+                "line_id": item["line_id"],
+                "product_id": candidates[0]["product_id"],
+            })
+        assert pending, "未就绪但没有可确认的候选"
+        confirmed = pending
+    raise AssertionError("多轮确认后仍未 ready_to_submit")
+
+
+def test_submit_idempotency_key_validation(server_url):
+    """空幂等键与超长幂等键在进入预览检查前就被结构化拒绝。"""
+    for key in ("", "k" * 129):
+        result = _call("submitSalesOrder", {
+            "preview_id": _STATE["preview_id"],
+            "idempotency_key": key,
+            "confirmed_by_user": True,
+        }, record_timing=False)
+        assert result["ok"] is False, key
+        assert result["error"]["code"] == "erp_sales_order_idempotency_key_invalid", key
+
+
+def test_submit_preview_consumed_after_submission(server_url):
+    """提交成功后预览一次性失效，换新幂等键重放被拒绝。"""
+    result = _call("submitSalesOrder", {
+        "preview_id": _STATE["preview_id"],
+        "idempotency_key": "e2e-consumed-" + _RUN_ID,
+        "confirmed_by_user": True,
+    }, record_timing=False)
+    assert result["ok"] is False
+    assert result["error"]["code"] == "erp_sales_order_preview_not_found"
+
+
+def test_preview_empty_arguments_reports_all_missing(server_url):
+    """不传任何参数时一次性返回全部 5 项缺失必填项。"""
+    result = _call("previewSalesOrder", {}, record_timing=False)
+    assert result["ok"] is True
+    missing = {item["field"] for item in result["missing_required_fields"]}
+    assert missing == {"customer", "warehouse", "handler", "order_date", "order_text"}
+    assert result["ready_to_submit"] is False
+
+
+def test_preview_partial_with_image_source(server_url):
+    """partial 只提交已匹配商品；image 来源标记不影响预览流程。"""
+    conversation = "e2e-partial-" + _RUN_ID
+    product = _STATE["product"]
+    ghost = "不存在的测试商品%s" % _RUN_ID
+    base_arguments = {
+        "order_text": "%s2%s，%s3个" % (
+            product["product_name"], product.get("unit") or "", ghost,
+        ),
+        "customer": _STATE["customer"],
+        "warehouse": _STATE["warehouse"],
+        "handler": _STATE["handler"],
+        "order_date": time.strftime("%Y-%m-%d"),
+        "save_type": "final",
+        "source": "image",
+        "partial": True,
+    }
+    confirmed: list[dict[str, str]] = []
+    for _ in range(3):
+        result = _call(
+            "previewSalesOrder",
+            {**base_arguments, "confirmed_products": confirmed},
+            conversation=conversation,
+            record_timing=False,
+        )
+        assert result["ok"] is True, result.get("error")
+        if result["ready_to_submit"]:
+            break
+        confirmed = [
+            {"line_id": item["line_id"], "product_id": item["product_id"]}
+            for item in result["recommended_products"]
+        ]
+    else:
+        raise AssertionError("partial 预览多轮确认后仍未就绪")
+
+    assert result["preview_id"]
+    names = [item["name"] for item in result["preview"]["items"]]
+    assert product["product_name"] in names, "已匹配商品应进入 partial 预览"
+    assert all(ghost not in name for name in names), "partial 预览不应包含未确认商品"
+
+
+def test_preview_pre_receipt_label(server_url):
+    """pre_receipt 保存类型的预览返回预收标签。"""
+    conversation = "e2e-pre-receipt-" + _RUN_ID
+    product = _STATE["product"]
+    result = _make_ready_preview({
+        "order_text": "%s1%s" % (product["product_name"], product.get("unit") or ""),
+        "customer": _STATE["customer"],
+        "warehouse": _STATE["warehouse"],
+        "handler": _STATE["handler"],
+        "order_date": time.strftime("%Y-%m-%d"),
+        "save_type": "pre_receipt",
+    }, conversation)
+    assert result["preview"]["save_type"] == "pre_receipt"
+    assert result["preview"]["save_type_label"] == "预收"
+
+
+def test_list_sales_orders_status_filter(server_url):
+    """状态过滤精确区分已作废单据；记录内部 ID 供详情查询。"""
+    voided = _call("listSalesOrders", {
+        "page": 1, "page_size": 100, "status": 3,
+        "order_no": _STATE["order_no"],
+    }, record_timing=False)
+    assert voided["ok"] is True
+    matched = [
+        order for order in voided["orders"]
+        if order.get("orderNo") == _STATE["order_no"]
+    ]
+    assert matched, "status=3 过滤应命中已作废的主单据"
+    _STATE["order_internal_id"] = matched[0].get("id")
+
+    drafts = _call("listSalesOrders", {
+        "page": 1, "page_size": 100, "status": 0,
+        "order_no": _STATE["order_no"],
+    }, record_timing=False)
+    assert drafts["ok"] is True
+    numbers = [order.get("orderNo") for order in drafts["orders"]]
+    assert _STATE["order_no"] not in numbers, "已作废单据不应出现在草稿过滤结果"
+
+
+def test_list_sales_orders_sorting(server_url):
+    """排序参数被 ERP 接受；非法排序值在协议层拦截。"""
+    today = time.strftime("%Y-%m-%d")
+    result = _call("listSalesOrders", {
+        "page": 1, "page_size": 5,
+        "sort_by": "orderDate", "order_type": "desc",
+        "start_date": today, "end_date": today,
+    }, record_timing=False)
+    assert result["ok"] is True
+
+    error_text = _call_protocol_error("listSalesOrders", {
+        "sort_by": "createdAt",
+    })
+    assert "Input validation error" in error_text
+
+
+def test_get_sales_order_by_internal_id(server_url):
+    """内部 ID 与业务单号都能查到同一单据详情。"""
+    internal_id = str(_STATE.get("order_internal_id") or "")
+    assert internal_id, "前置状态过滤用例未取得内部 ID"
+    result = _call("getSalesOrder", {"order_id": internal_id}, record_timing=False)
+    assert result["ok"] is True
+    assert result["order"]["orderNo"] == _STATE["order_no"]
+
+
+def test_void_already_voided_order(server_url):
+    """重复作废已作废单据返回结构化业务错误，不会二次生效。"""
+    result = _call("voidSalesOrder", {
+        "order_id": _STATE["order_no"], "confirmed_by_user": True,
+    }, record_timing=False)
+    assert result["ok"] is False
+    assert result["error"]["code"] == "erp_live_request_failed"
+
+
+def test_update_handler_name_unmatched(server_url):
+    """经办人名称无法解析时拒绝修改，不把错误标识写入 ERP。"""
+    order = _STATE["detail"]
+    item = order["items"][0]
+    result = _call("updateSalesOrder", {
+        "order_id": _STATE["order_no"],
+        "order_date": order["orderDate"],
+        "handler_id": "不存在的经手人%s" % _RUN_ID,
+        "items": [
+            {
+                "product_id": str(item["productId"]),
+                "quantity": item["quantity"],
+                "unit": item.get("unit") or "",
+                "order_item_id": str(
+                    item.get("id") or item.get("orderItemId") or "",
+                ),
+            },
+        ],
+        "save_type": "draft",
+        "confirmed_by_user": True,
+    }, record_timing=False)
+    assert result["ok"] is False
+    assert result["error"]["code"] == "erp_update_reference_unmatched"
+
+
+def test_list_products_pagination_boundaries(server_url):
+    """超出总页数返回空列表；非法分页参数在协议层拦截。"""
+    empty = _call("listProducts", {"page": 999999, "page_size": 5}, record_timing=False)
+    assert empty["ok"] is True
+    assert empty["products"] == []
+    assert empty["total"] == _STATE["product_count"]
+
+    for arguments in ({"page": 0}, {"page_size": 0}, {"page_size": 101}):
+        error_text = _call_protocol_error("listProducts", arguments)
+        assert "Input validation error" in error_text, arguments
+
+
+def test_search_billing_references_limit_boundaries(server_url):
+    """limit 达到上限 20 可用；超出上限或为 0 在协议层拦截。"""
+    result = _call("searchBillingReferences", {
+        "reference_type": "customer", "limit": 20,
+    }, record_timing=False)
+    assert result["ok"] is True
+    assert result["page_size"] == 20
+
+    for arguments in (
+        {"reference_type": "customer", "limit": 21},
+        {"reference_type": "customer", "limit": 0},
+    ):
+        error_text = _call_protocol_error("searchBillingReferences", arguments)
+        assert "Input validation error" in error_text, arguments
+
+
+def test_search_products_no_match(server_url):
+    """无匹配关键词返回 unmatched 状态；空关键词列表被结构化拒绝。"""
+    result = _call("searchProducts", {
+        "keywords": ["不存在的商品%s" % _RUN_ID],
+    }, record_timing=False)
+    assert result["ok"] is True
+    entry = result["results"][0]
+    assert entry["status"] == "unmatched"
+    assert entry["product"] is None
+
+    empty = _call("searchProducts", {"keywords": []}, record_timing=False)
+    assert empty["ok"] is False
+    assert empty["error"]["code"] == "erp_product_query_empty"
+
+
+# ---------------------------------------------------------------------------
 # 稳定性、错误处理与性能
 # ---------------------------------------------------------------------------
 

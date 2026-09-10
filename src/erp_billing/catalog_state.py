@@ -68,10 +68,14 @@ class TenantCatalogState:
     async def ensure(self, loader: CatalogLoader) -> ProductCatalog | None:
         """保证目录可用：无目录时等待首次加载；过期时后台刷新并返回旧目录。"""
         if self._catalog is None:
-            await self.refresh(loader)
+            async with self._lock:
+                if self._catalog is None:
+                    self._install(await loader())
             return self._catalog
         now = time.monotonic()
         if now < self._expires_at or now < self._retry_not_before:
+            return self._catalog
+        if self._background_tasks:
             return self._catalog
         task = asyncio.create_task(self._refresh_in_background(loader))
         self._background_tasks.add(task)
@@ -82,7 +86,7 @@ class TenantCatalogState:
         try:
             async with self._lock:
                 # 拿到锁时可能已有并发刷新完成，跳过重复拉取
-                if time.monotonic() < self._expires_at:
+                if time.monotonic() < max(self._expires_at, self._retry_not_before):
                     return
                 self._install(await loader())
         except asyncio.CancelledError:
@@ -94,6 +98,15 @@ class TenantCatalogState:
                 _RETRY_DELAY_SECONDS,
                 exc,
             )
+
+    async def close(self) -> None:
+        """停机时取消并等待刷新，避免连接池关闭后仍有请求。"""
+        tasks = tuple(self._background_tasks)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._background_tasks.clear()
 
     def _install(self, rows: Iterable[dict[str, Any]]) -> str:
         self._catalog = ProductCatalog.from_product_rows(

@@ -1,6 +1,6 @@
 # GJP Agent
 
-基于 AgentScope 2.0.5 的 ERP AI 开单 MCP 服务。仓库只保留开单产品、AgentScope
+基于 AgentScope 2.0.7 的 ERP AI 开单 MCP 服务。仓库只保留开单产品、AgentScope
 工具基础设施和通用领域类型。
 
 ## 服务边界
@@ -27,7 +27,7 @@
 
 | 类别 | 选型 |
 |---|---|
-| Agent 框架 | AgentScope 2.0.5 |
+| Agent 框架 | AgentScope 2.0.7 |
 | 语言 | Python >= 3.11 |
 | 包管理 | uv + pyproject.toml |
 | MCP 协议 | mcp >= 1.28（Streamable HTTP） |
@@ -50,7 +50,8 @@ Agent 与 MCP 的唯一工具来源。生产服务不构建模型，只通过
 ### 架构原则
 
 - 站在 Agent 应用开发架构师角度设计项目架构。
-- 遵循 AgentScope 2.0.5 官方语法，遇到问题先查官方文档。
+- 遵循 AgentScope 2.0.7 官方语法，遇到问题先查官方文档。
+- AgentScope 仅使用稳定正式版本；当前精确锁定 `2.0.7`，禁止使用 dev、alpha、beta、rc 等预发布版本，升级时同步更新依赖锁文件并回归工具契约。
 - 禁止过度设计，逻辑清晰易维护。
 - 遇到设计问题应重构，不以兼容分支或临时补丁掩盖问题。
 - 业务逻辑和测试逻辑严格分开，不遗留无关代码或文件。
@@ -62,13 +63,21 @@ Agent 与 MCP 的唯一工具来源。生产服务不构建模型，只通过
 - 工程文件命名与功能对应，代码功能概要使用中文注释。
 - Git 提交信息使用中文。
 
-### 主要文档
+### API 与框架参考
+
+- ERP 测试环境 OpenAPI 文档：[API 接口与数据结构](https://test-ai.yuncyb.com/aicyberp-api/v3/api-docs)。后续新增或扩展 MCP 工具时，先核对接口路径、HTTP 方法、请求参数、响应结构及 `components.schemas` 中的数据约束，再实现 `BillingApiPort` 与 Adapter 映射。
+- ERP 测试环境业务 API 基地址：`https://test-ai.yuncyb.com/aicyberp-api`；`/v3/api-docs` 是文档地址，不是业务请求基地址。生产地址由部署配置提供。
+- AgentScope 2.0.7 官方文档：[中文文档](https://docs.agentscope.io/versions/2.0.7/zh)。工具定义、Agent 装配与框架调用以项目锁定的 2.0.7 版本为准，不直接套用其他版本示例。
+- OpenAPI 用于核对契约，不代表所有接口都应发布为 MCP；按实际开单需求扩展，凭据继续由服务端注入。
+
+### 项目文档
 
 - `docs/architecture/architecture-diagrams.md` — 系统架构图
 - `docs/architecture/business-data-flow.md` — 业务数据与数据流
 - `docs/architecture/saas-mcp-integration.md` — SaaS 对话页与 MCP 租户连接
 - `docs/architecture/ai-billing-tools-api-matching.md` — 工具、ERP API 与商品匹配
 - `docs/architecture/product-matching-algorithm.md` — 商品匹配算法
+- `docs/architecture/mcp-reliability-update.md` — MCP 可靠性优化、2.0.7 升级与重试边界
 - `docs/deployment/capability-deployment.md` — 鉴权与会话隔离约定
 - `docs/deployment/billing-mcp-service-deployment.md` — 开单服务部署
 

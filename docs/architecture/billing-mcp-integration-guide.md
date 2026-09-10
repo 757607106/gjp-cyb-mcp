@@ -126,7 +126,7 @@ Agent 根据返回值处理：
 只有用户看到当前预览后明确确认，才可传 `confirmed_by_user=true`。任何内容修改都
 必须重新准备并使用新的 `preview_id`。
 
-## AgentScope 2.0.5 客户端
+## AgentScope 2.0.7 客户端
 
 ```python
 from agentscope.mcp import HttpMCPConfig, MCPClient
