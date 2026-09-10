@@ -545,11 +545,18 @@ class BusinessAuthenticatedJsonClient:
             if exc.response.status_code in {401, 403}:
                 raise DomainError("business_reauth_required", "当前业务系统授权已失效") from exc
             raise DomainError(
-                "erp_live_request_failed",
+                "business_write_result_unknown"
+                if method != "GET" and exc.response.status_code >= 500
+                else "erp_live_request_failed",
                 "ERP 接口返回 HTTP %s" % exc.response.status_code,
             ) from exc
-        except (httpx.TimeoutException, httpx.ConnectError) as exc:
-            raise DomainError("business_upstream_unavailable", "当前业务系统不可用或请求超时") from exc
+        except httpx.TransportError as exc:
+            code = "business_upstream_unavailable" if method == "GET" else "business_write_result_unknown"
+            message = (
+                "当前业务系统不可用或请求超时" if method == "GET"
+                else "业务写入结果未知，请先查询 ERP 核对，勿直接重复操作"
+            )
+            raise DomainError(code, message) from exc
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(
                 "ERP 请求完成 url=%s elapsed=%dms body=%s",

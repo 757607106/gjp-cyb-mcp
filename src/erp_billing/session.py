@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from copy import deepcopy
 import re
 from dataclasses import replace
@@ -109,6 +110,8 @@ class ErpBillingSession:
         self._matcher_catalog: ProductCatalog | None = catalog
         self._match_logger = match_logger
         self._prepared_sales_orders: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
+        self.submission_lock = asyncio.Lock()
+        self._uncertain_previews: set[str] = set()
         self._submission_results: dict[str, dict[str, Any]] = {}
 
     @classmethod
@@ -389,7 +392,9 @@ class ErpBillingSession:
             deepcopy(summary),
         )
         while len(self._prepared_sales_orders) > 20:
-            self._prepared_sales_orders.pop(next(iter(self._prepared_sales_orders)))
+            oldest = next(iter(self._prepared_sales_orders))
+            self._prepared_sales_orders.pop(oldest)
+            self._uncertain_previews.discard(oldest)
         return preview_id
 
     def require_prepared_sales_order(
@@ -397,6 +402,11 @@ class ErpBillingSession:
         preview_id: str,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         """返回销售单预览副本，阻止提交阶段篡改已确认内容。"""
+        if preview_id.strip() in self._uncertain_previews:
+            raise DomainError(
+                "erp_sales_order_result_unknown",
+                "该预览的提交结果尚未确认，请先查询 ERP 核对，勿直接重复开单",
+            )
         stored = self._prepared_sales_orders.get(preview_id.strip())
         if stored is None:
             raise DomainError(
@@ -405,9 +415,15 @@ class ErpBillingSession:
             )
         return deepcopy(stored[0]), deepcopy(stored[1])
 
+    def mark_submission_uncertain(self, preview_id: str) -> None:
+        """阻止同预览在远端结果未知时重复写入。"""
+        if preview_id.strip() in self._prepared_sales_orders:
+            self._uncertain_previews.add(preview_id.strip())
+
     def consume_prepared_sales_order(self, preview_id: str) -> None:
         """提交成功后移除预览，同一预览不能以新幂等键再次提交。"""
         self._prepared_sales_orders.pop(preview_id.strip(), None)
+        self._uncertain_previews.discard(preview_id.strip())
 
     def submission_result(self, idempotency_key: str) -> dict[str, Any] | None:
         """查询当前会话已成功提交的幂等结果。"""

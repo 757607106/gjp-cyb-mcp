@@ -13,10 +13,10 @@ from agentscope.tool import FunctionTool
 
 
 class SessionFunctionTool(FunctionTool):
-    """领域工具基类：本地会话内免二次确认。
+    """领域工具基类：确认由对接平台和业务工具契约承接。
 
-    Agent 只能修改配置的内存草稿和输出路径，用户意图已在触发工具调用的
-    消息中表达，因此不需要 AgentScope 通用函数工具的二次审批。
+    工具可能写入真实 ERP；平台负责用户确认，工具校验业务确认参数。
+    此处不叠加 AgentScope 通用审批，ALLOW 不代表服务端证明了用户确认。
     output_schema 仅供 MCP 发布工具输出契约，不进入 AgentScope 运行时。
     """
 
