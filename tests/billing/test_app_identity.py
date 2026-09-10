@@ -287,8 +287,9 @@ def test_api_key_resolver_accepts_any_key() -> None:
 
     context = resolver.resolve(_mcp_api_key_context("ak_any_key"))
 
-    assert context.tenant_id == "ak_any_key"
-    assert context.subject_id == "ak_any_key"
+    assert context.tenant_id != "ak_any_key"
+    assert context.tenant_id.startswith("apikey-")
+    assert context.subject_id == context.tenant_id
     credential = store.resolve(context)
     assert credential.kind == "api_key"
     assert credential.value == "ak_any_key"
@@ -333,7 +334,8 @@ def test_composite_resolver_falls_back_to_api_key() -> None:
 
     resolver = _CompositeIdentityResolver(bearer_factory, api_key_resolver)
     context = resolver.resolve(_mcp_api_key_context("ak_x"))
-    assert context.tenant_id == "ak_x"
+    assert context.tenant_id != "ak_x"
+    assert context.tenant_id.startswith("apikey-")
     assert store.resolve(context).kind == "api_key"
 
 
@@ -388,7 +390,8 @@ def test_production_without_secret_allows_api_key(
     resolver = _create_identity_resolver(SessionCredentialStore())
     # X-API-Key 请求正常
     context = resolver.resolve(_mcp_api_key_context("ak_any"))
-    assert context.tenant_id == "ak_any"
+    assert context.tenant_id != "ak_any"
+    assert context.tenant_id.startswith("apikey-")
     # Bearer 请求才报错（惰性构造时 secret 缺失）
     token = _make_token(_valid_payload())
     with pytest.raises(DomainError) as excinfo:

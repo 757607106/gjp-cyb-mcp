@@ -17,6 +17,7 @@ production 使用 VerifiedJwtIdentityResolver，要求 HS256 验签通过且
 
 from __future__ import annotations
 
+import hashlib
 import threading
 import time
 from dataclasses import dataclass, replace
@@ -119,6 +120,7 @@ def _decode_jwt_verified(token: str, secret: str) -> dict:
             token,
             key=secret,
             algorithms=["HS256"],
+            options={"require": ["exp", "tenantId", "loginId"]},
         )
     except jwt.ExpiredSignatureError as exc:
         raise DomainError("mcp_unauthorized", "ERP JWT 已过期") from exc
@@ -240,7 +242,11 @@ class VerifiedJwtIdentityResolver:
 
     def resolve(self, mcp_request_context: Any) -> InvocationContext:
         token = _bearer_token_from_mcp_context(mcp_request_context)
-        _decode_jwt_verified(token, self._jwt_secret)
+        payload = _decode_jwt_verified(token, self._jwt_secret)
+        for claim in ("tenantId", "loginId"):
+            value = payload[claim]
+            if isinstance(value, bool) or not isinstance(value, (str, int)) or not str(value).strip():
+                raise DomainError("mcp_unauthorized", "ERP JWT 缺少有效身份字段")
         context = _context_from_jwt(
             token,
             _conversation_id_from_mcp_context(mcp_request_context),
@@ -341,7 +347,10 @@ class BillingSessionToolSetResolver(McpToolSetResolver):
             http = self._http
             self._http = None
             self._toolsets.clear()
+            states = list(self._catalog_states.values())
             self._catalog_states.clear()
+        for state in states:
+            await state.close()
         if http is not None:
             await http.close()
 
@@ -363,7 +372,7 @@ class ApiKeyIdentityResolver:
     """X-API-Key 鉴权：用 key 直接构造调用上下文。
 
     key 等同于 token：每个租户在创业版生成 key，客户端传 X-API-Key 即
-    可，服务端无需预配映射。MCP 用 key 作会话隔离标识，ERP 业务 API
+    可，服务端无需预配映射。MCP 用 key 的摘要作会话隔离标识，ERP 业务 API
     调用用 X-API-Key 头由 ERP 识别真实租户。key 只在服务端内存中流转，
     不进入 Tool Schema 或模型上下文。
     """
@@ -374,10 +383,12 @@ class ApiKeyIdentityResolver:
     def resolve(self, mcp_request_context: Any) -> InvocationContext:
         api_key = _api_key_from_mcp_context(mcp_request_context)
         conversation_id = _conversation_id_from_mcp_context(mcp_request_context)
+        # 稳定摘要保持同 Key 隔离语义，避免凭据进入身份和常规日志。
+        identity = "apikey-" + hashlib.sha256(api_key.encode("utf-8")).hexdigest()
         context = InvocationContext(
-            tenant_id=api_key,
-            subject_id=api_key,
-            account_id=api_key,
+            tenant_id=identity,
+            subject_id=identity,
+            account_id=identity,
             session_id=(
                 "billing-apikey-" + conversation_id
                 if conversation_id

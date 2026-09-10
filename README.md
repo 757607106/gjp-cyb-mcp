@@ -1,6 +1,6 @@
 # GJP ERP AI 销售开单 MCP
 
-基于 AgentScope 2.0.5 的完整销售单 MCP 服务，服务名为 `erp-billing`。
+基于 AgentScope 2.0.7 的完整销售单 MCP 服务，服务名为 `erp-billing`。
 
 ```text
 AI 平台 / SaaS 对话页
