@@ -225,7 +225,8 @@ def create_mcp_server(
                 clip_log_text(json.dumps(result, ensure_ascii=False)),
             )
         logger.info(
-            "MCP 调用成功 tool=%s tenant=%s account=%s session=%s request=%s elapsed=%dms",
+            "MCP 调用完成 ok=%s tool=%s tenant=%s account=%s session=%s request=%s elapsed=%dms",
+            result.get("ok", True),
             name,
             context.tenant_id,
             context.account_id,
@@ -307,6 +308,7 @@ async def _invoke_tool(
         if isinstance(result, dict):
             _warn_large_result(result, tool.name, tenant_id)
             return result
+        return {"ok": True, "result": result}
     result = await tool(**arguments)
     chunks: list[ToolChunk] = []
     if isinstance(result, AsyncGenerator):

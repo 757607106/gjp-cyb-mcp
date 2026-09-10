@@ -1,4 +1,4 @@
-"""AgentScope 2.0.5 标准工具集合。"""
+"""AgentScope 2.0.7 标准工具集合。"""
 
 from __future__ import annotations
 

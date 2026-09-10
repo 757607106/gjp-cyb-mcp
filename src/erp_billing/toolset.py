@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
+import math
 import re
 from collections.abc import Awaitable, Callable
 from datetime import date
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any
 
 from gjp_common.context import InvocationContext, InvocationContextStore
@@ -774,53 +776,71 @@ class BillingToolSet(AgentScopeToolSet):
             idempotency_key: 调用方为本次提交生成的唯一业务键，重试必须复用。
             confirmed_by_user: 仅在用户明确确认该预览后传 true。
         """
-        try:
-            context = self._contexts.get()
-            context.require_scope("billing:write")
-            if confirmed_by_user is not True:
-                raise DomainError(
-                    "erp_sales_order_confirmation_required",
-                    "必须先向用户展示销售单预览并取得明确确认",
-                )
-            key = idempotency_key.strip()
-            if not key or len(key) > 128:
-                raise DomainError(
-                    "erp_sales_order_idempotency_key_invalid",
-                    "idempotency_key 不能为空且最多 128 个字符",
-                )
-            cached = self.session.submission_result(key)
-            if cached is not None:
-                if cached["preview_id"] != preview_id.strip():
+        async with self.session.submission_lock:
+            try:
+                context = self._contexts.get()
+                context.require_scope("billing:write")
+                if confirmed_by_user is not True:
                     raise DomainError(
-                        "erp_sales_order_idempotency_key_conflict",
-                        "该 idempotency_key 已用于另一份销售单预览",
+                        "erp_sales_order_confirmation_required",
+                        "必须先向用户展示销售单预览并取得明确确认",
                     )
-                return self.ok_response(
-                    **self._public_submission_result(cached),
-                    idempotent_replay=True,
-                )
+                key = idempotency_key.strip()
+                if not key or len(key) > 128:
+                    raise DomainError(
+                        "erp_sales_order_idempotency_key_invalid",
+                        "idempotency_key 不能为空且最多 128 个字符",
+                    )
+                cached = self.session.submission_result(key)
+                if cached is not None:
+                    if cached["preview_id"] != preview_id.strip():
+                        raise DomainError(
+                            "erp_sales_order_idempotency_key_conflict",
+                            "该 idempotency_key 已用于另一份销售单预览",
+                        )
+                    return self.ok_response(
+                        **self._public_submission_result(cached),
+                        idempotent_replay=True,
+                    )
 
-            payload, preview = self.session.require_prepared_sales_order(preview_id)
-            result = await self._api.create_sales_order(context, payload)
-            # 创建成功后回查详情，把内部 ID 换成用户可读的业务单号；
-            # 回查失败时降级返回内部 ID（双轨标识下仍可用于后续查询）。
-            order_no = await self._lookup_order_no(result.order_id)
-            cached_result = {
-                "submitted": True,
-                "order_no": order_no or result.order_id,
-                "preview_id": preview_id.strip(),
-                "save_type": preview["save_type"],
-            }
-            self.session.remember_submission(key, cached_result)
-            # 预览一次性消费：成功后立即失效，换新幂等键重放同一预览会被
-            # 拒绝，防止上下文丢失后模型用新 key 重复提交同一份预览。
-            self.session.consume_prepared_sales_order(preview_id)
-            return self.ok_response(
-                **self._public_submission_result(cached_result),
-                idempotent_replay=False,
-            )
-        except DomainError as exc:
-            return self.error_response(exc)
+                payload, preview = self.session.require_prepared_sales_order(preview_id)
+                try:
+                    result = await self._api.create_sales_order(context, payload)
+                except asyncio.CancelledError:
+                    self.session.mark_submission_uncertain(preview_id)
+                    raise
+                except DomainError as exc:
+                    if exc.code in {
+                        "business_upstream_unavailable",
+                        "erp_live_response_invalid",
+                        "business_write_result_unknown",
+                    }:
+                        self.session.mark_submission_uncertain(preview_id)
+                        raise DomainError(
+                            "erp_sales_order_result_unknown",
+                            "销售单提交结果未知，请先查询 ERP 核对，勿直接重复开单",
+                        ) from exc
+                    raise
+                cached_result = {
+                    "submitted": True,
+                    "order_no": result.order_id,
+                    "preview_id": preview_id.strip(),
+                    "save_type": preview["save_type"],
+                }
+                self.session.remember_submission(key, cached_result)
+                # 预览一次性消费：成功后立即失效，换新幂等键重放同一预览会被
+                # 拒绝，防止上下文丢失后模型用新 key 重复提交同一份预览。
+                self.session.consume_prepared_sales_order(preview_id)
+                # 已确认落库后立即记账，详情回查失败/取消也不能造成重复创建。
+                order_no = await self._lookup_order_no(result.order_id)
+                cached_result["order_no"] = order_no or result.order_id
+                self.session.remember_submission(key, cached_result)
+                return self.ok_response(
+                    **self._public_submission_result(cached_result),
+                    idempotent_replay=False,
+                )
+            except DomainError as exc:
+                return self.error_response(exc)
 
     async def get_sales_order(self, order_id: str) -> dict[str, Any]:
         """查询销售单详情，含商品明细、收款记录和状态。
@@ -1036,11 +1056,11 @@ class BillingToolSet(AgentScopeToolSet):
                     "warehouse", clean_warehouse, "出库仓库",
                 )
             if discount_amount is not None:
-                payload["discountAmount"] = float(discount_amount)
+                payload["discountAmount"] = _non_negative_amount(discount_amount, "优惠金额")
             if discount_account_id.strip():
                 payload["discountAccountId"] = discount_account_id.strip()
             if receipt_amount is not None:
-                payload["receiptAmount"] = float(receipt_amount)
+                payload["receiptAmount"] = _non_negative_amount(receipt_amount, "收款金额")
             if receipt_account_id.strip():
                 payload["receiptAccountId"] = receipt_account_id.strip()
             result = await self._api.update_sales_order(context, target_id, payload)
@@ -1369,10 +1389,10 @@ class BillingToolSet(AgentScopeToolSet):
                     "erp_sales_order_item_invalid",
                     "第%d行商品明细数量不是数字" % index,
                 ) from exc
-            if qty <= 0:
+            if not math.isfinite(qty) or qty < 0.0001:
                 raise DomainError(
                     "erp_sales_order_item_invalid",
-                    "第%d行商品明细数量必须大于 0" % index,
+                    "第%d行商品明细数量必须为不小于 0.0001 的有限数" % index,
                 )
             item: dict[str, Any] = {"productId": product_id, "quantity": qty}
             field_map = {
@@ -1386,6 +1406,8 @@ class BillingToolSet(AgentScopeToolSet):
                 if value is None:
                     value = raw.get(camel_key)
                 if value not in (None, ""):
+                    if camel_key == "unitPrice":
+                        value = _non_negative_amount(value, "单价")
                     item[camel_key] = value
             result.append(item)
         return result
@@ -1464,6 +1486,10 @@ class BillingToolSet(AgentScopeToolSet):
                     "erp_sales_order_product_unconfirmed",
                     "销售单仍有未确认商品，不能生成提交预览",
                 )
+            if not math.isfinite(line.order_line.quantity) or line.order_line.quantity < 0.0001:
+                raise DomainError("erp_sales_order_item_invalid", "商品数量必须为不小于 0.0001 的有限数")
+            if line.product.price is not None:
+                _non_negative_amount(line.product.price, "单价")
             item: dict[str, Any] = {
                 "productId": line.product.product_id,
                 "quantity": line.order_line.quantity,
@@ -1537,4 +1563,18 @@ def _line_amount(quantity: float, unit_price: float | None) -> Decimal | None:
     amount = Decimal(str(quantity)) * Decimal(str(unit_price))
     if not amount.is_finite():
         return None
-    return amount.quantize(_MONEY_QUANTUM, rounding=ROUND_HALF_UP)
+    try:
+        return amount.quantize(_MONEY_QUANTUM, rounding=ROUND_HALF_UP)
+    except InvalidOperation as exc:
+        raise DomainError("erp_sales_order_item_invalid", "商品数量或金额超出可处理范围") from exc
+
+
+def _non_negative_amount(value: Any, label: str) -> float:
+    """统一校验 API 金额下界，保留正常金额数值。"""
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise DomainError("erp_sales_order_item_invalid", label + "必须是有效金额") from exc
+    if not math.isfinite(number) or number < 0:
+        raise DomainError("erp_sales_order_item_invalid", label + "必须为非负有限数")
+    return number

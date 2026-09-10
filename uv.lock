@@ -5,16 +5,16 @@ resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
     "python_full_version >= '3.14' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and sys_platform == 'win32'",
-    "python_full_version < '3.12' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'win32'",
     "python_full_version == '3.12.*' and sys_platform != 'win32'",
+    "python_full_version < '3.12' and sys_platform == 'win32'",
     "python_full_version < '3.12' and sys_platform != 'win32'",
 ]
 
 [[package]]
 name = "agentscope"
-version = "2.0.5"
+version = "2.0.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiofiles" },
@@ -36,17 +36,19 @@ dependencies = [
     { name = "opentelemetry-exporter-otlp" },
     { name = "opentelemetry-sdk" },
     { name = "opentelemetry-semantic-conventions" },
+    { name = "pypdf" },
     { name = "python-datauri" },
     { name = "python-frontmatter" },
     { name = "python-socketio" },
+    { name = "rich" },
     { name = "shortuuid" },
     { name = "tree-sitter" },
     { name = "tree-sitter-bash" },
     { name = "tzdata" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d3/38/d34788ef9192cf670b7b4cf6c7e4d58b6a853eb7c7f22a87337deebc4282/agentscope-2.0.5.tar.gz", hash = "sha256:3127803993074ec34062056080f619ab6b883d3d926768afeeddb4172cd1fc9a", size = 672122, upload-time = "2026-07-23T13:29:37.912Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/63/60/fa04cd6af4f4f79366d1692f6781aaf02b573662d30b65c2d2fa925d789c/agentscope-2.0.7.tar.gz", hash = "sha256:c1e4d44717ee0cb9a8ac0f53b4e38e773b57773b02c306d33eccfb4b30770165", size = 885855, upload-time = "2026-08-24T12:48:20.674Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a4/1e/b27656bf3903fcd4ae5017c7b01bca16b6a3ca6cdf75c7b5e4ac92480fbe/agentscope-2.0.5-py3-none-any.whl", hash = "sha256:ae440075c8d72b21a0e6b54458b9c6b9d1d9594f1e3f885611df1ed93950d444", size = 894264, upload-time = "2026-07-23T13:29:36.378Z" },
+    { url = "https://files.pythonhosted.org/packages/36/0b/42ec32a4ef090020bc4298383f830d469444e7010afeadf338b4e272ce0b/agentscope-2.0.7-py3-none-any.whl", hash = "sha256:8379d7c2bc55baf7df7eb5f5b1c141248ce9b9a9978213258c5bd171369bb5f0", size = 1155125, upload-time = "2026-08-24T12:48:18.974Z" },
 ]
 
 [[package]]
@@ -725,7 +727,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "agentscope", specifier = "==2.0.5" },
+    { name = "agentscope", specifier = "==2.0.7" },
     { name = "cachetools", specifier = ">=5,<6" },
     { name = "httpx", specifier = ">=0.27,<1" },
     { name = "mcp", specifier = ">=1.28,<2" },
@@ -1336,8 +1338,8 @@ resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
     "python_full_version >= '3.14' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'win32'",
     "python_full_version == '3.12.*' and sys_platform != 'win32'",
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/22/fd/89965aa4ac08c74998539fcbf24fa3540f3e15237fbeb6bcf9c908f4aade/numpy-2.5.1.tar.gz", hash = "sha256:a48a113e6afea91f5608793bafa7ef2ad481fefbda87ec5069f483de61cb9fa3", size = 20755553, upload-time = "2026-07-04T17:08:00.933Z" }
@@ -1823,6 +1825,15 @@ wheels = [
 [package.optional-dependencies]
 crypto = [
     { name = "cryptography" },
+]
+
+[[package]]
+name = "pypdf"
+version = "6.18.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/c2/c3/9fa0666f280552bd3833562d985b785fce1ddb3804937edd2fd6a3f2bdb3/pypdf-6.18.0.tar.gz", hash = "sha256:ae58b7d93c22c169ffb02c3b06321c45c4f223b4916536568adb57d789d95d01", size = 7024871, upload-time = "2026-09-07T16:48:16.444Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c7/a5/d5922a078c9a612327681d4793404f82998f4d66213add6fdc0659245856/pypdf-6.18.0-py3-none-any.whl", hash = "sha256:05b762b77bcb9dcb4a7c91fcf5dded585b25bee7269ab3d3001d7c55fa1b324b", size = 393848, upload-time = "2026-09-07T16:48:14.254Z" },
 ]
 
 [[package]]
