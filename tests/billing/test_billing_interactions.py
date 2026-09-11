@@ -183,3 +183,88 @@ def test_http_errors_preserve_diagnostics_without_changing_retry_boundary(status
         finally:
             await client.close()
     asyncio.run(scenario())
+
+
+def test_same_name_references_can_select_second_id_without_keyword_lookup(tmp_path):
+    from erp_billing.ports import BillingReferenceSnapshot
+
+    class References(CompleteSalesOrderApi):
+        async def search_customers(self, context, keyword, limit=5, page=1):
+            assert keyword == "同名客户"  # ID 不应当作名称关键词再搜索
+            return BillingReferenceSnapshot(
+                options=({"id": "C-1", "code": "A", "name": "同名客户"},
+                         {"id": "C-2", "code": "B", "name": "同名客户"}),
+                total=2, page_num=1, page_size=limit,
+            )
+
+    tools = toolset(tmp_path, References())
+
+    async def scenario():
+        options = await tools.search_billing_references("customer", "同名客户")
+        assert [x["id"] for x in options["options"]] == ["C-1", "C-2"]
+        ambiguous = await tools._resolve_reference("customer", "同名客户")
+        assert len(ambiguous["candidates"]) == 2
+        preview = await tools.preview_sales_order(
+            **{**PREVIEW, "order_text": "土豆2斤", "customer": "C-2"},
+        )
+        assert preview["ready_to_submit"]
+        assert preview["reference_resolutions"]["customer"]["selected"]["id"] == "C-2"
+        payload, _ = tools.session.require_prepared_sales_order(preview["preview_id"])
+        assert payload["customerId"] == "C-2"
+        assert await tools._resolve_update_reference("customer", "C-2", "客户") == "C-2"
+    asyncio.run(scenario())
+
+
+def test_reference_identity_cache_is_isolated_and_copies_values(tmp_path):
+    tools = toolset(tmp_path)
+    option = {"id": "1", "name": "客户"}
+    tools.session.remember_references("customer", (option,))
+    option["name"] = "篡改"
+    assert tools.session.reference_by_id("customer", "1")["name"] == "客户"
+    assert tools.session.reference_by_id("handler", "1") is None
+    other = toolset(tmp_path)
+    assert other.session.reference_by_id("customer", "1") is None
+
+
+@pytest.mark.parametrize("text,name,quantity,unit", [
+    ("销售 1 本书本", "书本", 1, "本"),
+    ("我要买一本书", "书", 1, "本"),
+    ("书本 5 本", "书本", 5, "本"),
+    ("土豆一百二十三斤", "土豆", 123, "斤"),
+])
+def test_spoken_order_has_explicit_quantity(text, name, quantity, unit):
+    from erp_billing.session import parse_order_text
+    line, = parse_order_text(text)
+    assert (line.requested_name, line.quantity, line.unit) == (name, quantity, unit)
+
+
+@pytest.mark.parametrize("text", ["土豆", "土豆若干斤", "土豆-2斤", "土豆一二斤", "火龙果猕猴桃各5斤"])
+def test_uncertain_order_never_defaults_to_one(tmp_path, text):
+    result = asyncio.run(toolset(tmp_path).preview_sales_order(
+        **{**PREVIEW, "order_text": text},
+    ))
+    assert not result["ok"]
+    assert result["error"]["code"] in {"erp_order_text_invalid", "erp_order_quantity_invalid"}
+
+
+@pytest.mark.parametrize("limit", [0, -1, "2", True, 2.5])
+def test_sync_limit_invalid_before_upstream(tmp_path, limit):
+    tools = toolset(tmp_path, object())
+    result = asyncio.run(tools.sync_products(limit))
+    assert result["error"]["code"] == "erp_product_limit_invalid"
+
+
+def test_search_loads_catalog_without_manual_sync(tmp_path):
+    from erp_billing.ports import BillingProductSnapshot
+    class Catalog(CompleteSalesOrderApi):
+        calls = 0
+        async def fetch_products(self, context, limit=None):
+            self.calls += 1
+            return BillingProductSnapshot(products=({"id": "P001", "name": "土豆", "unit": "斤"},))
+    api = Catalog()
+    tools = toolset(tmp_path, api)
+    from erp_billing.catalog_state import TenantCatalogState
+    tools.session._catalog_state = TenantCatalogState(600, {}, {})
+    result = asyncio.run(tools.search_products(["土豆"]))
+    assert result["results"][0]["product"]["product_id"] == "P001"
+    assert api.calls == 1

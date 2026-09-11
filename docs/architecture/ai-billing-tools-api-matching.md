@@ -137,18 +137,18 @@ Adapter 按 100 条一页自动翻页（减少串行往返，保护首单耗时�
 | `getSalesOrder` | `order_id` | 查询销售单详情，含商品明细、收款记录和状态 | `order`（完整 SalesOrderVO） |
 | `listSalesOrders` | `page?`、`page_size?`、`sort_by?`、`order_type?`、`start_date?`、`end_date?`、`status?`、`payment_status?`、`return_status?`、`order_no?`、`customer_id?` | 分页查询销售单列表，支持录单日期和客户查询 | `page`、`page_size`、`total`、`has_more`、`orders` |
 | `voidSalesOrder` | `order_id`、`confirmed_by_user` | 用户确认后作废销售单，不可恢复 | `voided`、`order_no`（业务单号） |
-| `updateSalesOrder` | `order_id`、`order_date`、`handler_id`、`items`、`customer_id?`、`warehouse_id?`、`save_type?`、`remark?`、`confirmed_by_user` | 用户确认后修改已存在销售单；建议先查详情；经手人、客户、仓库可传内部 ID 或名称（纯数字视为内部 ID，名称须唯一匹配） | `modified`、`order_no`（业务单号） |
+| `updateSalesOrder` | `order_id`、`order_date?`、`handler_id?`、`items?`、`customer_id?`、`warehouse_id?`、`save_type?`、`remark?`、`confirmed_by_user` | 用户确认后修改已存在销售单；建议先查详情；经手人、客户、仓库可传内部 ID 或名称（纯数字视为内部 ID，名称须唯一匹配） | `modified`、`order_no`（业务单号） |
 
 十个工具的返回值都是 MCP 结构化 JSON 内容。`submitSalesOrder`、
 `voidSalesOrder` 和 `updateSalesOrder` 具有 ERP 写副作用，要求 `billing:write`、
-明确用户确认；`submitSalesOrder` 额外要求幂等键，预览提交成功后即失效，
+明确用户确认；`submitSalesOrder` 可省略幂等键（默认绑定 preview_id），预览提交成功后即失效，
 不可用新幂等键重复提交。`getSalesOrder` 和
 `listSalesOrders` 是只读操作，要求 `billing:read`。服务不维护可逐行修改的文件草稿，
 但会在隔离 Session 中短期保存不可变提交预览和成功幂等结果。
 
 `listProducts`、`searchBillingReferences` 和 `listSalesOrders` 统一返回
 `page`、`page_size`、`total` 与 `has_more`。基础资料候选已由 MCP 按精确命中、
-默认项、名称相关度排序，对外只返回名称和默认标记，不暴露内部 ID 或排序字段；
+默认项、名称相关度排序，返回 id、code、name、is_default；ID 用于机器调用，不向终端用户展示；
 默认项仅供推荐，仍须用户确认。
 
 ## 4. 商品目录同步
@@ -361,7 +361,7 @@ ERP 目录中只有部位级商品（"牛腱子""牛肉-牛腩"），没有单�
   （如 `鸡蛋21个 牛肉10斤` 拆为两行）。数量前置模式（如 `来5斤 洋芋`）中的
   空格不被拆分。
 - **"各"模式**：`X和Y各N斤` 和 `XY各N斤` 均支持。后者按 2 字符切分名称
-  （`苹果荔枝各5斤` → 苹果 5 斤 + 荔枝 5 斤）。
+  （`苹果和荔枝各5斤` → 苹果 5 斤 + 荔枝 5 斤）；连续无分隔名称不做双字切分。
 - **数量前置**：`来十斤马铃薯` / `给我来5斤洋芋` 等口语模式，数量在名称之前。
 - **支持单位**：斤、公斤、千克、克、kg、g、ml、l、L、升、毫升、吨、t、瓶、
   件、箱、袋、个、颗、根、把、盒、包、只、份、条、听、提、板、盘、筐、桶、
@@ -542,3 +542,18 @@ upstream_code、trace_id；HTTP 失败另含 http_status。不返回整个响应
 
 商品目录继续采用租户共享 TTL 与过期后台刷新，属于最终一致缓存，并非实时价格
 承诺。刷新期间可能读取旧值；要求最新目录时先显式 syncProducts。
+
+
+## 身份选择与确定性解析（2026-09-11）
+
+- 基础资料只按相同 ID 去重，名称相同、前缀相同或业务后缀不同均不代表同一实体。
+  搜索和预览候选保留 id/code/name/is_default。同会话返回过的资料 ID 按资料类型
+  隔离保存（最多 200 条），可直接回传选择，避免把 ID 当关键词再次搜索。
+  缓存仅用于定位已选身份，不替代 ERP 对状态、权限和最终写入的校验。
+- 支持“销售 1 本书本”“我要买一本书”和明确的名称、数量、单位文本。
+  解析失败不默认数量 1；负数、非有限数及不能明确解释的中文数量拒绝。
+  “各”必须明确写出“和”连接的商品，取消按两个字切分名称的猜测逻辑。
+  不能确定时要求用户提供分行的“商品名+数量+单位”，不把猜测结果送去开单。
+- 商品搜索与列表、预览统一通过 ensure_catalog 加载目录，使用已有租户 TTL 刷新。
+  syncProducts 的 limit 只接受正整数或 null；字符串、布尔值、零及负数在访问 ERP 前拒绝。
+- 空销售单标识在详情查询入口拒绝，不再把空路径交给 ERP。

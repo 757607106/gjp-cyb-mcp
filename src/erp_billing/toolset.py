@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import math
-import re
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from datetime import date
@@ -146,6 +145,8 @@ _SEARCH_BILLING_REFERENCES_OUTPUT_SCHEMA = {
             "items": {
                 "type": "object",
                 "properties": {
+                    "id": {"type": "string"},
+                    "code": {"type": "string"},
                     "name": {"type": "string"},
                     "is_default": {"type": "boolean"},
                 },
@@ -423,6 +424,10 @@ class BillingToolSet(AgentScopeToolSet):
                     self.sync_products,
                     is_concurrency_safe=False,
                     output_schema=_SYNC_PRODUCTS_OUTPUT_SCHEMA,
+                    input_schema_override={
+                        "type": "object",
+                        "properties": {"limit": {"type": ["integer", "null"], "minimum": 1}},
+                    },
                 ),
                 SessionFunctionTool(
                     self.list_products,
@@ -431,7 +436,7 @@ class BillingToolSet(AgentScopeToolSet):
                     input_schema_override=_LIST_PRODUCTS_INPUT_SCHEMA,
                 ),
                 SessionFunctionTool(
-                    session.search_products,
+                    self.search_products,
                     is_read_only=True,
                     output_schema=_SEARCH_PRODUCTS_OUTPUT_SCHEMA,
                 ),
@@ -481,6 +486,16 @@ class BillingToolSet(AgentScopeToolSet):
             mcp_tool_names=BILLING_MCP_TOOL_NAMES,
         )
 
+    async def search_products(self, keywords: list[str], limit: int = 10) -> dict[str, Any]:
+        """按名称、编号或条码搜索商品，目录为空或过期时自动加载或刷新。"""
+        try:
+            context = self._contexts.get()
+            context.require_scope("billing:read")
+            await self.session.ensure_catalog(self._catalog_loader(context))
+            return self.session.search_products(keywords, limit)
+        except DomainError as exc:
+            return self.error_response(exc)
+
     async def sync_products(self, limit: int | None = None) -> dict[str, Any]:
         """同步当前租户的商品目录到内存缓存。
 
@@ -493,6 +508,8 @@ class BillingToolSet(AgentScopeToolSet):
         try:
             context = self._contexts.get()
             context.require_scope("billing:read")
+            if limit is not None and (type(limit) is not int or limit <= 0):
+                raise DomainError("erp_product_limit_invalid", "limit 必须为正整数或 null")
             loader = self._catalog_loader(context, limit)
             if limit is None:
                 synced_at = await self.session.sync_catalog(loader)
@@ -646,9 +663,9 @@ class BillingToolSet(AgentScopeToolSet):
 
         Args:
             order_text: 完整商品文本，必须包含商品和数量；多轮修改后传完整内容。
-            customer: 必填，客户名称或编号。
-            warehouse: 必填，出库仓库名称或编号。
-            handler: 必填，经手人名称或编号。
+            customer: 必填，客户名称、编号或候选返回的 ID。
+            warehouse: 必填，出库仓库名称、编号或候选返回的 ID。
+            handler: 必填，经手人名称、编号或候选返回的 ID。
             order_date: 必填，录单日期，格式 YYYY-MM-DD。
             remark: 可选的整单备注，最多 200 个字符。
             save_type: 保存类型；draft 草稿、pre_receipt 预收、final 正式。
@@ -706,7 +723,7 @@ class BillingToolSet(AgentScopeToolSet):
                 "warehouse": await self._resolve_reference("warehouse", values["warehouse"]),
                 "handler": await self._resolve_reference("handler", values["handler"]),
             }
-            # 对外解析结果隐藏内部 ID；内部原始结果继续供预览构建使用
+            # 候选保留机器可用 ID；用户界面由 Agent 隐藏内部标识
             public_reference_resolutions = {
                 field: {
                     "status": resolution["status"],
@@ -874,6 +891,8 @@ class BillingToolSet(AgentScopeToolSet):
         try:
             context = self._contexts.get()
             context.require_scope("billing:read")
+            if not order_id.strip():
+                raise DomainError("erp_sales_order_id_invalid", "销售单 ID 不能为空")
             result = await self._api.get_sales_order_detail(
                 context,
                 order_id.strip(),
@@ -1090,8 +1109,10 @@ class BillingToolSet(AgentScopeToolSet):
     def _public_reference_option(
         option: dict[str, Any],
     ) -> dict[str, Any]:
-        """基础资料候选对外仅保留展示和推荐所需字段。"""
+        """基础资料候选保留唯一身份，供选择后准确回传。"""
         return {
+            "id": str(option.get("id") or ""),
+            "code": str(option.get("code") or ""),
             "name": str(option.get("name") or ""),
             "is_default": bool(
                 option.get("is_default") or option.get("isDefault"),
@@ -1152,16 +1173,16 @@ class BillingToolSet(AgentScopeToolSet):
         page: int = 1,
     ) -> BillingReferenceSnapshot:
         context = self._contexts.get()
-        if reference_type == "customer":
-            return await self._api.search_customers(context, keyword, limit, page)
-        if reference_type == "warehouse":
-            return await self._api.search_warehouses(context, keyword, limit, page)
-        if reference_type == "handler":
-            return await self._api.search_staff(context, keyword, limit, page)
-        raise DomainError(
-            "erp_reference_type_invalid",
-            "reference_type 必须是 customer、warehouse 或 handler",
-        )
+        methods = {
+            "customer": "search_customers",
+            "warehouse": "search_warehouses",
+            "handler": "search_staff",
+        }
+        if reference_type not in methods:
+            raise DomainError("erp_reference_type_invalid", "reference_type 必须是 customer、warehouse 或 handler")
+        snapshot = await getattr(self._api, methods[reference_type])(context, keyword, limit, page)
+        self.session.remember_references(reference_type, snapshot.options)
+        return snapshot
 
     async def _resolve_reference(self, reference_type: str, value: str) -> dict[str, Any]:
         if not value:
@@ -1171,9 +1192,13 @@ class BillingToolSet(AgentScopeToolSet):
                 "selected": None,
                 "candidates": [],
             }
+        known = self.session.reference_by_id(reference_type, value)
+        if known is not None:
+            return {"status": "matched", "query": value, "selected": known, "candidates": []}
         # 解析时多取一些结果保证精确项不因展示上限被截断，最终候选仍收敛为 5 个。
         options = list((await self._search_reference(reference_type, value, 10)).options)
         normalized = normalize_name(value)
+        options = self._deduplicate_reference_options(options, value)
         exact = [
             option
             for option in options
@@ -1191,9 +1216,9 @@ class BillingToolSet(AgentScopeToolSet):
                 "selected": exact[0],
                 "candidates": [],
             }
-        # 无唯一精确匹配时，对同主体多业务类型候选去重，最多返回 5 个
+        # 无唯一精确匹配时最多展示 5 个，保留每个不同 ID 的实体
         if options:
-            options = self._deduplicate_reference_options(options, value)
+            options = options[:5]
         status = "ambiguous" if options else "unmatched"
         return {
             "status": status,
@@ -1214,7 +1239,7 @@ class BillingToolSet(AgentScopeToolSet):
         其余按名称或编号解析，未唯一匹配时抛出结构化错误，由模型
         引导用户提供更准确的名称，而不是把错误标识写入 ERP。
         """
-        if value.isdigit():
+        if value.isdigit() or self.session.reference_by_id(reference_type, value) is not None:
             return value
         resolution = await self._resolve_reference(reference_type, value)
         if resolution["status"] == "matched" and resolution["selected"] is not None:
@@ -1241,28 +1266,16 @@ class BillingToolSet(AgentScopeToolSet):
         options: list[dict[str, Any]],
         query: str,
     ) -> list[dict[str, Any]]:
-        """按基础名称去重并按匹配质量排序，最多返回 5 个。
-
-        ERP 常为同一客户/经手人返回多业务类型变体（COVR/SALE/PURC 等），
-        名称仅在尾部后缀不同；按第一个分隔符前的名称去重后大幅减少候选数。
-        """
-        sorted_options = sorted(
-            options,
-            key=lambda option: cls._reference_sort_key(option, query),
-        )
+        """仅合并相同 ID 的重复记录，不猜测名称相似的实体相同。"""
         seen: set[str] = set()
         deduped: list[dict[str, Any]] = []
-        for option in sorted_options:
-            name = str(option.get("name") or "")
-            base = re.split(r"[-\u2012-\u2015]|\(|\uff08|\u3010", name, maxsplit=1)[0].strip()
-            base_key = (
-                normalize_name(base) if base else normalize_name(name)
-            )
-            if not base_key or base_key in seen:
+        for option in sorted(options, key=lambda item: cls._reference_sort_key(item, query)):
+            identifier = str(option.get("id") or "")
+            if not identifier or identifier in seen:
                 continue
-            seen.add(base_key)
+            seen.add(identifier)
             deduped.append(option)
-        return deduped[:5]
+        return deduped
 
     async def _match_order_products(
         self,
