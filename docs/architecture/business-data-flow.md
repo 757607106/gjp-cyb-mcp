@@ -99,6 +99,7 @@ flowchart LR
 `unit_warnings`、三个商品匹配数组、按处理顺序排列的 `required_actions` 以及
 `ready_to_submit`。基础资料候选只保留在 `reference_resolutions`，不再复制一份
 等价的待确认数组；Agent 通过 `required_actions` 判断下一步。
+单位冲突时通过 confirmed_units 回传绑定行和商品的 ERP 单位与确认数量，无需重写 order_text。
 基础资料和商品全部唯一确定且单位一致时，工具保存不可变 API Payload，并返回
 `preview_id` 与可展示的 `preview`。有销售价的商品按实际提交单价乘数量逐行保留
 两位小数，返回 `line_amount`；全部商品都有价格时再返回 `total_amount`，避免用
@@ -108,7 +109,7 @@ flowchart LR
 `has_more` 和候选。候选已按精确匹配、默认项、名称相关度排序，对外只返回名称和
 默认标记，内部 ID 与排序依据均不暴露。
 
-`submitSalesOrder(preview_id, idempotency_key, confirmed_by_user)` 校验
+`submitSalesOrder(preview_id, idempotency_key, confirmed_by_user)` 的 idempotency_key 可省略，默认使用 preview_id；工具校验
 `billing:write`。只有 `confirmed_by_user=true` 才调用 `POST /sales/orders`；成功后
 同一会话复用幂等结果，且预览一次性消费，换新幂等键重放同一预览会被拒绝。
 `save_type` 映射为草稿 `0`、预收 `1`、正式 `2`。`updateSalesOrder` 的经手人、

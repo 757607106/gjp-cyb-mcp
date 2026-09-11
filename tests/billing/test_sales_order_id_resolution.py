@@ -137,6 +137,12 @@ def test_update_resolves_order_no_and_injects_id():
     http.get_responses["/sales/orders/page"] = _page_response(
         [{"id": _INTERNAL_ID, "orderNo": _ORDER_NO}],
     )
+    http.get_responses["/sales/orders/%s" % _INTERNAL_ID] = {
+        "code": "A00000", "data": {
+            "handlerId": "1", "orderDate": "2026-08-03", "status": 0,
+            "items": [{"id": "11", "productId": "1", "quantity": 1}],
+        },
+    }
     adapter = ErpAuthenticatedHttpAdapter(http)
 
     result = asyncio.run(

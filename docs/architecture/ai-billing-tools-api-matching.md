@@ -133,7 +133,7 @@ Adapter 按 100 条一页自动翻页（减少串行往返，保护首单耗时�
 | `searchProducts` | `keywords`、`limit?` | 按 ID、编号、条码、名称、同义词组和模糊相似度批量查询已有商品 | 每个关键词的匹配状态、唯一商品或 `recommendations` |
 | `searchBillingReferences` | `reference_type`、`keyword?`、`limit?`、`page?` | 查询客户、出库仓库或经手人候选，支持翻页 | 分页元数据、名称、默认标记 |
 | `previewSalesOrder` | 完整销售单业务字段、`save_type`、`confirmed_products?`、`partial?` | 校验必填项、解析基础资料、匹配商品并保存不可变预览 | 有序待办、缺失项、候选、商品数组、预览金额、`preview_id` |
-| `submitSalesOrder` | `preview_id`、`idempotency_key`、`confirmed_by_user` | 明确确认后调用真实写单接口 | `order_no`（业务单号）、保存类型、幂等重放标志 |
+| `submitSalesOrder` | `preview_id`、可选 `idempotency_key`、`confirmed_by_user` | 明确确认后调用真实写单接口 | `order_no`（业务单号）、保存类型、幂等重放标志 |
 | `getSalesOrder` | `order_id` | 查询销售单详情，含商品明细、收款记录和状态 | `order`（完整 SalesOrderVO） |
 | `listSalesOrders` | `page?`、`page_size?`、`sort_by?`、`order_type?`、`start_date?`、`end_date?`、`status?`、`payment_status?`、`return_status?`、`order_no?`、`customer_id?` | 分页查询销售单列表，支持录单日期和客户查询 | `page`、`page_size`、`total`、`has_more`、`orders` |
 | `voidSalesOrder` | `order_id`、`confirmed_by_user` | 用户确认后作废销售单，不可恢复 | `voided`、`order_no`（业务单号） |
@@ -485,3 +485,60 @@ ERP 商品 ID。
 - `confirmed_products` 必须重新通过当前目录和当前匹配结果校验。
 - Bearer、Cookie 和业务 Token 不写入日志、商品目录或工具结果。
 - 开单服务独立部署，并使用专属域名、认证配置和 Session 存储。
+
+
+## 单位确认、局部修改与错误诊断（2026-09-11）
+
+已核对 [ERP OpenAPI](https://test-ai.yuncyb.com/aicyberp-api/v3/api-docs)
+中的销售单 PUT、作废 PUT，以及 SalesOrderUpdateDTO / SalesOrderItemDTO /
+SalesOrderVO / SalesOrderItemVO。
+
+### 单位确认
+
+单位不一致时仍不生成可提交预览，避免未确认换算进入写单。
+响应的 unit_warnings 提供 line_id、product_id、requested_quantity、
+requested_unit 和 erp_unit。用户确认 ERP 单位下的数量后，保留原 order_text，
+再次调用 previewSalesOrder 并传：
+
+```json
+{"confirmed_units": [{"line_id": "L001", "product_id": "P001", "unit": "斤", "quantity": 4}]}
+```
+
+确认必须绑定当前行的已匹配商品，单位必须等于当前 ERP 单位；重复行、错行、
+错商品、非有限或过小数量均拒绝。无需让模型重写自然语言单位或猜测换算。
+生成新预览后，仍须向用户展示并取得提交确认。
+
+### 局部修改
+
+updateSalesOrder 只要求 order_id；confirmed_by_user=true 才执行写入。
+省略日期、经手人、备注或明细表示保留 ERP 当前值，remark="" 明确清空。
+传 items 表示完整替换明细，不是按行合并。
+
+ToolSet 校验显式修改字段；Adapter 读取最新详情并按 ERP 完整 PUT 契约合并。
+保留明细 id 到 orderItemId 的映射，以及 unitId、conversionRate、单价、行备注。
+已收金额不映射为 receiptAmount，避免把历史收款当成追加收款。
+只有显式传 receipt_amount 才追加；省略 save_type 保持现状。
+修改仅支持 draft=0、final=2，pre_receipt=1 仅用于新增单据。
+
+已作废单据拒绝修改；已生效单据客户、仓库、优惠金额和优惠账户不可变。
+显式编辑已生效明细必须提供 order_item_id。数量、价格等其余业务限制由 ERP
+最终判定，不能宣称无条件可改。
+
+ERP 当前无版本号、If-Match 或原子局部更新接口。读取最新值能减少旧数据回填，
+但不能消除 GET 与 PUT 之间其他客户端写入造成的覆盖。要彻底解决，需要 ERP
+支持原子条件更新；不以本进程锁或二次查询冒充跨客户端并发保护。
+
+### 提交与错误
+
+submitSalesOrder 的 idempotency_key 可省略，默认绑定 preview_id。
+显式 key 的重放与冲突规则不变，提交结果未知仍禁止盲目重试。
+幂等结果目前属于会话内存；ERP 创建接口不接收该 key，进程重启后无法提供持久
+业务幂等。跨重启保证需要 ERP 唯一业务键或持久提交协议，不在 MCP 内伪造保证。
+
+业务错误保留稳定的 MCP code、ERP message，并在 error.details 中提供
+upstream_code、trace_id；HTTP 失败另含 http_status。不返回整个响应 data。
+401 表示需要重新授权，403 表示无操作权限；写入 5xx 仍视为结果未知。
+上游只提供笼统原因时，不推断成已收款、已发货或其他未经证实的原因。
+
+商品目录继续采用租户共享 TTL 与过期后台刷新，属于最终一致缓存，并非实时价格
+承诺。刷新期间可能读取旧值；要求最新目录时先显式 syncProducts。

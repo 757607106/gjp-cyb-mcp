@@ -446,7 +446,7 @@ class ErpBillingSession:
 
     @staticmethod
     def _error(exc: DomainError) -> dict[str, Any]:
-        return {"ok": False, "error": {"code": exc.code, "message": exc.message}}
+        return {"ok": False, "error": exc.as_dict()}
 
 
 def parse_order_text(text: str) -> list[OrderLine]:

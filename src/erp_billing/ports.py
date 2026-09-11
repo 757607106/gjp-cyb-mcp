@@ -159,6 +159,7 @@ class BillingApiPort(Protocol):
         order_id: str,
         payload: dict[str, Any],
     ) -> BillingSalesOrderResult:
+        """接受显式修改字段；适配器负责保留未传字段并映射 ERP 完整 PUT。"""
         ...
 
 
