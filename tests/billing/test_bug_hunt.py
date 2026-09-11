@@ -30,6 +30,7 @@ from erp_billing.ports import (
 )
 from erp_billing.session import ErpBillingSession, _normalize_confirmed_products
 from erp_billing.session import parse_order_text
+from gjp_common.errors import DomainError
 from erp_billing.toolset import BillingToolSet
 from gjp_common.context import InvocationContext, InvocationContextStore
 
@@ -156,11 +157,6 @@ def test_separator_splits_builtin_unit_line():
     ]
 
 
-@pytest.mark.xfail(
-    reason="BUG-B1: _DIGIT_UNIT_SPACE_RE 只认内置单位白名单；自定义单位（本）在前时"
-    "两行合并成一行垃圾数据（name='书本2本 土豆', qty=3, unit='斤'）",
-    strict=False,
-)
 def test_separator_splits_custom_unit_line():
     """自定义单位（本）结尾 + 空格时同样应拆分为两行。"""
     lines = parse_order_text("书本2本 土豆3斤")
@@ -208,16 +204,11 @@ def test_update_rejects_zero_quantity_for_contrast(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason="BUG-B3: '土豆-2斤' 解析为 name='土豆-', qty=2（正数）；负号被静默"
-    "并入商品名且数量符号丢失，语义静默改变",
-    strict=False,
-)
 def test_negative_sign_not_swallowed_into_name():
     """负号不应被静默并入商品名（数量符号不得丢失）。"""
-    lines = parse_order_text("土豆-2斤")
+    with pytest.raises(DomainError, match="数量"):
+        parse_order_text("土豆-2斤")
 
-    assert lines[0].requested_name == "土豆"
 
 
 # ---------------------------------------------------------------------------
@@ -306,22 +297,15 @@ def test_concurrent_submit_different_keys_writes_once(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason="BUG-B6: _EACH_LIST_RE 对偶数长度名称串按双字硬切，"
-    "'火龙果猕猴桃各5斤' 产出 ['火龙','果猕','猴桃'] 跨词垃圾名",
-    strict=False,
-)
 def test_each_list_does_not_split_across_word_boundary():
     """"各"模式不得产出跨词边界的垃圾商品名。"""
-    lines = parse_order_text("火龙果猕猴桃各5斤")
-
-    names = [line.requested_name for line in lines]
-    assert "果猕" not in names, "跨词双字切分产出垃圾名：%s" % names
+    with pytest.raises(DomainError, match="多个商品"):
+        parse_order_text("火龙果猕猴桃各5斤")
 
 
 def test_each_list_splits_two_char_names():
     """对照：双字商品名串（设计目标场景）切分正确。"""
-    lines = parse_order_text("苹果香蕉各5斤")
+    lines = parse_order_text("苹果和香蕉各5斤")
 
     assert [line.requested_name for line in lines] == ["苹果", "香蕉"]
 
@@ -331,11 +315,6 @@ def test_each_list_splits_two_char_names():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason="BUG-B7: get_sales_order 不校验空白单号，把空串直接发给 ERP；"
-    "void_sales_order 有 erp_sales_order_id_invalid 拦截，两工具行为不一致",
-    strict=False,
-)
 def test_get_sales_order_rejects_blank_order_id(tmp_path):
     """空白单号应在工具层结构化拒绝，不产生 ERP 调用。"""
     api = RecordingBillingApi()
@@ -403,11 +382,10 @@ def test_current_behavior_duplicate_line_id_last_wins():
 
 
 def test_current_behavior_sync_products_zero_limit_error_message(tmp_path):
-    """低危：syncProducts 传 limit=0（或负数）时报"没有可用于开单的商品"，
-    报错语义误导（实际是参数无效），且输入 Schema 未约束 limit 下界。"""
+    """syncProducts 的无效 limit 在调用 ERP 前明确报参数错误。"""
     result = asyncio.run(
         _toolset(tmp_path, RecordingBillingApi()).sync_products(limit=0),
     )
 
     assert result["ok"] is False
-    assert result["error"]["code"] == "erp_live_product_empty"
+    assert result["error"]["code"] == "erp_product_limit_invalid"

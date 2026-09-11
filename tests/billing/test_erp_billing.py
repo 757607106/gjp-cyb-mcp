@@ -173,18 +173,12 @@ def test_parse_order_text_preserves_quantity_first_with_space():
     )
 
 
-def test_parse_order_text_splits_each_without_conjunction():
-    """"各"模式无需"和"连接词，按 2 字符切分名称。"""
-    lines = parse_order_text("苹果荔枝各5斤\n土豆2斤")
+def test_parse_order_text_requires_explicit_each_names():
+    """不能按字符长度猜测连续商品名称的词边界。"""
+    from gjp_common.errors import DomainError
+    with pytest.raises(DomainError, match="多个商品"):
+        parse_order_text("苹果荔枝各5斤")
 
-    assert [
-        (line.requested_name, line.quantity, line.unit)
-        for line in lines
-    ] == [
-        ("苹果", 5, "斤"),
-        ("荔枝", 5, "斤"),
-        ("土豆", 2, "斤"),
-    ]
 
 
 def test_parse_order_text_accepts_latin_unit():
@@ -1507,8 +1501,8 @@ def test_sales_order_preview_omits_incomplete_total(tmp_path):
     assert "total_amount" not in prepared["preview"]
 
 
-def test_reference_outputs_hide_internal_ids(tmp_path):
-    """基础资料候选与预览解析结果对外不暴露内部 ID。"""
+def test_reference_outputs_preserve_internal_ids(tmp_path):
+    """基础资料候选与预览解析结果保留内部 ID 以支持消歧。"""
     session = _session(
         tmp_path,
         [{"id": "P001", "name": "土豆", "unit": "斤"}],
@@ -1518,7 +1512,7 @@ def test_reference_outputs_hide_internal_ids(tmp_path):
     options = asyncio.run(toolset.search_billing_references("customer", "客户甲"))
 
     assert options["ok"] is True
-    assert options["options"] == [{"name": "客户甲", "is_default": False}]
+    assert options["options"] == [{"id": "CUS-1", "code": "C001", "name": "客户甲", "is_default": False}]
     assert options["page"] == 1
     assert options["page_size"] == 5
     assert options["total"] == 1
@@ -1539,7 +1533,7 @@ def test_reference_outputs_hide_internal_ids(tmp_path):
     assert ambiguous["ready_to_submit"] is False
     for resolution in ambiguous["reference_resolutions"].values():
         assert resolution["status"] == "ambiguous"
-        assert _option_keys(resolution["candidates"]) <= {"name", "is_default"}
+        assert _option_keys(resolution["candidates"]) == {"id", "code", "name", "is_default"}
     assert ambiguous["required_actions"] == [
         "select_customer",
         "select_warehouse",
@@ -1638,7 +1632,7 @@ def test_search_billing_references_passes_page_to_api(tmp_path):
 
     assert result["ok"] is True
     assert api.reference_calls == [("客户", 5, 3)]
-    assert result["options"] == [{"name": "客户3页", "is_default": False}]
+    assert result["options"] == [{"id": "CUS-3", "code": "", "name": "客户3页", "is_default": False}]
     assert result["page"] == 3
     assert result["page_size"] == 5
     assert result["total"] == 5
@@ -2074,8 +2068,8 @@ def test_sync_products_returns_sample_products(tmp_path):
     assert "code" not in result["sample_products"][0]
 
 
-def test_reference_dedup_reduces_business_type_variants(tmp_path):
-    """同一客户的多业务类型变体应被去重，最多返回 5 个候选。"""
+def test_reference_variants_keep_distinct_ids(tmp_path):
+    """不同 ID 的名称变体不得合并，预览最多展示 5 个候选。"""
     session = _session(
         tmp_path,
         [{"id": "P001", "name": "土豆", "unit": "斤"}],
@@ -2136,8 +2130,8 @@ def test_reference_dedup_reduces_business_type_variants(tmp_path):
 
     customer_resolution = result["reference_resolutions"]["customer"]
     assert customer_resolution["status"] == "ambiguous"
-    # 10 个候选去重后不超过 5 个
-    assert len(customer_resolution["candidates"]) <= 5
+    # 10 个不同 ID 只做展示截断，不能按名称合并
+    assert len(customer_resolution["candidates"]) == 5
 
 
 # ---------------------------------------------------------------------------
