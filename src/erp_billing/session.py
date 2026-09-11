@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 from copy import deepcopy
 import re
 from dataclasses import replace
@@ -20,14 +21,15 @@ from .ports import MatchEvent, MatchEventLogger
 
 
 _SPLIT_RE = re.compile(r"[\n\r,，;；]+")
-_QUANTITY_PATTERN = r"\d+(?:\.\d+)?|[一二两三四五六七八九十百]+"
-_UNIT_PATTERN = r"公斤|千克|毫升|kg|ml|斤|克|g|l|L|升|吨|t|瓶|件|箱|袋|个|颗|根|把|盒|包|只|份|条|听|提|板|盘|筐|桶|卷|打|扎"
+_QUANTITY_PATTERN = r"-?\d+(?:\.\d+)?|[一二两三四五六七八九十百千万]+"
+_UNIT_PATTERN = r"公斤|千克|毫升|本|张|束|kg|ml|斤|克|g|l|L|升|吨|t|瓶|件|箱|袋|个|颗|根|把|盒|包|只|份|条|听|提|板|盘|筐|桶|卷|打|扎"
 _EACH_RE = re.compile(
     rf"^(?P<left>.+?)和(?P<right>.+?)各\s*"
     rf"(?P<qty>{_QUANTITY_PATTERN})\s*(?P<unit>[^\d\s]+)?$",
 )
+_REQUEST_PREFIX_PATTERN = r"(?:请\s*)?(?:给我\s*)?(?:(?:我要买|我想买|销售|来|要|买|加|拿)\s*)?"
 _QUANTITY_FIRST_RE = re.compile(
-    rf"^(?:请\s*)?(?:给我\s*)?(?:(?:来|要|买|加|拿)\s*)?"
+    rf"^{_REQUEST_PREFIX_PATTERN}"
     rf"(?P<qty>{_QUANTITY_PATTERN})\s*"
     rf"(?P<unit>{_UNIT_PATTERN})\s*(?P<name>.+)$",
 )
@@ -35,16 +37,13 @@ _LINE_RE = re.compile(
     rf"^(?P<name>.+?)(?P<qty>{_QUANTITY_PATTERN})\s*"
     rf"(?P<unit>{_UNIT_PATTERN})?$",
 )
-# 未知单位兜底：ERP 单位是租户自定义的（如"本""张""束"），不在内置单位表时
-# 行尾单位无法归组，整行会静默回退为数量 1（"书本2本"→数量 1）。
-# 放宽为"名称+数量+非数字后缀"保证数量正确；单位与 ERP 不一致时
-# 仍由 preview 的 unit_warnings 提示用户确认。
+# 名称在前时保留 ERP 自定义单位；单位差异由预览要求用户确认。
 _LINE_ANY_UNIT_RE = re.compile(
     rf"^(?P<name>.+?)(?P<qty>{_QUANTITY_PATTERN})\s*"
     rf"(?P<unit>[^\d\s]+)$",
 )
 _REQUEST_PREFIX_RE = re.compile(
-    r"^(?:请\s*)?(?:给我\s*)?(?:(?:来|要|买|加|拿)\s*)?",
+    rf"^{_REQUEST_PREFIX_PATTERN}",
 )
 _CHINESE_NUMBERS = {
     "一": 1,
@@ -60,15 +59,9 @@ _CHINESE_NUMBERS = {
     "十": 10,
 }
 
-# "各"模式（无"和"连接词）：苹果荔枝各5斤 → ["苹果","荔枝"] 各5斤
-_EACH_LIST_RE = re.compile(
-    rf"^(?P<names>.+?)各\s*"
-    rf"(?P<qty>{_QUANTITY_PATTERN})\s*(?P<unit>[^\d\s]+)?$",
-)
-
 # 动词前缀检测：仅含前缀时跳过空格分割（保护"来5斤 洋芋"等数量前置模式）
 _VERB_PREFIX_ONLY_RE = re.compile(
-    r"^(?:请\s*)?(?:给我\s*)?(?:(?:来|要|买|加|拿)\s*)?$",
+    rf"^{_REQUEST_PREFIX_PATTERN}$",
 )
 
 # 数字+单位+空格：鸡蛋21个 牛肉10斤 → 在"21个 "后插入换行
@@ -112,6 +105,7 @@ class ErpBillingSession:
         self._prepared_sales_orders: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
         self.submission_lock = asyncio.Lock()
         self._uncertain_previews: set[str] = set()
+        self._reference_options: dict[tuple[str, str], dict[str, Any]] = {}
         self._submission_results: dict[str, dict[str, Any]] = {}
 
     @classmethod
@@ -380,6 +374,18 @@ class ErpBillingSession:
         self._matcher = ProductMatcher(self._local_catalog, self.settings)
         self._matcher_catalog = self._local_catalog
 
+    def remember_references(self, kind: str, options: tuple[dict[str, Any], ...]) -> None:
+        """保存最近返回的资料 ID，供同会话消歧选择；不按名称缓存身份。"""
+        for option in options:
+            identifier = str(option.get("id") or "")
+            if identifier:
+                self._reference_options[(kind, identifier)] = deepcopy(option)
+        while len(self._reference_options) > 200:
+            self._reference_options.pop(next(iter(self._reference_options)))
+
+    def reference_by_id(self, kind: str, identifier: str) -> dict[str, Any] | None:
+        return deepcopy(self._reference_options.get((kind, identifier)))
+
     def store_prepared_sales_order(
         self,
         payload: dict[str, Any],
@@ -446,7 +452,7 @@ class ErpBillingSession:
 
     @staticmethod
     def _error(exc: DomainError) -> dict[str, Any]:
-        return {"ok": False, "error": {"code": exc.code, "message": exc.message}}
+        return {"ok": False, "error": exc.as_dict()}
 
 
 def parse_order_text(text: str) -> list[OrderLine]:
@@ -520,19 +526,8 @@ def _parse_part(raw: str) -> list[OrderLine]:
                 unit,
             ),
         ]
-    each_list = _EACH_LIST_RE.match(raw)
-    if each_list:
-        quantity = _parse_quantity(each_list.group("qty"))
-        unit = (each_list.group("unit") or "").strip()
-        names_str = re.sub(r"\s+", "", each_list.group("names"))
-        if len(names_str) >= 4 and len(names_str) % 2 == 0:
-            names = [names_str[i : i + 2] for i in range(0, len(names_str), 2)]
-        else:
-            names = [names_str]
-        return [
-            OrderLine(0, raw, _clean_requested_name(name), quantity, unit)
-            for name in names
-        ]
+    if "各" in raw:
+        raise DomainError("erp_order_text_invalid", "多个商品请用“和”连接，或分行提供商品、数量和单位")
     quantity_first = _QUANTITY_FIRST_RE.match(raw)
     if quantity_first:
         return [
@@ -566,7 +561,7 @@ def _parse_part(raw: str) -> list[OrderLine]:
                 any_unit.group("unit").strip(),
             ),
         ]
-    return [OrderLine(0, raw, _clean_requested_name(raw), 1, "")]
+    raise DomainError("erp_order_text_invalid", "无法确定商品和数量，请按“商品名+数量+单位”分行提供：" + raw)
 
 
 def _clean_requested_name(value: str) -> str:
@@ -576,17 +571,20 @@ def _clean_requested_name(value: str) -> str:
 
 
 def _parse_quantity(value: str) -> float:
-    if re.fullmatch(r"\d+(?:\.\d+)?", value):
-        return float(value)
-    if value in _CHINESE_NUMBERS:
-        return float(_CHINESE_NUMBERS[value])
-    if value.startswith("十") and len(value) == 2:
-        return float(10 + _CHINESE_NUMBERS.get(value[1], 0))
-    if value.endswith("十") and len(value) == 2:
-        return float(_CHINESE_NUMBERS.get(value[0], 0) * 10)
-    if "十" in value and len(value) == 3:
-        return float(
-            _CHINESE_NUMBERS.get(value[0], 0) * 10
-            + _CHINESE_NUMBERS.get(value[2], 0),
-        )
-    return 1.0
+    """数量必须明确有效；中文整数按位解析，不用 1 掩盖失败。"""
+    if re.fullmatch(r"-?\d+(?:\.\d+)?", value):
+        quantity = float(value)
+    elif re.fullmatch(r"(?:[一二两三四五六七八九]千)?(?:[一二两三四五六七八九]百)?(?:[一二两三四五六七八九]?十)?[一二两三四五六七八九]?", value) and value:
+        total = digit = 0
+        for char in value:
+            if char in "十百千":
+                total += (digit or 1) * {"十": 10, "百": 100, "千": 1000}[char]
+                digit = 0
+            else:
+                digit = _CHINESE_NUMBERS[char]
+        quantity = float(total + digit)
+    else:
+        raise DomainError("erp_order_quantity_invalid", "无法识别数量，请使用阿拉伯数字")
+    if not math.isfinite(quantity) or quantity <= 0:
+        raise DomainError("erp_order_quantity_invalid", "数量必须为正有限数")
+    return quantity

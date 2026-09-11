@@ -45,6 +45,59 @@ from .ports import (
 logger = logging.getLogger(__name__)
 
 
+def _response_details(data: dict) -> dict:
+    """保留业务错误码与追踪标识，不回传响应正文和鉴权信息。"""
+    return {
+        target: str(data[source])
+        for source, target in (("code", "upstream_code"), ("traceId", "trace_id"))
+        if isinstance(data.get(source), (str, int)) and str(data[source])
+    }
+
+
+def _merge_sales_order_update(current: dict, changes: dict) -> dict:
+    """严格按 SalesOrderUpdateDTO 合并，保留金额、多单位和明细行身份。"""
+    status = current.get("status")
+    if status == 3:
+        raise DomainError("erp_sales_order_state_invalid", "已作废销售单不能修改")
+    if status == 2:
+        immutable = {"customerId": "客户", "warehouseId": "仓库",
+                     "discountAmount": "优惠金额", "discountAccountId": "优惠账户"}
+        for field, label in immutable.items():
+            if field not in changes:
+                continue
+            unchanged = (
+                changes[field] == current.get(field)
+                if field == "discountAmount"
+                else str(changes[field]) == str(current.get(field))
+            )
+            if not unchanged:
+                raise DomainError("erp_sales_order_field_locked", "已生效销售单不能修改" + label)
+        if "items" in changes and any(not item.get("orderItemId") for item in changes["items"]):
+            raise DomainError("erp_sales_order_item_id_required", "编辑已生效明细必须提供 order_item_id")
+    fields = ("orderDate", "customerId", "warehouseId", "handlerId",
+              "discountAmount", "discountAccountId", "remark")
+    payload = {key: current[key] for key in fields if current.get(key) is not None}
+    if "items" not in changes:
+        rows = current.get("items")
+        if not isinstance(rows, list) or not rows:
+            raise DomainError("erp_live_response_invalid", "ERP 详情缺少商品明细，无法保留原单据")
+        item_fields = ("productId", "unitId", "unit", "conversionRate", "quantity", "unitPrice", "remark")
+        payload["items"] = []
+        for row in rows:
+            if not isinstance(row, dict) or not row.get("productId") or row.get("quantity") is None:
+                raise DomainError("erp_live_response_invalid", "ERP 详情商品明细不完整")
+            item = {key: row[key] for key in item_fields if row.get(key) is not None}
+            if row.get("id"):
+                item["orderItemId"] = row["id"]
+            payload["items"].append(item)
+    payload.update(changes)
+    if not payload.get("orderDate") or not payload.get("handlerId"):
+        raise DomainError("erp_live_response_invalid", "ERP 详情缺少日期或经手人，无法完成修改")
+    if payload.get("saveType", 0) not in {0, 2}:
+        raise DomainError("erp_sales_order_save_type_invalid", "修改单据只支持保持状态或转正式过账")
+    return payload
+
+
 class ErpAuthenticatedHttpAdapter:
     """通过服务端已鉴权 HTTP 执行器访问云创业版商品分页 API。"""
 
@@ -101,11 +154,12 @@ class ErpAuthenticatedHttpAdapter:
     def _ensure_success(data: dict) -> dict:
         code = str(data.get("code") or "")
         if code == "A10006":
-            raise DomainError("business_reauth_required", "当前业务系统授权已失效")
+            raise DomainError("business_reauth_required", "当前业务系统授权已失效", details=_response_details(data))
         if code != "A00000":
             raise DomainError(
                 "erp_live_request_failed",
                 str(data.get("message") or "ERP 接口失败"),
+                details=_response_details(data),
             )
         return data
 
@@ -432,7 +486,10 @@ class ErpAuthenticatedHttpAdapter:
         payload: dict[str, object],
     ) -> BillingSalesOrderResult:
         resolved = await self._resolve_order_id(context, order_id)
-        payload = dict(payload)
+        # ERP 是完整 PUT 契约；局部修改在此映射为最新详情的完整请求。
+        # 上游无版本条件，GET/PUT 之间的外部并发仍需 ERP 原子更新支持。
+        current = (await self.get_sales_order_detail(context, resolved)).order
+        payload = _merge_sales_order_update(current, payload)
         payload["id"] = int(resolved)
         data = await self._put(
             context,
@@ -542,13 +599,24 @@ class BusinessAuthenticatedJsonClient:
             response.raise_for_status()
             body = response.text
         except httpx.HTTPStatusError as exc:
-            if exc.response.status_code in {401, 403}:
-                raise DomainError("business_reauth_required", "当前业务系统授权已失效") from exc
+            try:
+                error_body = exc.response.json()
+            except ValueError:
+                error_body = {}
+            if not isinstance(error_body, dict):
+                error_body = {}
+            details = _response_details(error_body)
+            details["http_status"] = exc.response.status_code
+            if exc.response.status_code == 401:
+                raise DomainError("business_reauth_required", "当前业务系统授权已失效", details=details) from exc
+            if exc.response.status_code == 403:
+                raise DomainError("business_forbidden", "当前账号无权执行该操作", details=details) from exc
             raise DomainError(
                 "business_write_result_unknown"
                 if method != "GET" and exc.response.status_code >= 500
                 else "erp_live_request_failed",
-                "ERP 接口返回 HTTP %s" % exc.response.status_code,
+                str(error_body.get("message") or "ERP 接口返回 HTTP %s" % exc.response.status_code),
+                details=details,
             ) from exc
         except httpx.TransportError as exc:
             code = "business_upstream_unavailable" if method == "GET" else "business_write_result_unknown"

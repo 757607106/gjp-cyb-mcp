@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import math
-import re
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any
@@ -145,6 +145,8 @@ _SEARCH_BILLING_REFERENCES_OUTPUT_SCHEMA = {
             "items": {
                 "type": "object",
                 "properties": {
+                    "id": {"type": "string"},
+                    "code": {"type": "string"},
                     "name": {"type": "string"},
                     "is_default": {"type": "boolean"},
                 },
@@ -318,6 +320,20 @@ _PREVIEW_SALES_ORDER_INPUT_SCHEMA = {
                 "required": ["line_id", "product_id"],
             },
         },
+        "confirmed_units": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "line_id": {"type": "string"},
+                    "product_id": {"type": "string"},
+                    "unit": {"type": "string"},
+                    "quantity": {"type": "number", "minimum": 0.0001},
+                },
+                "required": ["line_id", "product_id", "unit", "quantity"],
+                "additionalProperties": False,
+            },
+        },
         "partial": {"type": "boolean", "default": False},
     },
 }
@@ -359,6 +375,8 @@ _UPDATE_SALES_ORDER_INPUT_SCHEMA = {
                     "product_id": {"type": "string"},
                     "quantity": {"type": "number"},
                     "unit": {"type": "string"},
+                    "unit_id": {"type": "string"},
+                    "conversion_rate": {"type": "number", "exclusiveMinimum": 0},
                     "unit_price": {"type": "number"},
                     "order_item_id": {"type": "string"},
                     "remark": {"type": "string"},
@@ -376,8 +394,7 @@ _UPDATE_SALES_ORDER_INPUT_SCHEMA = {
         },
         "save_type": {
             "type": "string",
-            "enum": ["draft", "pre_receipt", "final"],
-            "default": "draft",
+            "enum": ["draft", "final"],
         },
         "remark": {"type": "string"},
         "discount_amount": {"type": "number"},
@@ -386,7 +403,7 @@ _UPDATE_SALES_ORDER_INPUT_SCHEMA = {
         "receipt_account_id": {"type": "string"},
         "confirmed_by_user": {"type": "boolean", "default": False},
     },
-    "required": ["order_id", "order_date", "handler_id", "items"],
+    "required": ["order_id"],
 }
 
 
@@ -407,6 +424,10 @@ class BillingToolSet(AgentScopeToolSet):
                     self.sync_products,
                     is_concurrency_safe=False,
                     output_schema=_SYNC_PRODUCTS_OUTPUT_SCHEMA,
+                    input_schema_override={
+                        "type": "object",
+                        "properties": {"limit": {"type": ["integer", "null"], "minimum": 1}},
+                    },
                 ),
                 SessionFunctionTool(
                     self.list_products,
@@ -415,7 +436,7 @@ class BillingToolSet(AgentScopeToolSet):
                     input_schema_override=_LIST_PRODUCTS_INPUT_SCHEMA,
                 ),
                 SessionFunctionTool(
-                    session.search_products,
+                    self.search_products,
                     is_read_only=True,
                     output_schema=_SEARCH_PRODUCTS_OUTPUT_SCHEMA,
                 ),
@@ -465,6 +486,16 @@ class BillingToolSet(AgentScopeToolSet):
             mcp_tool_names=BILLING_MCP_TOOL_NAMES,
         )
 
+    async def search_products(self, keywords: list[str], limit: int = 10) -> dict[str, Any]:
+        """按名称、编号或条码搜索商品，目录为空或过期时自动加载或刷新。"""
+        try:
+            context = self._contexts.get()
+            context.require_scope("billing:read")
+            await self.session.ensure_catalog(self._catalog_loader(context))
+            return self.session.search_products(keywords, limit)
+        except DomainError as exc:
+            return self.error_response(exc)
+
     async def sync_products(self, limit: int | None = None) -> dict[str, Any]:
         """同步当前租户的商品目录到内存缓存。
 
@@ -477,6 +508,8 @@ class BillingToolSet(AgentScopeToolSet):
         try:
             context = self._contexts.get()
             context.require_scope("billing:read")
+            if limit is not None and (type(limit) is not int or limit <= 0):
+                raise DomainError("erp_product_limit_invalid", "limit 必须为正整数或 null")
             loader = self._catalog_loader(context, limit)
             if limit is None:
                 synced_at = await self.session.sync_catalog(loader)
@@ -624,14 +657,15 @@ class BillingToolSet(AgentScopeToolSet):
         source: str = "text",
         confirmed_products: list[dict[str, str]] | None = None,
         partial: bool = False,
+        confirmed_units: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """校验完整销售单信息、匹配真实资料并生成不可变提交预览。
 
         Args:
             order_text: 完整商品文本，必须包含商品和数量；多轮修改后传完整内容。
-            customer: 必填，客户名称或编号。
-            warehouse: 必填，出库仓库名称或编号。
-            handler: 必填，经手人名称或编号。
+            customer: 必填，客户名称、编号或候选返回的 ID。
+            warehouse: 必填，出库仓库名称、编号或候选返回的 ID。
+            handler: 必填，经手人名称、编号或候选返回的 ID。
             order_date: 必填，录单日期，格式 YYYY-MM-DD。
             remark: 可选的整单备注，最多 200 个字符。
             save_type: 保存类型；draft 草稿、pre_receipt 预收、final 正式。
@@ -641,6 +675,8 @@ class BillingToolSet(AgentScopeToolSet):
                 line_id 取自 recommended_products 或 unmatched_products
                 的 line_id 字段，product_id 取自 product_id 字段；
                 对 unmatched_products 中无候选的行同样有效。
+            confirmed_units: 用户按 ERP 单位确认后的行数据，含 line_id、
+                product_id、unit、quantity；保留原 order_text，不猜测换算。
             partial: 为 true 时只提交已匹配商品，跳过未匹配行；
                 用于部分开单场景。
         """
@@ -671,6 +707,7 @@ class BillingToolSet(AgentScopeToolSet):
                 source,
                 confirmed_products,
             )
+            self._apply_confirmed_units(draft, confirmed_units)
             product_payload = (
                 draft.billing_products_payload()
                 if draft is not None
@@ -686,7 +723,7 @@ class BillingToolSet(AgentScopeToolSet):
                 "warehouse": await self._resolve_reference("warehouse", values["warehouse"]),
                 "handler": await self._resolve_reference("handler", values["handler"]),
             }
-            # 对外解析结果隐藏内部 ID；内部原始结果继续供预览构建使用
+            # 候选保留机器可用 ID；用户界面由 Agent 隐藏内部标识
             public_reference_resolutions = {
                 field: {
                     "status": resolution["status"],
@@ -763,8 +800,8 @@ class BillingToolSet(AgentScopeToolSet):
     async def submit_sales_order(
         self,
         preview_id: str,
-        idempotency_key: str,
-        confirmed_by_user: bool,
+        idempotency_key: str | None = None,
+        confirmed_by_user: bool = False,
     ) -> dict[str, Any]:
         """用户明确确认预览后，把销售单写入真实 ERP。
 
@@ -773,7 +810,7 @@ class BillingToolSet(AgentScopeToolSet):
 
         Args:
             preview_id: preview_sales_order 返回的预览 ID；提交成功后失效。
-            idempotency_key: 调用方为本次提交生成的唯一业务键，重试必须复用。
+            idempotency_key: 可省略，默认使用 preview_id；显式指定时重试必须复用。
             confirmed_by_user: 仅在用户明确确认该预览后传 true。
         """
         async with self.session.submission_lock:
@@ -785,7 +822,7 @@ class BillingToolSet(AgentScopeToolSet):
                         "erp_sales_order_confirmation_required",
                         "必须先向用户展示销售单预览并取得明确确认",
                     )
-                key = idempotency_key.strip()
+                key = preview_id.strip() if idempotency_key is None else idempotency_key.strip()
                 if not key or len(key) > 128:
                     raise DomainError(
                         "erp_sales_order_idempotency_key_invalid",
@@ -819,6 +856,7 @@ class BillingToolSet(AgentScopeToolSet):
                         raise DomainError(
                             "erp_sales_order_result_unknown",
                             "销售单提交结果未知，请先查询 ERP 核对，勿直接重复开单",
+                            details=exc.details,
                         ) from exc
                     raise
                 cached_result = {
@@ -853,6 +891,8 @@ class BillingToolSet(AgentScopeToolSet):
         try:
             context = self._contexts.get()
             context.require_scope("billing:read")
+            if not order_id.strip():
+                raise DomainError("erp_sales_order_id_invalid", "销售单 ID 不能为空")
             result = await self._api.get_sales_order_detail(
                 context,
                 order_id.strip(),
@@ -961,13 +1001,13 @@ class BillingToolSet(AgentScopeToolSet):
     async def update_sales_order(
         self,
         order_id: str,
-        order_date: str,
-        handler_id: str,
-        items: list[dict[str, Any]],
+        order_date: str | None = None,
+        handler_id: str | None = None,
+        items: list[dict[str, Any]] | None = None,
         customer_id: str = "",
         warehouse_id: str = "",
-        save_type: str = "draft",
-        remark: str = "",
+        save_type: str | None = None,
+        remark: str | None = None,
         discount_amount: float | None = None,
         discount_account_id: str = "",
         receipt_amount: float | None = None,
@@ -976,7 +1016,8 @@ class BillingToolSet(AgentScopeToolSet):
     ) -> dict[str, Any]:
         """修改已存在的销售单；只有用户明确确认后才能执行。
 
-        建议先调用 get_sales_order 获取当前数据，再做修改。
+        仅传需要修改的字段；省略字段由适配器保留 ERP 当前值。
+        items 传入时替换完整明细；remark 传空字符串表示清空。
         已生效单据的客户和出库仓库不可修改。成功后返回业务单号 order_no。
 
         Args:
@@ -989,7 +1030,7 @@ class BillingToolSet(AgentScopeToolSet):
                 quantity（必填）、unit、unit_price、order_item_id、remark 等。
             customer_id: 客户内部 ID 或名称（已生效状态不可修改）。
             warehouse_id: 出库仓库内部 ID 或名称（已生效状态不可修改）。
-            save_type: 保存类型；draft 保持草稿/预收、pre_receipt 预收、final 转为正式过账。
+            save_type: 保存类型；draft 保持草稿/预收、final 转为正式过账；省略保持状态。
             remark: 备注。
             discount_amount: 优惠金额（已生效状态不可修改）。
             discount_account_id: 优惠账户 ID（已生效状态不可修改）。
@@ -1011,40 +1052,30 @@ class BillingToolSet(AgentScopeToolSet):
                     "erp_sales_order_id_invalid",
                     "销售单 ID 不能为空",
                 )
-            clean_date = order_date.strip()
-            if not clean_date:
-                raise DomainError(
-                    "erp_sales_order_date_invalid",
-                    "录单日期不能为空",
-                )
-            self._validate_order_date(clean_date)
-            clean_handler = handler_id.strip()
-            if not clean_handler:
-                raise DomainError(
-                    "erp_sales_order_handler_required",
-                    "经办人不能为空，可传内部 ID 或名称",
-                )
-            if len(remark.strip()) > 200:
-                raise DomainError(
-                    "erp_sales_order_remark_too_long",
-                    "备注最多 200 个字符",
-                )
-            if save_type not in _SAVE_TYPE_CODES:
-                raise DomainError(
-                    "erp_sales_order_save_type_invalid",
-                    "save_type 必须是 draft、pre_receipt 或 final",
-                )
-            order_items = self._build_modify_items(items)
             payload: dict[str, Any] = {
                 "id": int(target_id) if target_id.isdigit() else target_id,
-                "orderDate": clean_date,
-                "handlerId": await self._resolve_update_reference(
-                    "handler", clean_handler, "经手人",
-                ),
-                "items": order_items,
-                "remark": remark.strip(),
-                "saveType": _SAVE_TYPE_CODES[save_type],
             }
+            if order_date is not None:
+                if not order_date.strip():
+                    raise DomainError("erp_sales_order_date_invalid", "录单日期不能为空")
+                self._validate_order_date(order_date.strip())
+                payload["orderDate"] = order_date.strip()
+            if handler_id is not None:
+                if not handler_id.strip():
+                    raise DomainError("erp_sales_order_handler_required", "经办人不能为空")
+                payload["handlerId"] = await self._resolve_update_reference(
+                    "handler", handler_id.strip(), "经手人",
+                )
+            if remark is not None:
+                if len(remark.strip()) > 200:
+                    raise DomainError("erp_sales_order_remark_too_long", "备注最多 200 个字符")
+                payload["remark"] = remark.strip()
+            if save_type is not None:
+                if save_type not in {"draft", "final"}:
+                    raise DomainError("erp_sales_order_save_type_invalid", "修改单据 save_type 只支持 draft、final")
+                payload["saveType"] = _SAVE_TYPE_CODES[save_type]
+            if items is not None:
+                payload["items"] = self._build_modify_items(items)
             clean_customer = customer_id.strip()
             if clean_customer:
                 payload["customerId"] = await self._resolve_update_reference(
@@ -1063,6 +1094,8 @@ class BillingToolSet(AgentScopeToolSet):
                 payload["receiptAmount"] = _non_negative_amount(receipt_amount, "收款金额")
             if receipt_account_id.strip():
                 payload["receiptAccountId"] = receipt_account_id.strip()
+            if len(payload) == 1:
+                raise DomainError("erp_sales_order_update_empty", "请提供需要修改的字段")
             result = await self._api.update_sales_order(context, target_id, payload)
             order_no = await self._lookup_order_no(result.order_id)
             return self.ok_response(
@@ -1076,8 +1109,10 @@ class BillingToolSet(AgentScopeToolSet):
     def _public_reference_option(
         option: dict[str, Any],
     ) -> dict[str, Any]:
-        """基础资料候选对外仅保留展示和推荐所需字段。"""
+        """基础资料候选保留唯一身份，供选择后准确回传。"""
         return {
+            "id": str(option.get("id") or ""),
+            "code": str(option.get("code") or ""),
             "name": str(option.get("name") or ""),
             "is_default": bool(
                 option.get("is_default") or option.get("isDefault"),
@@ -1138,16 +1173,16 @@ class BillingToolSet(AgentScopeToolSet):
         page: int = 1,
     ) -> BillingReferenceSnapshot:
         context = self._contexts.get()
-        if reference_type == "customer":
-            return await self._api.search_customers(context, keyword, limit, page)
-        if reference_type == "warehouse":
-            return await self._api.search_warehouses(context, keyword, limit, page)
-        if reference_type == "handler":
-            return await self._api.search_staff(context, keyword, limit, page)
-        raise DomainError(
-            "erp_reference_type_invalid",
-            "reference_type 必须是 customer、warehouse 或 handler",
-        )
+        methods = {
+            "customer": "search_customers",
+            "warehouse": "search_warehouses",
+            "handler": "search_staff",
+        }
+        if reference_type not in methods:
+            raise DomainError("erp_reference_type_invalid", "reference_type 必须是 customer、warehouse 或 handler")
+        snapshot = await getattr(self._api, methods[reference_type])(context, keyword, limit, page)
+        self.session.remember_references(reference_type, snapshot.options)
+        return snapshot
 
     async def _resolve_reference(self, reference_type: str, value: str) -> dict[str, Any]:
         if not value:
@@ -1157,9 +1192,13 @@ class BillingToolSet(AgentScopeToolSet):
                 "selected": None,
                 "candidates": [],
             }
+        known = self.session.reference_by_id(reference_type, value)
+        if known is not None:
+            return {"status": "matched", "query": value, "selected": known, "candidates": []}
         # 解析时多取一些结果保证精确项不因展示上限被截断，最终候选仍收敛为 5 个。
         options = list((await self._search_reference(reference_type, value, 10)).options)
         normalized = normalize_name(value)
+        options = self._deduplicate_reference_options(options, value)
         exact = [
             option
             for option in options
@@ -1177,9 +1216,9 @@ class BillingToolSet(AgentScopeToolSet):
                 "selected": exact[0],
                 "candidates": [],
             }
-        # 无唯一精确匹配时，对同主体多业务类型候选去重，最多返回 5 个
+        # 无唯一精确匹配时最多展示 5 个，保留每个不同 ID 的实体
         if options:
-            options = self._deduplicate_reference_options(options, value)
+            options = options[:5]
         status = "ambiguous" if options else "unmatched"
         return {
             "status": status,
@@ -1200,7 +1239,7 @@ class BillingToolSet(AgentScopeToolSet):
         其余按名称或编号解析，未唯一匹配时抛出结构化错误，由模型
         引导用户提供更准确的名称，而不是把错误标识写入 ERP。
         """
-        if value.isdigit():
+        if value.isdigit() or self.session.reference_by_id(reference_type, value) is not None:
             return value
         resolution = await self._resolve_reference(reference_type, value)
         if resolution["status"] == "matched" and resolution["selected"] is not None:
@@ -1227,28 +1266,16 @@ class BillingToolSet(AgentScopeToolSet):
         options: list[dict[str, Any]],
         query: str,
     ) -> list[dict[str, Any]]:
-        """按基础名称去重并按匹配质量排序，最多返回 5 个。
-
-        ERP 常为同一客户/经手人返回多业务类型变体（COVR/SALE/PURC 等），
-        名称仅在尾部后缀不同；按第一个分隔符前的名称去重后大幅减少候选数。
-        """
-        sorted_options = sorted(
-            options,
-            key=lambda option: cls._reference_sort_key(option, query),
-        )
+        """仅合并相同 ID 的重复记录，不猜测名称相似的实体相同。"""
         seen: set[str] = set()
         deduped: list[dict[str, Any]] = []
-        for option in sorted_options:
-            name = str(option.get("name") or "")
-            base = re.split(r"[-\u2012-\u2015]|\(|\uff08|\u3010", name, maxsplit=1)[0].strip()
-            base_key = (
-                normalize_name(base) if base else normalize_name(name)
-            )
-            if not base_key or base_key in seen:
+        for option in sorted(options, key=lambda item: cls._reference_sort_key(item, query)):
+            identifier = str(option.get("id") or "")
+            if not identifier or identifier in seen:
                 continue
-            seen.add(base_key)
+            seen.add(identifier)
             deduped.append(option)
-        return deduped[:5]
+        return deduped
 
     async def _match_order_products(
         self,
@@ -1398,6 +1425,8 @@ class BillingToolSet(AgentScopeToolSet):
             field_map = {
                 "unit": "unit",
                 "unitPrice": "unit_price",
+                "unitId": "unit_id",
+                "conversionRate": "conversion_rate",
                 "remark": "remark",
                 "orderItemId": "order_item_id",
             }
@@ -1406,11 +1435,49 @@ class BillingToolSet(AgentScopeToolSet):
                 if value is None:
                     value = raw.get(camel_key)
                 if value not in (None, ""):
+                    if camel_key == "conversionRate":
+                        value = _non_negative_amount(value, "换算率")
+                        if value <= 0:
+                            raise DomainError("erp_sales_order_item_invalid", "换算率必须大于 0")
                     if camel_key == "unitPrice":
                         value = _non_negative_amount(value, "单价")
                     item[camel_key] = value
             result.append(item)
         return result
+
+    @staticmethod
+    def _apply_confirmed_units(
+        draft: BillingDraft | None,
+        confirmations: list[dict[str, Any]] | None,
+    ) -> None:
+        """按行绑定商品、单位和数量，拒绝错行确认及隐式单位换算。"""
+        if confirmations is None:
+            return
+        if not isinstance(confirmations, list):
+            raise DomainError("erp_unit_confirmation_invalid", "confirmed_units 必须是数组")
+        lines = {line.order_line.line_id: line for line in draft.lines} if draft else {}
+        seen: set[str] = set()
+        for entry in confirmations:
+            if not isinstance(entry, dict):
+                raise DomainError("erp_unit_confirmation_invalid", "单位确认必须是对象")
+            line_id = entry.get("line_id")
+            if not isinstance(line_id, str) or line_id in seen or line_id not in lines:
+                raise DomainError("erp_unit_confirmation_invalid", "单位确认行不存在或重复")
+            seen.add(line_id)
+            line = lines[line_id]
+            if (line.product is None or line.status != "matched"
+                    or entry.get("product_id") != line.product.product_id
+                    or not line.product.unit
+                    or not isinstance(entry.get("unit"), str)
+                    or _normalized_unit(entry["unit"]) != _normalized_unit(line.product.unit)):
+                raise DomainError("erp_unit_confirmation_invalid", "请使用该行已匹配商品的 ERP 单位确认")
+            quantity = entry.get("quantity")
+            if (isinstance(quantity, bool) or not isinstance(quantity, (int, float))
+                    or not math.isfinite(quantity) or quantity < 0.0001):
+                raise DomainError("erp_unit_confirmation_invalid", "确认数量必须为不小于 0.0001 的有限数")
+            line.order_line = replace(
+                line.order_line, quantity=float(quantity), unit=line.product.unit,
+            )
 
     @staticmethod
     def _unit_warnings(draft: BillingDraft | None) -> list[dict[str, Any]]:
@@ -1427,9 +1494,11 @@ class BillingToolSet(AgentScopeToolSet):
                     {
                         "line_id": line.order_line.line_id,
                         "product": line.product.name,
+                        "product_id": line.product.product_id,
+                        "requested_quantity": line.order_line.quantity,
                         "requested_unit": line.order_line.unit,
                         "erp_unit": line.product.unit,
-                        "prompt": "请按 ERP 商品单位重新确认数量，工具不会猜测单位换算。",
+                        "prompt": "请按 ERP 单位确认数量，并通过 confirmed_units 回传；保留原 order_text，工具不会猜测换算。",
                     },
                 )
         return warnings

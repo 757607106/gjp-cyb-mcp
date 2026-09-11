@@ -83,4 +83,4 @@ class AgentScopeToolSet:
     @staticmethod
     def error_response(error: DomainError) -> dict[str, Any]:
         """构造工具错误响应。"""
-        return {"ok": False, "error": {"code": error.code, "message": error.message}}
+        return {"ok": False, "error": error.as_dict()}
