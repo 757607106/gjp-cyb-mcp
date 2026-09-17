@@ -8,8 +8,8 @@
 #   ./scripts/deploy.sh                # 部署 main 分支（默认，测试环境语义）
 #   BRANCH=test ./scripts/deploy.sh    # 部署 test 分支
 #   GJP_ENV=production ./scripts/deploy.sh   # 部署生产环境（见下方说明）
-#   APP_MODULE=erp_billing.workbuddy_app:app SERVICE_NAME=erp-billing-workbuddy-mcp \
-#     PORT=8103 GJP_ENV=production ./scripts/deploy.sh  # 部署 WorkBuddy 入口
+#   ./scripts/deploy-workbuddy.sh      # WorkBuddy main（专用入口）
+#   BRANCH=test ./scripts/deploy-workbuddy.sh  # WorkBuddy test
 #   ./scripts/deploy.sh --debug        # DEBUG 模式（仅 nohup 方式生效）
 #   ./scripts/deploy.sh --debug-dump   # DEBUG + 完整 token 转储
 #
