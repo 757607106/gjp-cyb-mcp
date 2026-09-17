@@ -91,26 +91,6 @@ class McpToolSetResolver(Protocol):
         ...
 
 
-class StaticIdentityResolver:
-    """仅用于受信任的本地 STDIO 或测试，不用于多租户 HTTP 服务。"""
-
-    def __init__(self, context: InvocationContext) -> None:
-        self._context = context
-
-    def resolve(self, _mcp_request_context: Any) -> InvocationContext:
-        return self._context
-
-
-class StaticToolSetResolver:
-    """仅用于单用户 STDIO 或测试，多租户 HTTP 必须提供隔离实现。"""
-
-    def __init__(self, toolset: AgentScopeToolSet) -> None:
-        self._toolset = toolset
-
-    def resolve(self, _context: InvocationContext) -> AgentScopeToolSet:
-        return self._toolset
-
-
 def create_mcp_server(
     name: str,
     schema_toolset: AgentScopeToolSet,

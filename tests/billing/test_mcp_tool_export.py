@@ -19,8 +19,6 @@ from erp_billing.session import ErpBillingSession
 from erp_billing.toolset import BILLING_MCP_TOOL_NAMES, BillingToolSet
 from gjp_common.context import InvocationContext, InvocationContextStore
 from gjp_common.mcp import (
-    StaticIdentityResolver,
-    StaticToolSetResolver,
     _snake_to_camel,
     create_mcp_server,
 )
@@ -39,6 +37,22 @@ _EXPECTED_CAMEL = frozenset(
         "updateSalesOrder",
     }
 )
+
+
+class _StaticIdentityResolver:
+    def __init__(self, context: InvocationContext) -> None:
+        self._context = context
+
+    def resolve(self, _mcp_request_context) -> InvocationContext:
+        return self._context
+
+
+class _StaticToolSetResolver:
+    def __init__(self, toolset: BillingToolSet) -> None:
+        self._toolset = toolset
+
+    def resolve(self, _context: InvocationContext) -> BillingToolSet:
+        return self._toolset
 
 
 def test_billing_mcp_tool_names_all_map_to_camelcase() -> None:
@@ -103,8 +117,8 @@ def test_create_mcp_server_lists_tools_in_camelcase(tmp_path) -> None:
     server = create_mcp_server(
         "erp-billing",
         toolset,
-        StaticIdentityResolver(context),
-        StaticToolSetResolver(toolset),
+        _StaticIdentityResolver(context),
+        _StaticToolSetResolver(toolset),
     )
     handler = server.request_handlers[types.ListToolsRequest]
     result = asyncio.run(handler(None))
