@@ -8,11 +8,14 @@
 #   ./scripts/deploy.sh                # 部署 main 分支（默认，测试环境语义）
 #   BRANCH=test ./scripts/deploy.sh    # 部署 test 分支
 #   GJP_ENV=production ./scripts/deploy.sh   # 部署生产环境（见下方说明）
+#   APP_MODULE=erp_billing.workbuddy_app:app SERVICE_NAME=erp-billing-workbuddy-mcp \
+#     PORT=8103 GJP_ENV=production ./scripts/deploy.sh  # 部署 WorkBuddy 入口
 #   ./scripts/deploy.sh --debug        # DEBUG 模式（仅 nohup 方式生效）
 #   ./scripts/deploy.sh --debug-dump   # DEBUG + 完整 token 转储
 #
 # 环境变量（可选覆盖默认值）：
 #   DEPLOY_DIR              部署目录（默认 /root/gjp-cyb-mcp）
+#   LOG_FILE               日志文件；WorkBuddy 入口默认使用独立日志
 #   GJP_ENV                 运行环境：local（默认，即测试）或 production；
 #                           决定加载 config/local.env 还是 config/production.env，
 #                           以及 Bearer 是否强制 HS256 验签
@@ -21,16 +24,27 @@
 #                           config/production.env，两者都缺失则启动前报错
 #   ERP_BILLING_JWT_SECRET  生产 Bearer 验签密钥（GJP_ENV=production 时必填，
 #                           纯 X-API-Key 部署可省略）
-#   PORT                    服务端口（默认 8102）
+#   APP_MODULE              ASGI 入口（默认 erp_billing.app:app）
+#   SERVICE_NAME            systemd 服务名（legacy 默认 erp-billing-mcp，
+#                           WorkBuddy 默认 erp-billing-workbuddy-mcp）
+#   PORT                    服务端口（legacy 默认 8102，WorkBuddy 默认 8103）
 
 set -euo pipefail
 
 # ===== 可配置项 =====
 DEPLOY_DIR="${DEPLOY_DIR:-/root/gjp-cyb-mcp}"
-LOG_FILE="${LOG_FILE:-/var/log/erp-billing-mcp.log}"
-PORT="${PORT:-8102}"
 BRANCH="${BRANCH:-main}"
-SERVICE_NAME="erp-billing-mcp"
+APP_MODULE="${APP_MODULE:-erp_billing.app:app}"
+if [ "$APP_MODULE" = "erp_billing.workbuddy_app:app" ]; then
+    LOG_FILE="${LOG_FILE:-/var/log/erp-billing-workbuddy-mcp.log}"
+    PORT="${PORT:-8103}"
+    SERVICE_NAME="${SERVICE_NAME:-erp-billing-workbuddy-mcp}"
+else
+    LOG_FILE="${LOG_FILE:-/var/log/erp-billing-mcp.log}"
+    PORT="${PORT:-8102}"
+    SERVICE_NAME="${SERVICE_NAME:-erp-billing-mcp}"
+fi
+PROCESS_PATTERN="uvicorn ${APP_MODULE}"
 GJP_ENV="${GJP_ENV:-local}"
 # ERP 地址默认值仅服务本地（测试）便利；生产禁止脚本注入默认域名，
 # 避免 export 覆盖 config/production.env 里的真实生产地址
@@ -78,11 +92,11 @@ stop_service() {
         systemctl stop "$SERVICE_NAME"
         info "systemd 服务已停止"
     else
-        pkill -f "uvicorn erp_billing.app" 2>/dev/null || true
+        pkill -f -- "$PROCESS_PATTERN" 2>/dev/null || true
         sleep 1
-        if pgrep -f "uvicorn erp_billing.app" >/dev/null 2>&1; then
+        if pgrep -f -- "$PROCESS_PATTERN" >/dev/null 2>&1; then
             warn "进程仍在运行，强制终止..."
-            pkill -9 -f "uvicorn erp_billing.app" || true
+            pkill -9 -f -- "$PROCESS_PATTERN" || true
             sleep 1
         fi
         info "nohup 进程已停止"
@@ -139,12 +153,12 @@ start_service() {
         # 确保 uv 在 PATH 中
         export PATH="/usr/local/bin:$PATH"
 
-        nohup uv run uvicorn erp_billing.app:app \
+        nohup uv run uvicorn "$APP_MODULE" \
             --host 0.0.0.0 --port "$PORT" \
             >> "$LOG_FILE" 2>&1 &
         sleep 2
         local pid
-        pid=$(pgrep -f "uvicorn erp_billing.app" | head -1)
+        pid=$(pgrep -f -- "$PROCESS_PATTERN" | head -1 || true)
         if [ -n "$pid" ]; then
             info "nohup 服务已启动 PID=$pid"
         else
@@ -161,7 +175,7 @@ verify_service() {
     sleep 1
 
     # 检查进程
-    if pgrep -f "uvicorn erp_billing.app" >/dev/null 2>&1; then
+    if pgrep -f -- "$PROCESS_PATTERN" >/dev/null 2>&1; then
         info "进程运行中 ✓"
     else
         error "进程未运行！"
@@ -184,14 +198,17 @@ verify_service() {
 
     echo ""
     info "===== 部署完成 ====="
-    info "分支=$BRANCH  环境=$GJP_ENV  日志级别=$LOG_LEVEL  端口=$PORT"
+    info "分支=$BRANCH  环境=$GJP_ENV  入口=$APP_MODULE  日志级别=$LOG_LEVEL  端口=$PORT"
     if [ "$LOG_LEVEL" = "DEBUG" ]; then
         info "实时查看日志：tail -f $LOG_FILE"
     fi
     if [ "$GJP_ENV" = "production" ]; then
-        info "生产验证：PID=$(pgrep -f 'uvicorn erp_billing.app' | head -1) 实际生效环境变量："
-        cat "/proc/$(pgrep -f 'uvicorn erp_billing.app' | head -1)/environ" \
-            | tr '\0' '\n' | grep -E 'GJP_ENV|ERP_BILLING_BASE_URL' || true
+        local pid
+        pid=$(pgrep -f -- "$PROCESS_PATTERN" | head -1)
+        info "生产验证：PID=$pid 实际生效环境变量："
+        cat "/proc/$pid/environ" | tr '\0' '\n' \
+            | grep -E '^(GJP_ENV|ERP_BILLING_BASE_URL|WORKBUDDY_PUBLIC_BASE_URL|WORKBUDDY_OAUTH_DB_PATH|WORKBUDDY_CONNECTOR_SOURCE)=' \
+            || true
     fi
 }
 
@@ -201,6 +218,8 @@ info "===== ERP 开单 MCP 服务快速部署 ====="
 info "部署目录：$DEPLOY_DIR"
 info "目标分支：$BRANCH"
 info "运行环境：$GJP_ENV"
+info "ASGI 入口：$APP_MODULE"
+info "服务名称：$SERVICE_NAME"
 info "日志级别：$LOG_LEVEL"
 [ -n "$DUMP_CREDENTIALS" ] && warn "已开启完整 token 转储（仅调试用）"
 echo ""
