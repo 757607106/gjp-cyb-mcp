@@ -17,8 +17,10 @@
 | legacy API Key | `X-API-Key: <key>` | 同一 API Key |
 | WorkBuddy OAuth | WorkBuddy MCP access token | 服务端加密保存的 ERP AI Token |
 
-生产 Bearer 只接受配置密钥验证通过的 HS256 JWT。WorkBuddy MCP token 与 ERP Token
-必须分离，任何入口都不得把凭据加入工具参数或模型消息。
+legacy Bearer 由可信 AI 平台完成前置鉴权，MCP 只解析 `tenantId`、`loginId` 做会话
+隔离并把原 Token 交给 ERP API 最终鉴权；因此 legacy 入口必须通过私网、网关访问
+控制或来源白名单限制，不能作为无访问控制的公网认证端点。WorkBuddy MCP token 与
+ERP Token 必须分离，任何入口都不得把凭据加入工具参数或模型消息。
 
 ## 会话与权限
 
