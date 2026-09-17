@@ -105,6 +105,7 @@ BRANCH=main GJP_ENV=production ./scripts/deploy.sh
 
 脚本会拉取目标分支、同步依赖、重启并检查端口。systemd 部署的运行环境来自 service
 文件及其 `EnvironmentFile`，不会继承执行脚本时临时设置的 shell 变量。
+WorkBuddy 使用 `scripts/deploy-workbuddy.sh`，不要手工重复填写入口、服务名和端口。
 
 ## 验收
 
