@@ -1,0 +1,21 @@
+{
+  "name": "管家婆智能开单（测试连接）",
+  "name_zh": "管家婆智能开单（测试连接）",
+  "name_en": "GJP ERP Billing Test",
+  "description": "Test the ERP billing MCP with an ERP AI Token.",
+  "description_zh": "使用 ERP AI Token 验证商品查询和销售开单 MCP。",
+  "description_en": "Test product queries and ERP billing with an ERP AI Token.",
+  "source": "gjp-erp-billing-token",
+  "type": "mcp",
+  "version": "0.1.0",
+  "auth_mode": "token",
+  "minWorkbuddyVersion": "4.24.0",
+  "examples_zh": [
+    "查询土豆和牛肉",
+    "给客户甲开一张销售单"
+  ],
+  "examples_en": [
+    "Search for potatoes and beef",
+    "Create a sales order for customer A"
+  ]
+}
