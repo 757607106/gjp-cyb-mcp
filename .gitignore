@@ -21,3 +21,6 @@ __pycache__/
 
 # 构建产物
 dist/
+
+# 本地运行状态
+.runtime/
