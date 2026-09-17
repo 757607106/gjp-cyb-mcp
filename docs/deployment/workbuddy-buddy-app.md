@@ -168,7 +168,19 @@ access token 绑定当前 `/mcp` resource，以及 ERP Token 不进入日志、�
 ## 更新与生产切换
 
 代码更新仍走 `test` → 验收 → `main`/tag。systemd 环境来自 `EnvironmentFile`，不会继承
-执行部署脚本时的临时 shell 变量。切换生产前：
+执行部署脚本时的临时 shell 变量。日常更新使用专用一键入口：
+
+```bash
+./scripts/deploy-workbuddy.sh
+BRANCH=test ./scripts/deploy-workbuddy.sh
+```
+
+第一条部署 `main`，第二条部署 `test`。包装脚本只选择 WorkBuddy ASGI 入口；服务会自动
+使用 `erp-billing-workbuddy-mcp` 和 8103，不改变 legacy 部署脚本的默认行为。systemd
+日志继续通过 `journalctl -u erp-billing-workbuddy-mcp` 查看。
+实际连接测试或生产 ERP 仍由 systemd `EnvironmentFile` 决定。
+
+切换生产前：
 
 1. 备份或保留测试 OAuth 数据库，不复用到生产；
 1. 创建生产专用环境文件、数据库路径和 Fernet 密钥；
