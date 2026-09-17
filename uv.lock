@@ -711,6 +711,7 @@ source = { editable = "." }
 dependencies = [
     { name = "agentscope" },
     { name = "cachetools" },
+    { name = "cryptography" },
     { name = "httpx" },
     { name = "mcp" },
     { name = "pydantic" },
@@ -729,6 +730,7 @@ dev = [
 requires-dist = [
     { name = "agentscope", specifier = "==2.0.7" },
     { name = "cachetools", specifier = ">=5,<6" },
+    { name = "cryptography", specifier = ">=44,<51" },
     { name = "httpx", specifier = ">=0.27,<1" },
     { name = "mcp", specifier = ">=1.28,<2" },
     { name = "pydantic", specifier = ">=2.10,<3" },
