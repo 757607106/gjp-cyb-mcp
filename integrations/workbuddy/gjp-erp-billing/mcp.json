@@ -2,7 +2,7 @@
   "mcpServers": {
     "erp-billing": {
       "type": "streamableHttp",
-      "url": "https://test-mcp-server.yuncyb.com/mcp",
+      "url": "https://workbuddy-mcp.yuncyb.com/mcp",
       "timeout": 30000
     }
   }

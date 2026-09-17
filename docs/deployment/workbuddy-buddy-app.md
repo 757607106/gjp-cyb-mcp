@@ -41,7 +41,7 @@ uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_
 ```bash
 export GJP_ENV=production
 export ERP_BILLING_BASE_URL=https://new.yuncyb.com/aicyberp-api
-export WORKBUDDY_PUBLIC_BASE_URL=https://test-mcp-server.yuncyb.com
+export WORKBUDDY_PUBLIC_BASE_URL=https://workbuddy-mcp.yuncyb.com
 export WORKBUDDY_OAUTH_DB_PATH=/var/lib/erp-billing/workbuddy-oauth.db
 export WORKBUDDY_OAUTH_ENCRYPTION_KEY=<Fernet密钥>
 export WORKBUDDY_CONNECTOR_SOURCE=gjp-erp-billing
@@ -50,8 +50,36 @@ export WORKBUDDY_CONNECTOR_SOURCE=gjp-erp-billing
 数据库目录只授予服务账号读写权限。启动独立入口：
 
 ```bash
-uv run uvicorn erp_billing.workbuddy_app:app --host 0.0.0.0 --port 8102
+uv run uvicorn erp_billing.workbuddy_app:app --host 0.0.0.0 --port 8103
 ```
+
+`8103` 与原测试 MCP 使用的 `8102` 分离。为新域名单独配置 Nginx，不能复用前端站点的
+SPA 回退规则：
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name workbuddy-mcp.yuncyb.com;
+
+    ssl_certificate /usr/local/vango/certificate/yuncyb.com.pem;
+    ssl_certificate_key /usr/local/vango/certificate/yuncyb.com.key;
+
+    location / {
+        proxy_pass http://127.0.0.1:8103;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 86400s;
+        proxy_send_timeout 86400s;
+    }
+}
+```
+
+修改配置后先执行 `nginx -t`，通过后再重载 Nginx。
 
 公开端点：
 
