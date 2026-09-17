@@ -79,7 +79,10 @@ Agent 与 MCP 的唯一工具来源。生产服务不构建模型，只通过
 - `docs/architecture/product-matching-algorithm.md` — 商品匹配算法
 - `docs/architecture/mcp-reliability-update.md` — MCP 可靠性优化、2.0.7 升级与重试边界
 - `docs/deployment/capability-deployment.md` — 鉴权与会话隔离约定
-- `docs/deployment/billing-mcp-service-deployment.md` — 开单服务部署
+- `docs/deployment/billing-mcp-service-deployment.md` — 开单服务部署契约
+- `docs/deployment/server-deploy-runbook.md` — legacy 服务首次部署
+- `docs/deployment/server-service-ops.md` — legacy 与 WorkBuddy 日常运维
+- `docs/deployment/workbuddy-buddy-app.md` — WorkBuddy 接入、部署与验收
 
 ## 本地开发
 
