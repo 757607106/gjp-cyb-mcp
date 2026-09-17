@@ -148,7 +148,7 @@ class WorkBuddyOAuthSettings:
 
         public_base_url = get_env_value(
             "WORKBUDDY_PUBLIC_BASE_URL",
-            "https://test-mcp-server.yuncyb.com",
+            "https://workbuddy-mcp.yuncyb.com",
         )
         database_path = get_env_value("WORKBUDDY_OAUTH_DB_PATH").strip()
         encryption_key = get_env_value("WORKBUDDY_OAUTH_ENCRYPTION_KEY").strip()

@@ -2,7 +2,7 @@
 
 运行方式：
 
-    uv run uvicorn erp_billing.workbuddy_app:app --host 0.0.0.0 --port 8102
+    uv run uvicorn erp_billing.workbuddy_app:app --host 0.0.0.0 --port 8103
 
 原有 ``erp_billing.app:app`` 保持不变；本入口只增加 WorkBuddy OAuth、ERP
 AI Token 绑定和 HTTP 保护层。
