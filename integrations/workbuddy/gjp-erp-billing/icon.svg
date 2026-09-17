@@ -1,8 +1,39 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
-  <title id="title">管家婆智能开单</title>
-  <rect width="64" height="64" rx="15" fill="#17242d"/>
-  <path d="M16 17h32v30H16z" fill="#f4f0e7"/>
-  <path d="M22 25h20M22 32h14M22 39h9" fill="none" stroke="#17242d" stroke-width="3" stroke-linecap="round"/>
-  <circle cx="44" cy="43" r="10" fill="#d75b34"/>
-  <path d="m40 43 3 3 6-7" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">管家婆创业版 WorkBuddy 应用图标</title>
+  <desc id="desc">深蓝色圆角背景，中央是原品牌云创图形，底部标注创业版。</desc>
+  <defs>
+    <linearGradient id="background" x1="28" y1="18" x2="228" y2="238" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#3E719F"/>
+      <stop offset="0.52" stop-color="#2D4F7C"/>
+      <stop offset="1" stop-color="#203958"/>
+    </linearGradient>
+    <linearGradient id="cloud" x1="0.5" y1="1" x2="0.5" gradientUnits="objectBoundingBox">
+      <stop stop-color="#D7E7F4"/>
+      <stop offset="1" stop-color="#FFFFFF"/>
+    </linearGradient>
+    <clipPath id="frame">
+      <rect width="256" height="256" rx="56"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#frame)">
+    <rect width="256" height="256" fill="url(#background)"/>
+    <circle cx="222" cy="28" r="98" fill="#FFFFFF" opacity="0.045"/>
+    <circle cx="24" cy="238" r="90" fill="#76B6DF" opacity="0.07"/>
+    <path d="M0 181C59 153 125 147 256 162V256H0Z" fill="#102B49" opacity="0.15"/>
+  </g>
+
+  <!-- 保留参考 Logo 的云形与「创」字标矢量结构，并重排为正方形头像。 -->
+  <g transform="translate(24 39) scale(4)">
+    <path fill="url(#cloud)" d="M302.84,261.634c-1.788-4.73-5.852-8.874-11.13-9.382h-2.268a14.569,14.569,0,0,0-12.792,12.761c-5.813-.2-11.658,4.012-12.02,10v1.9c.1.39.307,1.178.418,1.577,1.016,3.45,4.49,5.5,7.963,5.76h33.074c3.4-.312,7.129-1.233,9.216-4.168,3.08-4.09.528-11.091-4.8-11.621a9.081,9.081,0,0,0-4.671-5.963A11.515,11.515,0,0,0,302.84,261.634Z" transform="translate(-264.63 -252.252)"/>
+    <g fill="#2D4F7C" transform="translate(14.771 4.324)">
+      <path d="M378.826,281.575c1.116-1.435,3.145-.414,4.632-.77-1.9,1.662-3.727,3.406-5.586,5.109,2.393-.041,4.794-.041,7.2-.032-.461.779-.914,1.573-1.35,2.368-2.781.495-5.691.057-8.521.211-1.423,1.322-2.813,2.676-4.2,4.022-1.213.024-2.417.049-3.63.065C371.21,288.914,374.977,285.208,378.826,281.575Z" transform="translate(-367.362 -280.78)"/>
+      <path d="M491.342,315.875a20.482,20.482,0,0,1,3.072.9q-3.08,9.476-6.16,18.944a33.792,33.792,0,0,0-1.172,3.657H485.6c.388-1.995.994-3.941,1.415-5.936C488.4,327.577,489.935,321.738,491.342,315.875Z" transform="translate(-467.679 -311.701)"/>
+      <path d="M376.075,352.9c3.436.073,6.88,0,10.324.049l-2.353,6.5c-1.067.032-2.142.049-3.209.041a2.147,2.147,0,0,1,1.811-1.89c.146-.633.445-1.906.59-2.538-1.261,0-2.522,0-3.775.008-1.253,3.106-2.433,6.244-3.63,9.375,2.433.032,4.859-.089,7.284.04l-.744,1.33c-3.646.016-7.494,1.225-11.011.487C373.173,361.915,374.216,357.244,376.075,352.9Z" transform="translate(-370.756 -343.082)"/>
+      <path d="M460.482,365.474c1.221-4.1,2.159-8.288,3.323-12.416.744.008,2.239.008,2.991.008-1.649,4.323-3.226,8.677-4.939,12.975C461.517,365.9,460.83,365.62,460.482,365.474Z" transform="translate(-446.367 -342.895)"/>
+    </g>
+  </g>
+
+  <rect x="55" y="195" width="146" height="38" rx="19" fill="#FFFFFF" opacity="0.11"/>
+  <text x="128" y="222" fill="#FFFFFF" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="26" font-weight="700" letter-spacing="5" text-anchor="middle">创业版</text>
 </svg>
