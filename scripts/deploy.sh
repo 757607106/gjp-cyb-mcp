@@ -1,37 +1,17 @@
 #!/bin/bash
-# ERP 销售开单 MCP 服务快速部署脚本
-#
-# 一键完成：停服务 → 拉代码 → 同步依赖 → 重启 → 验证
-# 自动检测 systemd 或 nohup 方式。
+# ERP 开单 MCP 一键部署：拉取代码、同步依赖、重启并验证服务。
 #
 # 用法：
-#   ./scripts/deploy.sh                # 部署 main 分支（默认，测试环境语义）
-#   BRANCH=test ./scripts/deploy.sh    # 部署 test 分支
-#   GJP_ENV=production ./scripts/deploy.sh   # 部署生产环境（见下方说明）
-#   ./scripts/deploy-workbuddy.sh      # WorkBuddy main（专用入口）
-#   BRANCH=test ./scripts/deploy-workbuddy.sh  # WorkBuddy test
-#   ./scripts/deploy.sh --debug        # DEBUG 模式（仅 nohup 方式生效）
-#   ./scripts/deploy.sh --debug-dump   # DEBUG + 完整 token 转储
+#   ./scripts/deploy.sh                    # main
+#   BRANCH=test ./scripts/deploy.sh        # test
+#   ./scripts/deploy-workbuddy.sh          # WorkBuddy（见专用脚本）
 #
-# 环境变量（可选覆盖默认值）：
-#   DEPLOY_DIR              部署目录（默认 /root/gjp-cyb-mcp）
-#   LOG_FILE               日志文件；WorkBuddy 入口默认使用独立日志
-#   GJP_ENV                 运行环境：local（默认，即测试）或 production；
-#                           决定加载 config/local.env 还是 config/production.env，
-#                           以及 Bearer 是否强制 HS256 验签
-#   ERP_BILLING_BASE_URL    ERP API 地址。local 时缺省用测试域名；
-#                           production 时无脚本默认值，只能来自本变量或
-#                           config/production.env，两者都缺失则启动前报错
-#   ERP_BILLING_JWT_SECRET  生产 Bearer 验签密钥（GJP_ENV=production 时必填，
-#                           纯 X-API-Key 部署可省略）
-#   APP_MODULE              ASGI 入口（默认 erp_billing.app:app）
-#   SERVICE_NAME            systemd 服务名（legacy 默认 erp-billing-mcp，
-#                           WorkBuddy 默认 erp-billing-workbuddy-mcp）
-#   PORT                    服务端口（legacy 默认 8102，WorkBuddy 默认 8103）
+# 常用覆盖项：BRANCH、DEPLOY_DIR、GJP_ENV、APP_MODULE、SERVICE_NAME、PORT。
+# systemd 部署的业务配置只读取 service 指定的 EnvironmentFile。
 
 set -euo pipefail
 
-# ===== 可配置项 =====
+# 部署参数
 DEPLOY_DIR="${DEPLOY_DIR:-/root/gjp-cyb-mcp}"
 BRANCH="${BRANCH:-main}"
 APP_MODULE="${APP_MODULE:-erp_billing.app:app}"
@@ -54,7 +34,7 @@ else
     ERP_BILLING_BASE_URL="${ERP_BILLING_BASE_URL:-https://test-ai.yuncyb.com/aicyberp-api}"
 fi
 
-# ===== 解析命令行参数 =====
+# 调试参数仅用于 nohup 部署
 LOG_LEVEL="INFO"
 DUMP_CREDENTIALS=""
 while [[ $# -gt 0 ]]; do
@@ -76,7 +56,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# ===== 颜色输出 =====
+# 输出
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -85,7 +65,6 @@ info()  { echo -e "${GREEN}[INFO]${NC} $1"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
 error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
-# ===== 步骤 1：停止当前服务 =====
 stop_service() {
     info "1/5 停止当前服务..."
     if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
@@ -103,7 +82,6 @@ stop_service() {
     fi
 }
 
-# ===== 步骤 2：拉取最新代码 =====
 pull_code() {
     info "2/5 拉取最新 $BRANCH 分支代码..."
     cd "$DEPLOY_DIR"
@@ -112,7 +90,6 @@ pull_code() {
     info "当前版本：$(git log --oneline -1)"
 }
 
-# ===== 步骤 3：同步项目依赖 =====
 sync_deps() {
     info "3/5 同步项目依赖..."
     cd "$DEPLOY_DIR"
@@ -120,7 +97,6 @@ sync_deps() {
     info "依赖同步完成"
 }
 
-# ===== 步骤 4：启动服务 =====
 start_service() {
     info "4/5 启动服务..."
     # 确保日志目录存在
@@ -169,7 +145,6 @@ start_service() {
     fi
 }
 
-# ===== 步骤 5：验证服务状态 =====
 verify_service() {
     info "5/5 验证服务状态..."
     sleep 1
@@ -212,7 +187,7 @@ verify_service() {
     fi
 }
 
-# ===== 主流程 =====
+# 部署流程
 echo ""
 info "===== ERP 开单 MCP 服务快速部署 ====="
 info "部署目录：$DEPLOY_DIR"

@@ -180,12 +180,25 @@ BRANCH=test ./scripts/deploy-workbuddy.sh
 日志继续通过 `journalctl -u erp-billing-workbuddy-mcp` 查看。
 实际连接测试或生产 ERP 仍由 systemd `EnvironmentFile` 决定。
 
-切换生产前：
+### 切换 ERP 环境
 
-1. 备份或保留测试 OAuth 数据库，不复用到生产；
-1. 创建生产专用环境文件、数据库路径和 Fernet 密钥；
-1. 把 ERP 地址改为生产；
-1. 重启服务并重复三项公网验收；
-1. 在 WorkBuddy 重新连接并做最小读写验收。
+同一域名和 WorkBuddy 应用从测试 ERP 切到生产 ERP 时，只修改服务器环境文件中的一行：
+
+```dotenv
+ERP_BILLING_BASE_URL=https://生产环境地址/aicyberp-api
+```
+
+然后重启并验证：
+
+```bash
+systemctl restart erp-billing-workbuddy-mcp
+curl -fsS https://workbuddy-mcp.yuncyb.com/healthz
+```
+
+不需要修改 Nginx、WorkBuddy 公网域名、OAuth 回调地址或 Buddy 应用的 Client ID。
+ERP 凭据与环境绑定，切换后用户需要重新完成授权，不能继续使用测试 ERP 的授权凭据。
+
+这是同一套服务从测试环境正式切换到生产环境的做法。如果测试和生产必须长期并行，才需要
+另一套服务、环境文件、OAuth 数据库和域名；不属于当前的单地址切换场景。
 
 日常状态、日志、重启和故障处理见 [服务器运维](server-service-ops.md)。
