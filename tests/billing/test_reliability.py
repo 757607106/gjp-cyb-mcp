@@ -8,14 +8,13 @@ import httpx
 import pytest
 
 from erp_billing.adapters import BusinessAuthenticatedJsonClient
-from erp_billing.app import ApiKeyIdentityResolver, SessionCredentialStore, VerifiedJwtIdentityResolver
+from erp_billing.app import ApiKeyIdentityResolver, SessionCredentialStore
 from erp_billing.catalog_state import TenantCatalogState
 from erp_billing.toolset import BillingToolSet
 from gjp_common.context import InvocationContext
 from gjp_common.errors import DomainError
 from gjp_common.mcp import _invoke_tool
 from gjp_common.tools import SessionFunctionTool
-from tests.billing.test_app_identity import SECRET, _make_token, _mcp_context, _valid_payload
 from tests.billing.test_erp_billing import CompleteSalesOrderApi, _billing_toolset, _session
 
 
@@ -23,7 +22,8 @@ def _prepared(tmp_path, api):
     session = _session(tmp_path, [{"id": "1", "name": "土豆", "unit": "斤", "salesPrice": 3.5}])
     toolset = _billing_toolset(session, api)
     preview = session.store_prepared_sales_order(
-        {"items": [{"productId": "1", "quantity": 2}]}, {"save_type": "final"},
+        {"items": [{"productId": "1", "quantity": 2}]},
+        {"save_type": "final"},
     )
     return toolset, preview
 
@@ -154,14 +154,6 @@ def test_api_key_identity_is_stable_isolated_and_credential_free():
     assert first.tenant_id != resolve("synthetic-secret-two").tenant_id
     assert "synthetic-secret-one" not in repr(first)
     assert store.resolve(first).value == "synthetic-secret-one"
-
-
-@pytest.mark.parametrize("claim", ["exp", "tenantId", "loginId"])
-def test_production_rejects_missing_claim(claim):
-    payload = _valid_payload()
-    payload.pop(claim)
-    with pytest.raises(DomainError, match="验签失败"):
-        VerifiedJwtIdentityResolver(SessionCredentialStore(), SECRET).resolve(_mcp_context(_make_token(payload)))
 
 
 @pytest.mark.parametrize("quantity", [0, -1, 0.00001, float("inf"), float("nan")])

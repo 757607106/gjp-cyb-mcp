@@ -118,7 +118,8 @@ flowchart TB
 
 - ToolSet 和商品目录按 `(tenant_id, account_id, session_id)` 隔离。
 - 生产 MCP Bearer 即当前 ERP JWT / OAuth2 Bearer；服务端解析身份后仅在凭据存储中
-  保存原 Bearer，不把它写入 `InvocationContext` 或模型参数。
+  保存原 Bearer，不把它写入 `InvocationContext` 或模型参数；可信 AI 平台负责前置
+  鉴权，ERP API 对透传 Token 做最终鉴权。
 - ERP API URL 是部署级固定配置，不按会话解析。
 - Adapter 只接收源码中固定的相对路径，拒绝模型提供完整 URL。
 - 工具 Schema 不含身份、地址、鉴权、音频、图片、附件或文件路径字段。
