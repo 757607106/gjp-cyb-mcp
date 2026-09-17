@@ -5,6 +5,9 @@
 #   ./scripts/deploy.sh                    # main
 #   BRANCH=test ./scripts/deploy.sh        # test
 #   ./scripts/deploy-workbuddy.sh          # WorkBuddy（见专用脚本）
+#   journalctl -u erp-billing-mcp -f        # 实时日志
+#   ./scripts/deploy.sh --debug             # 调试，仅 nohup 部署
+#   ./scripts/deploy.sh --debug-dump        # 输出完整凭据，仅临时排障
 #
 # 常用覆盖项：BRANCH、DEPLOY_DIR、GJP_ENV、APP_MODULE、SERVICE_NAME、PORT。
 # systemd 部署的业务配置只读取 service 指定的 EnvironmentFile。

@@ -180,6 +180,16 @@ BRANCH=test ./scripts/deploy-workbuddy.sh
 日志继续通过 `journalctl -u erp-billing-workbuddy-mcp` 查看。
 实际连接测试或生产 ERP 仍由 systemd `EnvironmentFile` 决定。
 
+实时查看日志：
+
+```bash
+journalctl -u erp-billing-workbuddy-mcp -f
+```
+
+systemd 部署不读取部署命令中的 `--debug`。临时调试时，在 WorkBuddy 的
+`EnvironmentFile` 中设置 `GJP_LOG_LEVEL=DEBUG`，重启服务后生效；排障结束应删除该项并
+再次重启。`GJP_DEBUG_DUMP_CREDENTIALS=true` 会输出完整凭据，仅限隔离测试环境短时使用。
+
 ### 切换 ERP 环境
 
 同一域名和 WorkBuddy 应用从测试 ERP 切到生产 ERP 时，只修改服务器环境文件中的一行：
