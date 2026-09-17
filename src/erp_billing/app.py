@@ -27,7 +27,7 @@ import jwt
 from cachetools import TTLCache
 
 from gjp_common.config import get_env_value, is_production
-from gjp_common.connections import BusinessApiCredential
+from gjp_common.connections import BusinessApiCredential, BusinessApiCredentialProvider
 from gjp_common.context import InvocationContext, InvocationContextStore
 from gjp_common.errors import DomainError
 from gjp_common.logging_config import configure_logging
@@ -269,7 +269,7 @@ class BillingSessionToolSetResolver(McpToolSetResolver):
 
     def __init__(
         self,
-        store: SessionCredentialStore,
+        store: BusinessApiCredentialProvider,
         settings: ErpBillingSettings,
         timeout_seconds: float,
     ) -> None:

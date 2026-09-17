@@ -1,0 +1,21 @@
+{
+  "name": "管家婆智能开单",
+  "name_zh": "管家婆智能开单",
+  "name_en": "GJP ERP Billing",
+  "description": "Query products and manage ERP sales orders with natural language.",
+  "description_zh": "通过自然语言查询商品，并创建、查询、修改或作废 ERP 销售单。",
+  "description_en": "Query products and create, view, update, or void ERP sales orders.",
+  "source": "gjp-erp-billing",
+  "type": "mcp",
+  "version": "0.1.0",
+  "minWorkbuddyVersion": "4.24.0",
+  "examples_zh": [
+    "给客户甲开一张土豆5斤、牛肉2斤的销售单",
+    "查询今天创建的销售单",
+    "作废销售单XS202609170001"
+  ],
+  "examples_en": [
+    "Create a sales order for customer A",
+    "List today's sales orders"
+  ]
+}

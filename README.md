@@ -97,6 +97,8 @@ src/
 - [工具、API 与商品匹配](docs/architecture/ai-billing-tools-api-matching.md)
 - [业务数据流](docs/architecture/business-data-flow.md)
 - [AI 平台对接](docs/architecture/billing-mcp-integration-guide.md)
+- [WorkBuddy Buddy 应用接入](docs/deployment/workbuddy-buddy-app.md)
+- [WorkBuddy OAuth 适配边界 ADR](docs/adr/0003-workbuddy-oauth-adapter.md)
 - [部署说明](docs/deployment/billing-mcp-service-deployment.md)
 - [当前工具与提示词契约 ADR](docs/adr/0002-billing-mcp-tool-and-prompt-contract.md)
 - [历史云开单边界 ADR](docs/adr/0001-cloud-billing-mcp-boundary.md)
