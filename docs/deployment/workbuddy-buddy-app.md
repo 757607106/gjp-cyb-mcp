@@ -1,66 +1,108 @@
-# WorkBuddy Buddy 应用接入
+# WorkBuddy Buddy 应用接入与部署
 
-本接入只新增 WorkBuddy 组合入口和连接器资产，不改变原有
-`erp_billing.app:app`、`BillingToolSet`、商品匹配或销售单行为。
+WorkBuddy 使用独立组合入口 `erp_billing.workbuddy_app:app`，在既有开单 ToolSet 外增加
+OAuth 2.1、动态客户端注册、PKCE、ERP AI Token 绑定和加密存储。legacy
+`erp_billing.app:app`、商品匹配和销售单行为不变。
 
-## 目录
+## 组件与端口
 
-```text
-integrations/workbuddy/
-├── gjp-erp-billing/        # 正式 OAuth 连接器
-└── gjp-erp-billing-token/  # API Key 联调连接器，使用不同 source
+| 组件 | 位置或值 |
+|---|---|
+| 正式 OAuth 连接器 | `integrations/workbuddy/gjp-erp-billing/` |
+| API Key 联调连接器 | `integrations/workbuddy/gjp-erp-billing-token/` |
+| ASGI 入口 | `erp_billing.workbuddy_app:app` |
+| systemd 服务 | `erp-billing-workbuddy-mcp` |
+| 内部监听 | `127.0.0.1:8103` |
+| 公网根地址 | `https://workbuddy-mcp.yuncyb.com` |
+| MCP URL | `https://workbuddy-mcp.yuncyb.com/mcp` |
+
+正式连接器由服务端 OAuth 绑定 ERP Token。联调连接器把用户在 WorkBuddy 本地填写的
+测试 Token 注入 `X-API-Key`，只用于旧测试端点验证，不能作为正式方案。
+
+## 环境选择
+
+公网可访问的验收服务也使用 `GJP_ENV=production`，以启用严格配置校验；ERP 地址决定
+实际连接测试还是生产：
+
+| 场景 | 分支 | ERP API | OAuth 数据库和密钥 |
+|---|---|---|---|
+| 验收 | `test` | `https://test-ai.yuncyb.com/aicyberp-api` | 独立测试库、测试密钥 |
+| 生产 | `main` / tag | `https://new.yuncyb.com/aicyberp-api` | 独立生产库、生产密钥 |
+
+同一公网域名同一时刻只能指向一个环境。原地从验收切生产时连接器 ZIP 无需修改，但必须
+更换数据库和 Fernet 密钥，并让用户重新连接。测试与生产长期并行时必须使用不同域名、
+connector source、数据库和密钥。
+
+## 服务配置
+
+敏感配置放在仓库外，例如 `/etc/erp-billing/workbuddy-test.env`：
+
+```dotenv
+GJP_ENV=production
+ERP_BILLING_BASE_URL=https://test-ai.yuncyb.com/aicyberp-api
+WORKBUDDY_PUBLIC_BASE_URL=https://workbuddy-mcp.yuncyb.com
+WORKBUDDY_OAUTH_DB_PATH=/var/lib/erp-billing/workbuddy-oauth-test.db
+WORKBUDDY_OAUTH_ENCRYPTION_KEY=<只生成一次并安全保存的Fernet密钥>
+WORKBUDDY_CONNECTOR_SOURCE=gjp-erp-billing
 ```
 
-正式连接器使用 `erp_billing.workbuddy_app:app`，由 MCP 服务提供 OAuth 2.1、
-动态客户端注册、PKCE S256、刷新令牌轮换和 ERP AI Token 绑定页。测试连接器直接
-把用户在 WorkBuddy 本地填写的 AI Token 注入 `X-API-Key`，只用于联调。
-
-## 一、先验证 Token 连接器
-
-现有测试服务仍运行 `erp_billing.app:app` 时即可验证：
-
-1. 将 `integrations/workbuddy/gjp-erp-billing-token/` 打成 zip。
-2. 在 WorkBuddy 开放平台创建连接器并上传。
-3. 连接时填写测试 ERP AI Token。
-4. 验证 `listProducts`、`searchProducts`、`searchBillingReferences` 和
-   `previewSalesOrder`。
-5. 写操作只使用专门测试数据，并在测试结束后作废测试单。
-
-测试连接器 source 是 `gjp-erp-billing-token`，不得与正式 OAuth 连接器混用。
-
-## 二、启动正式 OAuth 入口
-
-生成加密密钥：
+首次生成密钥：
 
 ```bash
 uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+chmod 600 /etc/erp-billing/workbuddy-test.env
 ```
 
-设置环境变量：
+同一数据库必须始终使用同一密钥；随意重新生成会导致已保存状态无法解密。单实例可使用
+加密 SQLite。多 worker 或多副本上线前必须迁移到共享存储，不能让多个实例写同一个
+网络盘 SQLite。
+
+## systemd
+
+`/etc/systemd/system/erp-billing-workbuddy-mcp.service`：
+
+```ini
+[Unit]
+Description=ERP Billing WorkBuddy MCP Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/gjp-cyb-mcp
+EnvironmentFile=/etc/erp-billing/workbuddy-test.env
+ExecStart=/usr/local/bin/uv run --frozen uvicorn erp_billing.workbuddy_app:app --host 127.0.0.1 --port 8103
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+```
 
 ```bash
-export GJP_ENV=production
-export ERP_BILLING_BASE_URL=https://new.yuncyb.com/aicyberp-api
-export WORKBUDDY_PUBLIC_BASE_URL=https://workbuddy-mcp.yuncyb.com
-export WORKBUDDY_OAUTH_DB_PATH=/var/lib/erp-billing/workbuddy-oauth.db
-export WORKBUDDY_OAUTH_ENCRYPTION_KEY=<Fernet密钥>
-export WORKBUDDY_CONNECTOR_SOURCE=gjp-erp-billing
+systemd-analyze verify /etc/systemd/system/erp-billing-workbuddy-mcp.service
+systemctl daemon-reload
+systemctl enable --now erp-billing-workbuddy-mcp
 ```
 
-数据库目录只授予服务账号读写权限。启动独立入口：
+## Nginx
 
-```bash
-uv run uvicorn erp_billing.workbuddy_app:app --host 0.0.0.0 --port 8103
-```
-
-`8103` 与原测试 MCP 使用的 `8102` 分离。为新域名单独配置 Nginx，不能复用前端站点的
-SPA 回退规则：
+为新域名单独建虚拟主机，不能复用前端 SPA fallback：
 
 ```nginx
 server {
+    listen 80;
+    server_name workbuddy-mcp.yuncyb.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
     listen 443 ssl;
     server_name workbuddy-mcp.yuncyb.com;
-
     ssl_certificate /usr/local/vango/certificate/yuncyb.com.pem;
     ssl_certificate_key /usr/local/vango/certificate/yuncyb.com.key;
 
@@ -79,82 +121,59 @@ server {
 }
 ```
 
-修改配置后先执行 `nginx -t`，通过后再重载 Nginx。
-
-### 测试与生产切换
-
-公网域名与 ERP 后端环境相互独立。公网可访问的 WorkBuddy 测试服务也使用
-`GJP_ENV=production`，以启用生产级配置校验；通过 `ERP_BILLING_BASE_URL` 决定连接
-测试 ERP 还是生产 ERP：
-
-| 场景 | 分支 | ERP API | WorkBuddy 公网地址 |
-|---|---|---|---|
-| 验收 | `test` | `https://test-ai.yuncyb.com/aicyberp-api` | `https://workbuddy-mcp.yuncyb.com` |
-| 生产 | `main` | `https://new.yuncyb.com/aicyberp-api` | `https://workbuddy-mcp.yuncyb.com` |
-
-同一个公网域名同一时刻只指向一个环境。由验收切到生产时，不需要修改连接器 ZIP；
-应使用新的生产 OAuth 数据库和 Fernet 密钥，并让测试用户重新连接，避免测试 ERP
-凭据和授权状态进入生产。如果需要测试与生产长期并行，应再申请独立测试域名，并使用
-不同的连接器 source、OAuth 数据库和 Fernet 密钥。
-
-仓库部署脚本支持选择 WorkBuddy 入口。验收环境示例：
-
 ```bash
-BRANCH=test \
-GJP_ENV=production \
-ERP_BILLING_BASE_URL=https://test-ai.yuncyb.com/aicyberp-api \
-APP_MODULE=erp_billing.workbuddy_app:app \
-SERVICE_NAME=erp-billing-workbuddy-mcp \
-PORT=8103 \
-./scripts/deploy.sh
+nginx -t && systemctl reload nginx
 ```
 
-正式环境使用 `BRANCH=main`，且不覆盖 `ERP_BILLING_BASE_URL` 时，读取
-`config/production.env` 中的生产 ERP 地址。`WORKBUDDY_OAUTH_ENCRYPTION_KEY` 必须由
-systemd 或部署环境注入，不能提交到仓库。
+## 连接器打包与平台配置
 
-公开端点：
+ZIP 根目录必须直接包含 `connector-meta.json`、`mcp.json` 和 `icon.svg`：
 
-| 路径 | 用途 |
-|---|---|
-| `POST /mcp` | OAuth 保护的 Streamable HTTP MCP |
-| `GET /.well-known/oauth-protected-resource/mcp` | MCP 资源发现 |
-| `GET /.well-known/oauth-authorization-server` | OAuth 服务发现 |
-| `POST /oauth/register` | WorkBuddy 公共客户端动态注册 |
-| `GET /oauth/authorize` | PKCE 授权入口 |
-| `POST /oauth/token` | code 换票与 refresh token 轮换 |
-| `POST /oauth/revoke` | 撤销 MCP Token |
-| `GET/POST /oauth/bind` | ERP AI Token 绑定页 |
+```bash
+mkdir -p dist/workbuddy-release
+(cd integrations/workbuddy/gjp-erp-billing && \
+  zip -q -r -FS ../../../dist/workbuddy-release/gjp-erp-billing-0.1.0.zip .)
+unzip -l dist/workbuddy-release/gjp-erp-billing-0.1.0.zip
+```
 
-绑定页只接受 ERP AI Token，不接受账号密码。Token 加密存储，不进入 MCP 工具参数、
-模型上下文或普通日志。WorkBuddy 获取的是独立的短期 MCP access token；该 Token
-不会透传给 ERP。
+在 WorkBuddy 开放平台：
 
-当前仓库部署模型是单实例，因此默认使用加密 SQLite。升级为多副本前，需把 OAuth
-状态、预览和幂等结果迁移到共享存储；不得把 SQLite 放到多个副本同时写入的网络盘。
+1. 上传正式 OAuth 连接器并设为 Buddy 应用内置连接器；
+1. 绑定 `skills/erp-billing/SKILL.md`；
+1. 工作模式使用 `ERP_BILLING_SYSTEM_PROMPT`；
+1. 拍照开单选择支持视觉理解的模型，由模型组装 `order_text`；
+1. 预览验证通过后再提交审核。
 
-## 三、WorkBuddy 开放平台配置
+Buddy 应用的 Client Secret 属于 WorkBuddy Open API，不写入连接器 ZIP，也不用于 MCP
+动态客户端注册。连接器 OAuth 客户端使用 DCR + PKCE，`token_endpoint_auth_method`
+为 `none`。
 
-1. 创建 Buddy 应用，名称建议“管家婆智能开单”。
-2. 首页配置三个工作模式：销售开单、销售单查询、单据修改与作废。
-3. 场景胶囊建议：文字开单、拍照开单、查询今日销售单、修改销售单、作废销售单。
-4. 上传 `integrations/workbuddy/gjp-erp-billing/` 连接器并设为内置连接器。
-5. 将 `skills/erp-billing/SKILL.md` 绑定到销售开单相关模式。
-6. 工作模式 System Prompt 使用 `ERP_BILLING_SYSTEM_PROMPT`；MCP 初始化仍保留
-   `ERP_BILLING_MCP_INSTRUCTIONS` 作为服务端安全兜底。
-7. 拍照开单模式选择支持图片理解的模型；图片由模型识别后组装 `order_text`，MCP
-   仍只接收结构化文本参数。
-8. 完成预览调试后再提交连接器和 Buddy 应用审核。
+## 验收
 
-## 四、验收
+```bash
+curl -i https://workbuddy-mcp.yuncyb.com/healthz
+curl -i https://workbuddy-mcp.yuncyb.com/.well-known/oauth-authorization-server
+curl -i -X POST https://workbuddy-mcp.yuncyb.com/mcp \
+  -H 'Content-Type: application/json' --data '{}'
+```
 
-- 未带 Token 请求 `/mcp` 返回 HTTP 401，且 `WWW-Authenticate` 包含
-  `resource_metadata`。
-- 动态注册只接受 `token_endpoint_auth_method=none` 的公共客户端。
-- 只允许 `workbuddy://.../connector%3Agjp-erp-billing/...` 或
-  `http://127.0.0.1:{动态端口}/oauth/callback` 回调。
-- 授权码一次性使用，PKCE 校验失败时不签发 Token。
-- access token 只能访问当前 `/mcp` resource；refresh token 每次使用后轮换。
-- `billing:read` 与 `billing:write` 继续由 ToolSet 做最终权限检查。
-- 用户未明确确认时，创建、修改和作废工具拒绝执行。
-- 日志、错误、工具 Schema 和连接器文件均不出现真实 ERP Token。
+预期依次为 `200`、`200`、`401`，且 401 的 `WWW-Authenticate` 包含
+`resource_metadata`。随后在 WorkBuddy 完成一次真实连接并验证读工具；写操作必须使用
+专门测试数据、明确确认，并在验证结束后作废测试单。
+
+OAuth 还应满足：回调 URI 白名单、授权码一次性使用、PKCE S256、refresh token 轮换、
+access token 绑定当前 `/mcp` resource，以及 ERP Token 不进入日志、工具 Schema 或模型
+上下文。
+
+## 更新与生产切换
+
+代码更新仍走 `test` → 验收 → `main`/tag。systemd 环境来自 `EnvironmentFile`，不会继承
+执行部署脚本时的临时 shell 变量。切换生产前：
+
+1. 备份或保留测试 OAuth 数据库，不复用到生产；
+1. 创建生产专用环境文件、数据库路径和 Fernet 密钥；
+1. 把 ERP 地址改为生产；
+1. 重启服务并重复三项公网验收；
+1. 在 WorkBuddy 重新连接并做最小读写验收。
+
+日常状态、日志、重启和故障处理见 [服务器运维](server-service-ops.md)。
