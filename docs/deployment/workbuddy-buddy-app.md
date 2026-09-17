@@ -81,6 +81,38 @@ server {
 
 修改配置后先执行 `nginx -t`，通过后再重载 Nginx。
 
+### 测试与生产切换
+
+公网域名与 ERP 后端环境相互独立。公网可访问的 WorkBuddy 测试服务也使用
+`GJP_ENV=production`，以启用生产级配置校验；通过 `ERP_BILLING_BASE_URL` 决定连接
+测试 ERP 还是生产 ERP：
+
+| 场景 | 分支 | ERP API | WorkBuddy 公网地址 |
+|---|---|---|---|
+| 验收 | `test` | `https://test-ai.yuncyb.com/aicyberp-api` | `https://workbuddy-mcp.yuncyb.com` |
+| 生产 | `main` | `https://new.yuncyb.com/aicyberp-api` | `https://workbuddy-mcp.yuncyb.com` |
+
+同一个公网域名同一时刻只指向一个环境。由验收切到生产时，不需要修改连接器 ZIP；
+应使用新的生产 OAuth 数据库和 Fernet 密钥，并让测试用户重新连接，避免测试 ERP
+凭据和授权状态进入生产。如果需要测试与生产长期并行，应再申请独立测试域名，并使用
+不同的连接器 source、OAuth 数据库和 Fernet 密钥。
+
+仓库部署脚本支持选择 WorkBuddy 入口。验收环境示例：
+
+```bash
+BRANCH=test \
+GJP_ENV=production \
+ERP_BILLING_BASE_URL=https://test-ai.yuncyb.com/aicyberp-api \
+APP_MODULE=erp_billing.workbuddy_app:app \
+SERVICE_NAME=erp-billing-workbuddy-mcp \
+PORT=8103 \
+./scripts/deploy.sh
+```
+
+正式环境使用 `BRANCH=main`，且不覆盖 `ERP_BILLING_BASE_URL` 时，读取
+`config/production.env` 中的生产 ERP 地址。`WORKBUDDY_OAUTH_ENCRYPTION_KEY` 必须由
+systemd 或部署环境注入，不能提交到仓库。
+
 公开端点：
 
 | 路径 | 用途 |
