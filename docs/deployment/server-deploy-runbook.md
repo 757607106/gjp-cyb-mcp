@@ -14,8 +14,9 @@
 | ASGI 入口 | `erp_billing.app:app` | 同左 |
 | 内部端口 | `8102` | `8102` |
 
-生产必须使用 `main` 构建的 wheel 或已打 tag 的提交。公网测试如果需要生产级 JWT
-校验，可以使用 `GJP_ENV=production` 并显式覆盖测试 ERP API 地址。
+生产必须使用 `main` 构建的 wheel 或已打 tag 的提交。公网测试可使用
+`GJP_ENV=production` 并显式覆盖测试 ERP API 地址，但 legacy 入口仍必须限制为可信
+AI 平台可访问，不能依赖 MCP 对 JWT payload 的解析充当认证。
 
 ## 首次部署
 
@@ -29,11 +30,10 @@ uv run ruff check src tests
 uv run pytest -q
 ```
 
-生产非敏感默认值位于 `config/production.env`。以下敏感值只放在 systemd
-`EnvironmentFile` 或部署平台 Secret 中，不提交仓库：
-
-- `ERP_BILLING_JWT_SECRET`：接收 Bearer JWT 时必需；
-- 第三方平台或 ERP 的任何 Token、Cookie、Client Secret。
+生产非敏感默认值位于 `config/production.env`。legacy 的 ERP Bearer/API Key 由
+可信接入方逐请求传入，不写入服务器配置；第三方平台或 ERP 的任何 Token、Cookie、
+Client Secret 都不能提交仓库，如网关另有静态凭据，只放在 systemd
+`EnvironmentFile` 或部署平台 Secret 中。
 
 推荐 systemd 单元：
 
@@ -63,7 +63,7 @@ WantedBy=multi-user.target
 ```bash
 install -d -m 700 /etc/erp-billing
 test -e /etc/erp-billing/legacy.env || install -m 600 /dev/null /etc/erp-billing/legacy.env
-# 使用安全编辑器写入 ERP_BILLING_JWT_SECRET 等敏感值
+# 如网关另有静态凭据，使用安全编辑器写入；ERP Bearer/API Key 不在此预存
 chmod 600 /etc/erp-billing/legacy.env
 systemd-analyze verify /etc/systemd/system/erp-billing-mcp.service
 systemctl daemon-reload

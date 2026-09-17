@@ -17,7 +17,7 @@
 
 ## 鉴权与安全设计
 
-- **生产禁止账号密码登录**：生产 MCP 使用 Bearer JWT / OAuth2。MCP 客户端直接使用 ERP JWT 作为 Bearer Token，服务端从 JWT payload 解析身份。
+- **生产禁止账号密码登录**：生产 MCP 使用 Bearer JWT / OAuth2。legacy 客户端直接使用 ERP JWT 作为 Bearer Token，可信接入方先完成鉴权，服务端只解析 payload 用于会话隔离并把原 Token 交给 ERP 最终鉴权；legacy 入口不得作为无访问控制的公网认证端点。
 - **工具参数只含业务数据**：账号、密码、JWT、Cookie 和业务 Token 不进入 AgentScope JSON Schema，也不允许模型生成。
 - **对接方处理鉴权**：服务通过 `BillingApiPort` 留出入口，由 Adapter 根据 `InvocationContext` 注入当前账套凭据。
 - **身份隔离**：`InvocationContext` 不含凭据，通过 `ContextVar` 绑定当前异步任务，请求结束后恢复。

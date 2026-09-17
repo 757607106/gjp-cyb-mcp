@@ -1,10 +1,8 @@
-"""验证开单服务按环境选择鉴权强度：local 宽松、production 强制 HS256 验签。"""
+"""验证 legacy 开单服务直接接收并透传 ERP Bearer/API Key。"""
 
 from __future__ import annotations
 
 import base64
-import hashlib
-import hmac
 import json
 import time
 from types import SimpleNamespace
@@ -16,7 +14,6 @@ from erp_billing.app import (
     ApiKeyIdentityResolver,
     DirectJwtIdentityResolver,
     SessionCredentialStore,
-    VerifiedJwtIdentityResolver,
     _CompositeIdentityResolver,
     _create_identity_resolver,
 )
@@ -24,19 +21,14 @@ from gjp_common.connections import BusinessApiCredential
 from gjp_common.context import InvocationContext
 from gjp_common.errors import DomainError
 
-SECRET = "unit-test-hs256-secret"
-
-
 def _b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
 
 
-def _make_token(payload: dict, secret: str = SECRET, alg: str = "HS256") -> str:
-    header_b64 = _b64url(json.dumps({"alg": alg, "typ": "JWT"}).encode("utf-8"))
+def _make_token(payload: dict) -> str:
+    header_b64 = _b64url(json.dumps({"alg": "HS256", "typ": "JWT"}).encode("utf-8"))
     payload_b64 = _b64url(json.dumps(payload).encode("utf-8"))
-    signing_input = (header_b64 + "." + payload_b64).encode("ascii")
-    signature = hmac.new(secret.encode("utf-8"), signing_input, hashlib.sha256).digest()
-    return header_b64 + "." + payload_b64 + "." + _b64url(signature)
+    return header_b64 + "." + payload_b64 + "." + _b64url(b"test-signature")
 
 
 def _mcp_context(token: str) -> SimpleNamespace:
@@ -53,74 +45,31 @@ def _valid_payload() -> dict:
     }
 
 
-def test_verified_resolver_accepts_signed_token() -> None:
-    store = SessionCredentialStore()
-    resolver = VerifiedJwtIdentityResolver(store, SECRET)
-
-    context = resolver.resolve(_mcp_context(_make_token(_valid_payload())))
-
-    assert context.tenant_id == "tenant-1"
-    assert context.subject_id == "user-1"
-    assert store.resolve(context).value == _make_token(_valid_payload())
-
-
-def test_verified_resolver_rejects_tampered_payload() -> None:
-    resolver = VerifiedJwtIdentityResolver(SessionCredentialStore(), SECRET)
-    header_b64, _, signature_b64 = _make_token(_valid_payload()).split(".")
-    forged_payload = _b64url(json.dumps({"tenantId": "evil", "loginId": "evil"}).encode("utf-8"))
-    forged_token = header_b64 + "." + forged_payload + "." + signature_b64
-
-    with pytest.raises(DomainError) as excinfo:
-        resolver.resolve(_mcp_context(forged_token))
-
-    assert excinfo.value.code == "mcp_unauthorized"
-
-
-def test_verified_resolver_rejects_wrong_secret() -> None:
-    resolver = VerifiedJwtIdentityResolver(SessionCredentialStore(), SECRET)
-    token = _make_token(_valid_payload(), secret="another-secret")
-
-    with pytest.raises(DomainError) as excinfo:
-        resolver.resolve(_mcp_context(token))
-
-    assert excinfo.value.code == "mcp_unauthorized"
-
-
-def test_verified_resolver_rejects_expired_token() -> None:
-    resolver = VerifiedJwtIdentityResolver(SessionCredentialStore(), SECRET)
-    expired = dict(_valid_payload(), exp=int(time.time()) - 60)
-
-    with pytest.raises(DomainError) as excinfo:
-        resolver.resolve(_mcp_context(_make_token(expired)))
-
-    assert excinfo.value.code == "mcp_unauthorized"
-
-
-def test_verified_resolver_rejects_non_hs256_algorithm() -> None:
-    resolver = VerifiedJwtIdentityResolver(SessionCredentialStore(), SECRET)
-    token = _make_token(_valid_payload(), alg="none")
-
-    with pytest.raises(DomainError) as excinfo:
-        resolver.resolve(_mcp_context(token))
-
-    assert excinfo.value.code == "mcp_unauthorized"
-
-
-def test_verified_resolver_requires_secret() -> None:
-    with pytest.raises(DomainError) as excinfo:
-        VerifiedJwtIdentityResolver(SessionCredentialStore(), "   ")
-
-    assert excinfo.value.code == "mcp_unauthorized"
-
-
-def test_local_resolver_accepts_unsigned_token() -> None:
+def test_direct_resolver_accepts_token_and_preserves_credential() -> None:
     header_b64 = _b64url(json.dumps({"alg": "none"}).encode("utf-8"))
     payload_b64 = _b64url(json.dumps({"tenantId": "t", "loginId": "u"}).encode("utf-8"))
-    resolver = DirectJwtIdentityResolver(SessionCredentialStore())
+    token = header_b64 + "." + payload_b64 + ".sig"
+    store = SessionCredentialStore()
+    resolver = DirectJwtIdentityResolver(store)
 
-    context = resolver.resolve(_mcp_context(header_b64 + "." + payload_b64 + ".sig"))
+    context = resolver.resolve(_mcp_context(token))
 
     assert context.tenant_id == "t"
+    assert context.subject_id == "u"
+    assert store.resolve(context).value == token
+
+
+@pytest.mark.parametrize("claim", ["tenantId", "loginId"])
+def test_direct_resolver_rejects_missing_identity_claim(claim: str) -> None:
+    payload = {"tenantId": "t", "loginId": "u"}
+    payload.pop(claim)
+
+    with pytest.raises(DomainError) as excinfo:
+        DirectJwtIdentityResolver(SessionCredentialStore()).resolve(
+            _mcp_context(_make_token(payload)),
+        )
+
+    assert excinfo.value.code == "mcp_unauthorized"
 
 
 def _mcp_context_with_conversation(token: str, conversation_id: str) -> SimpleNamespace:
@@ -137,7 +86,7 @@ def _mcp_context_with_conversation(token: str, conversation_id: str) -> SimpleNa
 def test_resolver_partitions_session_by_conversation_id() -> None:
     """同一用户的两个对话窗口应得到不同的会话键，预览与幂等缓存互不干扰。"""
     store = SessionCredentialStore()
-    resolver = VerifiedJwtIdentityResolver(store, SECRET)
+    resolver = DirectJwtIdentityResolver(store)
     token = _make_token(_valid_payload())
 
     context_a = resolver.resolve(
@@ -206,38 +155,24 @@ def test_local_resolver_strips_duplicate_bearer_prefix() -> None:
     assert store.resolve(context).value == jwt
 
 
-def test_verified_resolver_strips_duplicate_bearer_prefix() -> None:
-    """验签器同样能剥离客户端误传的多余 Bearer 前缀。"""
-    store = SessionCredentialStore()
-    resolver = VerifiedJwtIdentityResolver(store, SECRET)
-    token = _make_token(_valid_payload())
-    mcp_context = SimpleNamespace(
-        request=SimpleNamespace(headers={"authorization": "Bearer Bearer " + token}),
-    )
-
-    context = resolver.resolve(mcp_context)
-
-    assert context.tenant_id == "tenant-1"
-    assert store.resolve(context).value == token
-
-
-def test_composition_root_routes_bearer_by_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """组合根按环境构造 Bearer 解析器：生产验签，本地不验签。"""
-    monkeypatch.setenv("ERP_BILLING_JWT_SECRET", SECRET)
-    token = _make_token(_valid_payload())
-
+def test_composition_root_accepts_real_erp_claim_shape_in_production(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """生产 legacy 入口接受接入方透传的 eff Token，不要求本地签名密钥。"""
     monkeypatch.setenv("GJP_ENV", "production")
+    token = _make_token(
+        {
+            "tenantId": 2063811947135393793,
+            "loginId": 2091721923837218817,
+            "eff": 1792232640044,
+        },
+    )
     store_prod = SessionCredentialStore()
-    resolver_prod = _create_identity_resolver(store_prod)
-    context = resolver_prod.resolve(_mcp_context(token))
-    assert context.tenant_id == "tenant-1"
-    assert store_prod.resolve(context).value == token
+    context = _create_identity_resolver(store_prod).resolve(_mcp_context(token))
 
-    monkeypatch.delenv("GJP_ENV", raising=False)
-    store_local = SessionCredentialStore()
-    resolver_local = _create_identity_resolver(store_local)
-    context_local = resolver_local.resolve(_mcp_context(token))
-    assert context_local.tenant_id == "tenant-1"
+    assert context.tenant_id == "2063811947135393793"
+    assert context.subject_id == "2091721923837218817"
+    assert store_prod.resolve(context).value == token
 
 
 def test_bearer_store_rejects_expired_token() -> None:
@@ -379,21 +314,21 @@ def test_resolver_shares_catalog_state_within_tenant(
     assert toolset_a.session.catalog_state is not toolset_c.session.catalog_state
 
 
-def test_production_without_secret_allows_api_key(
+def test_production_without_secret_allows_api_key_and_bearer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """生产无 JWT secret 时仍可启动：X-API-Key 请求正常，Bearer 请求才报错。"""
+    """legacy 两种逐请求凭据都不依赖部署级 JWT Secret。"""
     monkeypatch.setenv("GJP_ENV", "production")
-    monkeypatch.delenv("ERP_BILLING_JWT_SECRET", raising=False)
     monkeypatch.delenv("ERP_BILLING_API_KEYS", raising=False)
 
-    resolver = _create_identity_resolver(SessionCredentialStore())
+    store = SessionCredentialStore()
+    resolver = _create_identity_resolver(store)
     # X-API-Key 请求正常
     context = resolver.resolve(_mcp_api_key_context("ak_any"))
     assert context.tenant_id != "ak_any"
     assert context.tenant_id.startswith("apikey-")
-    # Bearer 请求才报错（惰性构造时 secret 缺失）
+    # Bearer 由可信接入方提供并原样交给 ERP，不需要本地签名密钥。
     token = _make_token(_valid_payload())
-    with pytest.raises(DomainError) as excinfo:
-        resolver.resolve(_mcp_context(token))
-    assert excinfo.value.code == "mcp_unauthorized"
+    bearer_context = resolver.resolve(_mcp_context(token))
+    assert bearer_context.tenant_id == "tenant-1"
+    assert store.resolve(bearer_context).value == token

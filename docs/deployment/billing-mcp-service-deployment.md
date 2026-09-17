@@ -25,14 +25,15 @@ uv pip install dist/gjp_erp_billing_mcp-*.whl
 
 共同配置：
 
-- `GJP_ENV=production`：启用生产校验；
+- `GJP_ENV=production`：加载生产配置并启用生产约束；
 - `ERP_BILLING_BASE_URL`：部署级固定 HTTPS 地址；
 - `ERP_BILLING_TIMEOUT_SECONDS`：ERP 请求超时，默认 30 秒；
 - `ERP_BILLING_CATALOG_TTL_SECONDS`：租户商品目录 TTL，默认 600 秒。
 
-legacy Bearer 请求需要 `ERP_BILLING_JWT_SECRET`。纯 API Key 请求不依赖该密钥。
-WorkBuddy 还必须设置公网根地址、OAuth 数据库、Fernet 密钥和 connector source，详见
-专用文档。所有系统环境变量优先于 `config/production.env`。
+legacy Bearer/API Key 都由可信接入方逐请求传入，服务端不需要部署级 JWT 签名密钥；
+原凭据由固定地址的 ERP API 做最终鉴权。WorkBuddy 还必须设置公网根地址、OAuth
+数据库、Fernet 密钥和 connector source，详见专用文档。所有系统环境变量优先于
+`config/production.env`。
 
 ## 身份与凭据边界
 
@@ -43,8 +44,9 @@ WorkBuddy 还必须设置公网根地址、OAuth 数据库、Fernet 密钥和 co
 - ERP 401/403 映射为重新授权，不让模型向用户索取账号密码。
 
 legacy 按 `(tenant_id, account_id, session_id)` 隔离 ToolSet、预览与幂等结果；商品目录
-按租户共享。WorkBuddy 先验证 MCP access token，再按绑定主体解析 ERP 凭据，MCP
-token 不透传 ERP。
+按租户共享。legacy 从 JWT payload 取得的身份字段不等于本地验签，部署必须保证请求
+来自已鉴权的可信平台；WorkBuddy 先验证 MCP access token，再按绑定主体解析 ERP
+凭据，MCP token 不透传 ERP。
 
 ## 生命周期与扩展
 
@@ -60,6 +62,7 @@ SQLite OAuth 状态和进程内会话只适合单实例。多 worker 或多副�
 - `uv run pytest -q`；
 - `GJP_ENV=production` 且敏感值不在仓库；
 - Nginx 只代理到回环地址上的正确端口；
+- legacy 入口已限制为可信 AI 平台可访问；
 - 未授权 MCP 请求被拒绝，健康检查和 OAuth 元数据符合预期；
 - 写工具必须有 `billing:write`、有效预览、明确确认和幂等键。
 

@@ -17,6 +17,10 @@
 Authorization: Bearer <ERP JWT / OAuth2 token>
 ```
 
+AI 平台必须在转发前完成 Token 鉴权；legacy MCP 不持有 ERP JWT 签名密钥，只读取
+`tenantId`、`loginId` 建立隔离上下文，并把原 Token 交给 ERP API 最终鉴权。部署时
+应通过私网、网关访问控制或来源白名单确保 `/mcp` 只对可信平台开放。
+
 建议每次 MCP 请求同时携带对话标识，使同一用户的不同对话窗口各自隔离
 预览与幂等缓存（未携带时按登录账号隔离）：
 
