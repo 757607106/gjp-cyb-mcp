@@ -53,8 +53,9 @@ MCP 不接收音频、图片、附件、文件路径或媒体 URL，也不提供
 ## 2. 身份与 API 边界
 
 开单服务通过 `/mcp` 发布 Streamable HTTP MCP。生产环境的每次工具调用直接携带
-ERP JWT / OAuth2 Bearer；`McpIdentityResolver` 校验签名和有效期，再把
-`billing:read` / `billing:write` 映射为不含凭据的 `InvocationContext`：
+ERP JWT / OAuth2 Bearer；可信 AI 平台负责前置鉴权，`McpIdentityResolver` 校验
+Token 结构和身份字段，再把 `billing:read` / `billing:write` 映射为不含凭据的
+`InvocationContext`。原 Token 随后交给 ERP API 做最终鉴权：
 
 ```text
 tenant_id

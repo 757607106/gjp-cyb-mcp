@@ -62,7 +62,6 @@ def _server_fixture(base_url: str, timeout_seconds: str | None = None):
         env = os.environ.copy()
         env["ERP_BILLING_BASE_URL"] = base_url
         env["GJP_ENV"] = "local"
-        env.pop("ERP_BILLING_JWT_SECRET", None)
         if timeout_seconds is not None:
             env["ERP_BILLING_TIMEOUT_SECONDS"] = timeout_seconds
         log_file = tempfile.NamedTemporaryFile(

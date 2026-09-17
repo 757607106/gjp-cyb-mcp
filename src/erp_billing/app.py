@@ -4,10 +4,9 @@ MCP 客户端直接使用 ERP JWT 作为 Bearer Token，服务端从 JWT payload
 tenantId、loginId 构造 InvocationContext，并把同一个 JWT 注入当前会话的
 ERP API 调用。业务 URL 始终来自部署级固定配置 ERP_BILLING_BASE_URL。
 
-身份解析按环境区分，且只在本组合根分支：
-local（测试环境）使用 DirectJwtIdentityResolver 直接读 payload；
-production 使用 VerifiedJwtIdentityResolver，要求 HS256 验签通过且
-未过期，密钥由部署环境变量 ERP_BILLING_JWT_SECRET 注入。
+legacy 入口不持有 ERP 的 JWT 签名密钥，只校验 JWT 结构和身份字段；请求必须
+来自已完成鉴权的可信接入方，ERP API 对透传的原 Token 做最终鉴权。公网部署必须
+通过网关、访问控制或私网限制该入口，不能把 payload 解析当作独立身份认证。
 
 运行方式：
 
@@ -26,7 +25,7 @@ from typing import Any, Callable
 import jwt
 from cachetools import TTLCache
 
-from gjp_common.config import get_env_value, is_production
+from gjp_common.config import get_env_value
 from gjp_common.connections import BusinessApiCredential, BusinessApiCredentialProvider
 from gjp_common.context import InvocationContext, InvocationContextStore
 from gjp_common.errors import DomainError
@@ -93,14 +92,12 @@ def _conversation_id_from_mcp_context(mcp_request_context: Any) -> str:
     """
     request = getattr(mcp_request_context, "request", None)
     headers = getattr(request, "headers", None)
-    conversation_id = (
-        headers.get("x-conversation-id", "") if headers is not None else ""
-    )
+    conversation_id = headers.get("x-conversation-id", "") if headers is not None else ""
     return conversation_id.strip()[:_MAX_CONVERSATION_ID_LENGTH]
 
 
 def _decode_jwt_unverified(token: str) -> dict:
-    """不验签地解析 JWT payload，用于本地环境和提取 exp。"""
+    """不验签地解析 JWT payload，用于受信入口的身份路由和提取 exp。"""
     try:
         payload = jwt.decode(
             token,
@@ -113,36 +110,22 @@ def _decode_jwt_unverified(token: str) -> dict:
     return payload
 
 
-def _decode_jwt_verified(token: str, secret: str) -> dict:
-    """HS256 验签并校验过期后返回 payload。"""
-    try:
-        payload = jwt.decode(
-            token,
-            key=secret,
-            algorithms=["HS256"],
-            options={"require": ["exp", "tenantId", "loginId"]},
-        )
-    except jwt.ExpiredSignatureError as exc:
-        raise DomainError("mcp_unauthorized", "ERP JWT 已过期") from exc
-    except jwt.InvalidAlgorithmError as exc:
-        raise DomainError("mcp_unauthorized", "生产仅接受 HS256 签名的 JWT") from exc
-    except jwt.PyJWTError as exc:
-        raise DomainError("mcp_unauthorized", "ERP JWT 验签失败") from exc
-    if not isinstance(payload, dict):
-        raise DomainError("mcp_unauthorized", "ERP JWT payload 不是对象")
-    return payload
-
-
 def _context_from_jwt(token: str, conversation_id: str) -> InvocationContext:
     """解析 ERP JWT payload 得到无凭据的调用上下文。
 
-    只读取 payload 中的身份信息，不验签；验签由生产专用解析器
-    在调用本函数前完成。会话键拼接客户端传入的对话标识，
-    未传时退化为按登录账号隔离，保持既有行为。
+    legacy 入口只读取 payload 中的身份信息，不在本服务验签；调用方必须位于
+    可信接入边界内，原 Token 由 ERP API 做最终鉴权。会话键拼接客户端传入的
+    对话标识，未传时退化为按登录账号隔离，保持既有行为。
     """
     payload = _decode_jwt_unverified(token)
-    tenant_id = str(payload.get("tenantId") or "unknown")
-    login_id = str(payload.get("loginId") or "unknown")
+    identities: dict[str, str] = {}
+    for claim in ("tenantId", "loginId"):
+        value = payload.get(claim)
+        if isinstance(value, bool) or not isinstance(value, (str, int)) or not str(value).strip():
+            raise DomainError("mcp_unauthorized", "ERP JWT 缺少有效身份字段")
+        identities[claim] = str(value)
+    tenant_id = identities["tenantId"]
+    login_id = identities["loginId"]
     session_id = "billing-" + login_id
     if conversation_id:
         session_id += "-" + conversation_id
@@ -205,48 +188,13 @@ class SessionCredentialStore:
 
 
 class DirectJwtIdentityResolver:
-    """本地/测试环境：直接把 MCP Bearer 中的 ERP JWT 映射为 InvocationContext。"""
+    """把可信接入方传入的 ERP JWT 映射为上下文，并将原 Token 交给 ERP。"""
 
     def __init__(self, store: SessionCredentialStore) -> None:
         self._store = store
 
     def resolve(self, mcp_request_context: Any) -> InvocationContext:
         token = _bearer_token_from_mcp_context(mcp_request_context)
-        context = _context_from_jwt(
-            token,
-            _conversation_id_from_mcp_context(mcp_request_context),
-        )
-        context.require_scope("billing:read")
-        self._store.register(
-            context,
-            BusinessApiCredential(kind="bearer", value=token),
-        )
-        return context
-
-
-class VerifiedJwtIdentityResolver:
-    """生产环境：HS256 验签并校验过期后才映射 InvocationContext。
-
-    验签密钥由部署环境变量 ERP_BILLING_JWT_SECRET 注入，不进入
-    配置文件模板；未配置密钥时拒绝构造，避免生产裸奔。
-    """
-
-    def __init__(self, store: SessionCredentialStore, jwt_secret: str) -> None:
-        if not jwt_secret.strip():
-            raise DomainError(
-                "mcp_unauthorized",
-                "生产环境缺少 ERP_BILLING_JWT_SECRET，无法验签",
-            )
-        self._store = store
-        self._jwt_secret = jwt_secret
-
-    def resolve(self, mcp_request_context: Any) -> InvocationContext:
-        token = _bearer_token_from_mcp_context(mcp_request_context)
-        payload = _decode_jwt_verified(token, self._jwt_secret)
-        for claim in ("tenantId", "loginId"):
-            value = payload[claim]
-            if isinstance(value, bool) or not isinstance(value, (str, int)) or not str(value).strip():
-                raise DomainError("mcp_unauthorized", "ERP JWT 缺少有效身份字段")
         context = _context_from_jwt(
             token,
             _conversation_id_from_mcp_context(mcp_request_context),
@@ -389,11 +337,7 @@ class ApiKeyIdentityResolver:
             tenant_id=identity,
             subject_id=identity,
             account_id=identity,
-            session_id=(
-                "billing-apikey-" + conversation_id
-                if conversation_id
-                else "billing-apikey"
-            ),
+            session_id=("billing-apikey-" + conversation_id if conversation_id else "billing-apikey"),
             scopes=frozenset({"billing:read", "billing:write"}),
         )
         context.require_scope("billing:read")
@@ -407,8 +351,8 @@ class ApiKeyIdentityResolver:
 class _CompositeIdentityResolver:
     """按请求头选择鉴权方式：有 Authorization 走 Bearer，否则走 X-API-Key。
 
-    Bearer 解析器惰性构造；纯 API Key 部署无需 ERP_BILLING_JWT_SECRET，
-    仅在收到 Bearer 请求时才构造（生产缺密钥时该请求报错）。
+    Bearer 解析器惰性构造；legacy Bearer 与 API Key 都由接入方逐请求传入，
+    服务端不保存部署级业务凭据。
     """
 
     def __init__(
@@ -437,25 +381,19 @@ class _CompositeIdentityResolver:
 def _create_identity_resolver(bearer_store: SessionCredentialStore) -> Any:
     """组合根：按请求头选择 Bearer JWT 或 X-API-Key 鉴权。
 
-    X-API-Key 无需预配映射，客户端传 key 即可；Bearer 解析器惰性构造，
-    纯 API Key 部署无需 ERP_BILLING_JWT_SECRET，仅在收到 Bearer 请求时
-    才需要（生产缺密钥时该请求报错）。
+    两类凭据都由可信接入方逐请求提供，并原样交给固定地址的 ERP API 验证；
+    MCP 只解析 Bearer 身份字段用于会话隔离，不持有 ERP JWT 签名密钥。
     """
     api_key_resolver = ApiKeyIdentityResolver(bearer_store)
 
     def bearer_factory() -> Any:
-        if is_production():
-            return VerifiedJwtIdentityResolver(
-                bearer_store,
-                get_env_value("ERP_BILLING_JWT_SECRET"),
-            )
         return DirectJwtIdentityResolver(bearer_store)
 
     return _CompositeIdentityResolver(bearer_factory, api_key_resolver)
 
 
 def create_billing_app() -> Any:
-    """装配固定 ERP URL、按环境选择身份解析的开单 MCP 应用。"""
+    """装配固定 ERP URL、逐请求透传 ERP 凭据的开单 MCP 应用。"""
     configure_logging()
     timeout_seconds = float(get_env_value("ERP_BILLING_TIMEOUT_SECONDS", "30") or 30)
     if timeout_seconds <= 0:
