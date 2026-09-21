@@ -15,7 +15,13 @@ from gjp_common.errors import DomainError
 from gjp_common.tools import SessionFunctionTool
 from gjp_common.toolset import SessionToolSet
 from .catalog import normalize_name
-from .document_tools import DocumentTools, build_document_tools
+from .document_tools import (
+    DocumentTools,
+    build_document_tools,
+    _NULLABLE_LOOSE_OBJECT,
+    _NULLABLE_OBJECT,
+    _NULLABLE_STRING,
+)
 from .models import BillingDraft
 from .ports import BillingApiPort, BillingReferenceSnapshot
 from .query_tools import QueryTools, build_query_tools
@@ -194,7 +200,7 @@ _SEARCH_PRODUCTS_OUTPUT_SCHEMA = {
                 "properties": {
                     "query": {"type": "string"},
                     "status": {"type": "string"},
-                    "product": {"type": ["object", "null"]},
+                    "product": _NULLABLE_OBJECT,
                     "recommendations": {
                         "type": "array",
                         "items": {"type": "object", "additionalProperties": True},
@@ -269,8 +275,8 @@ _PREVIEW_SALES_ORDER_OUTPUT_SCHEMA = {
             "items": {"type": "object", "additionalProperties": True},
         },
         "ready_to_submit": {"type": "boolean"},
-        "preview_id": {"type": ["string", "null"]},
-        "preview": {"type": ["object", "null"]},
+        "preview_id": _NULLABLE_STRING,
+        "preview": _NULLABLE_OBJECT,
     },
     "required": ["ok"],
     "additionalProperties": True,
@@ -295,7 +301,7 @@ _GET_SALES_ORDER_OUTPUT_SCHEMA = {
     "properties": {
         "ok": {"type": "boolean"},
         "error": _ERROR_OUTPUT_OBJECT,
-        "order": {"type": ["object", "null"], "additionalProperties": True},
+        "order": _NULLABLE_LOOSE_OBJECT,
     },
     "required": ["ok"],
     "additionalProperties": True,
@@ -510,7 +516,11 @@ class BillingToolSet(QueryTools, DocumentTools, SessionToolSet):
                     output_schema=_SYNC_PRODUCTS_OUTPUT_SCHEMA,
                     input_schema_override={
                         "type": "object",
-                        "properties": {"limit": {"type": ["integer", "null"], "minimum": 1}},
+                        "properties": {
+                            "limit": {
+                                "anyOf": [{"type": "integer", "minimum": 1}, {"type": "null"}]
+                            }
+                        },
                     },
                 ),
                 SessionFunctionTool(

@@ -24,13 +24,20 @@ _ERROR_OUTPUT_OBJECT = {
     "additionalProperties": True,
 }
 
-# 查询类工具的通用输出：顶层 ok + data，分页结果另带 page 元数据
+# 查询类工具的通用输出：顶层 ok + data，分页结果另带 page 元数据。
+# data 随工具与视图不同为列表（分页行）或对象（汇总），上游缺数据时为 null。
 _QUERY_OUTPUT_SCHEMA = {
     "type": "object",
     "properties": {
         "ok": {"type": "boolean"},
         "error": _ERROR_OUTPUT_OBJECT,
-        "data": {},
+        "data": {
+            "anyOf": [
+                {"type": "array"},
+                {"type": "object"},
+                {"type": "null"},
+            ]
+        },
         "page": {"type": "integer"},
         "page_size": {"type": "integer"},
         "total": {"type": "integer"},

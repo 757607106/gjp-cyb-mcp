@@ -30,6 +30,15 @@ _ERROR_OUTPUT_OBJECT = {
     "additionalProperties": True,
 }
 
+# 可空字段的统一写法：anyOf 单类型分支。type 数组形式（如
+# ["object", "null"]）是合法 JSON Schema，但部分 MCP 客户端只读取
+# 单字符串 type，会拒绝工具或丢弃约束。
+_NULLABLE_STRING = {"anyOf": [{"type": "string"}, {"type": "null"}]}
+_NULLABLE_OBJECT = {"anyOf": [{"type": "object"}, {"type": "null"}]}
+_NULLABLE_LOOSE_OBJECT = {
+    "anyOf": [{"type": "object", "additionalProperties": True}, {"type": "null"}]
+}
+
 # ---------------------------------------------------------------------------
 # 输出 schema：顶层字段声明类型，嵌套对象保持宽松（additionalProperties=True）
 # ---------------------------------------------------------------------------
@@ -66,8 +75,8 @@ _TEXT_DOCUMENT_PREVIEW_OUTPUT_SCHEMA = {
             "items": {"type": "object", "additionalProperties": True},
         },
         "ready_to_submit": {"type": "boolean"},
-        "preview_id": {"type": ["string", "null"]},
-        "preview": {"type": ["object", "null"]},
+        "preview_id": _NULLABLE_STRING,
+        "preview": _NULLABLE_OBJECT,
     },
     "required": ["ok"],
     "additionalProperties": True,
@@ -78,12 +87,12 @@ _RETURN_PREVIEW_OUTPUT_SCHEMA = {
     "properties": {
         "ok": {"type": "boolean"},
         "error": _ERROR_OUTPUT_OBJECT,
-        "source_order": {"type": ["object", "null"], "additionalProperties": True},
+        "source_order": _NULLABLE_LOOSE_OBJECT,
         "items": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
         "required_actions": {"type": "array", "items": {"type": "string"}},
         "ready_to_submit": {"type": "boolean"},
-        "preview_id": {"type": ["string", "null"]},
-        "preview": {"type": ["object", "null"]},
+        "preview_id": _NULLABLE_STRING,
+        "preview": _NULLABLE_OBJECT,
     },
     "required": ["ok"],
     "additionalProperties": True,
@@ -94,12 +103,12 @@ _MONEY_PREVIEW_OUTPUT_SCHEMA = {
     "properties": {
         "ok": {"type": "boolean"},
         "error": _ERROR_OUTPUT_OBJECT,
-        "order": {"type": ["object", "null"], "additionalProperties": True},
+        "order": _NULLABLE_LOOSE_OBJECT,
         "reference_resolutions": {"type": "object", "additionalProperties": True},
         "required_actions": {"type": "array", "items": {"type": "string"}},
         "ready_to_submit": {"type": "boolean"},
-        "preview_id": {"type": ["string", "null"]},
-        "preview": {"type": ["object", "null"]},
+        "preview_id": _NULLABLE_STRING,
+        "preview": _NULLABLE_OBJECT,
     },
     "required": ["ok"],
     "additionalProperties": True,
@@ -124,7 +133,7 @@ _DOCUMENT_GET_OUTPUT_SCHEMA = {
     "properties": {
         "ok": {"type": "boolean"},
         "error": _ERROR_OUTPUT_OBJECT,
-        "document": {"type": ["object", "null"], "additionalProperties": True},
+        "document": _NULLABLE_LOOSE_OBJECT,
     },
     "required": ["ok"],
     "additionalProperties": True,
