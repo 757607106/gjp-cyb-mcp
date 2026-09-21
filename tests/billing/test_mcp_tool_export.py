@@ -167,7 +167,7 @@ def _make_billing_toolset(tmp_path) -> BillingToolSet:
 def test_create_mcp_server_lists_tools_in_camelcase(tmp_path) -> None:
     """create_mcp_server 的 list_tools 必须下发 camelCase 工具名。
 
-    通过 FastMCP 的 list_tools 端到端验证导出层不再下发 snake_case，
+    通过 MCPServer 的 list_tools 端到端验证导出层不再下发 snake_case，
     且业务声明的 input/output schema 已进入协议层工具定义。
     """
     toolset = _make_billing_toolset(tmp_path)
@@ -188,14 +188,14 @@ def test_create_mcp_server_lists_tools_in_camelcase(tmp_path) -> None:
     names = {tool.name for tool in tools}
     assert names == _EXPECTED_CAMEL
     by_name = {tool.name: tool for tool in tools}
-    assert by_name["previewSalesOrder"].inputSchema == toolset.get(
+    assert by_name["previewSalesOrder"].input_schema == toolset.get(
         "preview_sales_order",
     ).input_schema
-    assert by_name["previewSalesOrder"].outputSchema == toolset.get(
+    assert by_name["previewSalesOrder"].output_schema == toolset.get(
         "preview_sales_order",
     ).output_schema
-    assert by_name["previewSalesOrder"].annotations.readOnlyHint is True
-    assert by_name["submitSalesOrder"].annotations.destructiveHint is True
+    assert by_name["previewSalesOrder"].annotations.read_only_hint is True
+    assert by_name["submitSalesOrder"].annotations.destructive_hint is True
 
 
 def test_output_schemas_accept_arguments_guard_rejection(tmp_path) -> None:
@@ -361,9 +361,9 @@ def test_all_published_tools_are_self_describing_without_business_instructions(t
         assert "仅展示业务信息" in tool.description, tool.name
         assert "内部 ID" in tool.description, tool.name
         assert "控制字段" in tool.description, tool.name
-        for path, parameter in _schema_properties(tool.inputSchema):
+        for path, parameter in _schema_properties(tool.input_schema):
             assert parameter.get("description", "").strip(), f"{tool.name}{path} 缺少参数说明"
-        metadata = tool.description + json.dumps(tool.inputSchema, ensure_ascii=False)
+        metadata = tool.description + json.dumps(tool.input_schema, ensure_ascii=False)
         for internal_name in BILLING_MCP_TOOL_NAMES:
             assert not re.search(r"(?<!\w)" + re.escape(internal_name) + r"(?!\w)", metadata), (
                 f"{tool.name} 仍引用未发布的 {internal_name}"

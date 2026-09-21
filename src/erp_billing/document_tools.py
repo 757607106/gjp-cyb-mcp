@@ -3478,13 +3478,11 @@ def build_document_tools(host: DocumentTools) -> list[SessionFunctionTool]:
         SessionFunctionTool(
             host.preview_purchase_order,
             is_read_only=True,
-            is_concurrency_safe=False,
             output_schema=_TEXT_DOCUMENT_PREVIEW_OUTPUT_SCHEMA,
             input_schema_override=_PREVIEW_PURCHASE_ORDER_INPUT_SCHEMA,
         ),
         SessionFunctionTool(
             host.submit_purchase_order,
-            is_concurrency_safe=False,
             output_schema=_DOCUMENT_SUBMIT_OUTPUT_SCHEMA,
         ),
         SessionFunctionTool(
@@ -3500,12 +3498,10 @@ def build_document_tools(host: DocumentTools) -> list[SessionFunctionTool]:
         ),
         SessionFunctionTool(
             host.void_purchase_order,
-            is_concurrency_safe=False,
             output_schema=_DOCUMENT_VOID_OUTPUT_SCHEMA,
         ),
         SessionFunctionTool(
             host.update_purchase_order,
-            is_concurrency_safe=False,
             output_schema=_DOCUMENT_UPDATE_OUTPUT_SCHEMA,
             input_schema_override=_UPDATE_PURCHASE_ORDER_INPUT_SCHEMA,
         ),
@@ -3513,13 +3509,11 @@ def build_document_tools(host: DocumentTools) -> list[SessionFunctionTool]:
         SessionFunctionTool(
             host.preview_purchase_return,
             is_read_only=True,
-            is_concurrency_safe=False,
             output_schema=_RETURN_PREVIEW_OUTPUT_SCHEMA,
             input_schema_override=_PREVIEW_PURCHASE_RETURN_INPUT_SCHEMA,
         ),
         SessionFunctionTool(
             host.submit_purchase_return,
-            is_concurrency_safe=False,
             output_schema=_DOCUMENT_SUBMIT_OUTPUT_SCHEMA,
         ),
         SessionFunctionTool(
@@ -3535,20 +3529,17 @@ def build_document_tools(host: DocumentTools) -> list[SessionFunctionTool]:
         ),
         SessionFunctionTool(
             host.void_purchase_return,
-            is_concurrency_safe=False,
             output_schema=_DOCUMENT_VOID_OUTPUT_SCHEMA,
         ),
         # 销售退货单
         SessionFunctionTool(
             host.preview_sales_return,
             is_read_only=True,
-            is_concurrency_safe=False,
             output_schema=_RETURN_PREVIEW_OUTPUT_SCHEMA,
             input_schema_override=_PREVIEW_SALES_RETURN_INPUT_SCHEMA,
         ),
         SessionFunctionTool(
             host.submit_sales_return,
-            is_concurrency_safe=False,
             output_schema=_DOCUMENT_SUBMIT_OUTPUT_SCHEMA,
         ),
         SessionFunctionTool(
@@ -3564,70 +3555,59 @@ def build_document_tools(host: DocumentTools) -> list[SessionFunctionTool]:
         ),
         SessionFunctionTool(
             host.void_sales_return,
-            is_concurrency_safe=False,
             output_schema=_DOCUMENT_VOID_OUTPUT_SCHEMA,
         ),
         # 销售单继续收款 / 采购单继续付款
         SessionFunctionTool(
             host.preview_sales_receipt,
             is_read_only=True,
-            is_concurrency_safe=False,
             output_schema=_MONEY_PREVIEW_OUTPUT_SCHEMA,
             input_schema_override=_PREVIEW_SALES_RECEIPT_INPUT_SCHEMA,
         ),
         SessionFunctionTool(
             host.submit_sales_receipt,
-            is_concurrency_safe=False,
             output_schema=_DOCUMENT_SUBMIT_OUTPUT_SCHEMA,
         ),
         SessionFunctionTool(
             host.preview_purchase_payment,
             is_read_only=True,
-            is_concurrency_safe=False,
             output_schema=_MONEY_PREVIEW_OUTPUT_SCHEMA,
             input_schema_override=_PREVIEW_PURCHASE_PAYMENT_INPUT_SCHEMA,
         ),
         SessionFunctionTool(
             host.submit_purchase_payment,
-            is_concurrency_safe=False,
             output_schema=_DOCUMENT_SUBMIT_OUTPUT_SCHEMA,
         ),
         # 库存调拨与其他出入库
         SessionFunctionTool(
             host.preview_stock_transfer,
             is_read_only=True,
-            is_concurrency_safe=False,
             output_schema=_TEXT_DOCUMENT_PREVIEW_OUTPUT_SCHEMA,
             input_schema_override=_PREVIEW_STOCK_TRANSFER_INPUT_SCHEMA,
         ),
         SessionFunctionTool(
             host.submit_stock_transfer,
-            is_concurrency_safe=False,
             output_schema=_DOCUMENT_SUBMIT_OUTPUT_SCHEMA,
         ),
         SessionFunctionTool(
             host.preview_other_stock_doc,
             is_read_only=True,
-            is_concurrency_safe=False,
             output_schema=_TEXT_DOCUMENT_PREVIEW_OUTPUT_SCHEMA,
             input_schema_override=_PREVIEW_OTHER_STOCK_DOC_INPUT_SCHEMA,
         ),
         SessionFunctionTool(
             host.submit_other_stock_doc,
-            is_concurrency_safe=False,
             output_schema=_DOCUMENT_SUBMIT_OUTPUT_SCHEMA,
         ),
         # 收款单
         SessionFunctionTool(
             host.preview_receipt_order,
             is_read_only=True,
-            is_concurrency_safe=False,
             output_schema=_MONEY_PREVIEW_OUTPUT_SCHEMA,
             input_schema_override=_PREVIEW_RECEIPT_ORDER_INPUT_SCHEMA,
         ),
         SessionFunctionTool(
             host.submit_receipt_order,
-            is_concurrency_safe=False,
             output_schema=_DOCUMENT_SUBMIT_OUTPUT_SCHEMA,
         ),
         SessionFunctionTool(
@@ -3643,20 +3623,17 @@ def build_document_tools(host: DocumentTools) -> list[SessionFunctionTool]:
         ),
         SessionFunctionTool(
             host.void_receipt_order,
-            is_concurrency_safe=False,
             output_schema=_DOCUMENT_VOID_OUTPUT_SCHEMA,
         ),
         # 付款单
         SessionFunctionTool(
             host.preview_payment_order,
             is_read_only=True,
-            is_concurrency_safe=False,
             output_schema=_MONEY_PREVIEW_OUTPUT_SCHEMA,
             input_schema_override=_PREVIEW_PAYMENT_ORDER_INPUT_SCHEMA,
         ),
         SessionFunctionTool(
             host.submit_payment_order,
-            is_concurrency_safe=False,
             output_schema=_DOCUMENT_SUBMIT_OUTPUT_SCHEMA,
         ),
         SessionFunctionTool(
@@ -3672,7 +3649,6 @@ def build_document_tools(host: DocumentTools) -> list[SessionFunctionTool]:
         ),
         SessionFunctionTool(
             host.void_payment_order,
-            is_concurrency_safe=False,
             output_schema=_DOCUMENT_VOID_OUTPUT_SCHEMA,
         ),
     ]

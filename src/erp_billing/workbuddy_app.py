@@ -21,7 +21,7 @@ from gjp_common.logging_config import configure_logging
 from .adapters import UnavailableBillingApi, create_match_logger_from_env
 from .app import BillingSessionToolSetResolver
 from .config import ErpBillingSettings
-from .mcp_service import create_billing_mcp_service
+from .mcp_service import create_billing_mcp_service, mcp_transport_allowlists
 from .session import ErpBillingSession
 from .toolset import BillingToolSet
 from .workbuddy_oauth import (
@@ -84,12 +84,15 @@ def create_workbuddy_billing_app(
         await toolset_resolver.close()
         store.close()
 
+    allowed_hosts, allowed_origins = mcp_transport_allowlists(settings.public_base_url)
     service = create_billing_mcp_service(
         schema_toolset=schema_toolset,
         identity_resolver=WorkBuddyIdentityResolver(oauth_provider),
         toolset_resolver=toolset_resolver,
         extra_routes=create_workbuddy_oauth_routes(oauth_provider),
         shutdown=shutdown,
+        allowed_hosts=allowed_hosts,
+        allowed_origins=allowed_origins,
     )
     return WorkBuddyOAuthProtectionMiddleware(service, oauth_provider)
 

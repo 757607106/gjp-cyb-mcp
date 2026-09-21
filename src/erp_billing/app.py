@@ -17,6 +17,7 @@ legacy 入口不持有 ERP 的 JWT 签名密钥，只校验 JWT 结构和身份�
 from __future__ import annotations
 
 import hashlib
+import json
 import threading
 import time
 from dataclasses import dataclass, replace
@@ -24,6 +25,7 @@ from typing import Any, Callable
 
 import jwt
 from cachetools import TTLCache
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from gjp_common.config import get_env_value
 from gjp_common.connections import BusinessApiCredential, BusinessApiCredentialProvider
@@ -40,7 +42,7 @@ from .adapters import (
 from .catalog import ProductCatalog
 from .catalog_state import TenantCatalogState
 from .config import ErpBillingSettings
-from .mcp_service import create_billing_mcp_service
+from .mcp_service import create_billing_mcp_service, mcp_transport_allowlists
 from .session import ErpBillingSession
 from .toolset import BillingToolSet
 
@@ -166,7 +168,10 @@ class SessionCredentialStore:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._creds: dict[tuple[str, str, str], _StoredCredential] = {}
+        self._creds: TTLCache[tuple[str, str, str], _StoredCredential] = TTLCache(
+            maxsize=int(get_env_value("MCP_SESSION_MAX_SIZE", "500") or 500),
+            ttl=int(get_env_value("MCP_SESSION_TTL_SECONDS", "3600") or 3600),
+        )
 
     @staticmethod
     def _key(context: InvocationContext) -> tuple[str, str, str]:
@@ -183,6 +188,8 @@ class SessionCredentialStore:
         if stored is None:
             raise DomainError("business_credential_required", "当前会话缺少 ERP 鉴权凭据")
         if stored.expires_at and stored.expires_at < time.time():
+            with self._lock:
+                self._creds.pop(self._key(context), None)
             raise DomainError("business_reauth_required", "当前业务系统授权已失效")
         return stored.credential
 
@@ -392,6 +399,61 @@ def _create_identity_resolver(bearer_store: SessionCredentialStore) -> Any:
     return _CompositeIdentityResolver(bearer_factory, api_key_resolver)
 
 
+class LegacyCredentialProtectionMiddleware:
+    """在进入 MCP 协议处理前拒绝缺失或格式错误的 legacy 凭据。"""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self._app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if (
+            scope.get("type") != "http"
+            or scope.get("method") == "OPTIONS"
+            or str(scope.get("path") or "") != "/mcp"
+        ):
+            await self._app(scope, receive, send)
+            return
+        headers = {
+            key.decode("latin-1").casefold(): value.decode("latin-1")
+            for key, value in scope.get("headers", [])
+        }
+        authorization = headers.get("authorization", "").strip()
+        api_key = headers.get("x-api-key", "").strip()
+        valid = bool(api_key)
+        if authorization:
+            scheme, _, token = authorization.partition(" ")
+            token = token.strip()
+            if token[:7].casefold() == "bearer ":
+                token = token[7:].strip()
+            try:
+                payload = _decode_jwt_unverified(token) if scheme.casefold() == "bearer" and token else {}
+                valid = bool(payload.get("tenantId") and payload.get("loginId"))
+                exp = payload.get("exp")
+                if isinstance(exp, (int, float)) and not isinstance(exp, bool) and exp <= time.time():
+                    valid = False
+            except DomainError:
+                valid = False
+        if valid:
+            await self._app(scope, receive, send)
+            return
+        body = json.dumps(
+            {"error": "invalid_token", "error_description": "Authentication required"},
+        ).encode("utf-8")
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 401,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode("ascii")),
+                    (b"www-authenticate", b'Bearer realm="erp-billing"'),
+                    (b"cache-control", b"no-store"),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": body})
+
+
 def create_billing_app() -> Any:
     """装配固定 ERP URL、逐请求透传 ERP 凭据的开单 MCP 应用。"""
     configure_logging()
@@ -414,12 +476,16 @@ def create_billing_app() -> Any:
         settings,
         timeout_seconds,
     )
-    return create_billing_mcp_service(
+    allowed_hosts, allowed_origins = mcp_transport_allowlists()
+    service = create_billing_mcp_service(
         schema_toolset=schema_toolset,
         identity_resolver=_create_identity_resolver(bearer_store),
         toolset_resolver=toolset_resolver,
         shutdown=toolset_resolver.close,
+        allowed_hosts=allowed_hosts,
+        allowed_origins=allowed_origins,
     )
+    return LegacyCredentialProtectionMiddleware(service)
 
 
 app = _LazyBillingApp(create_billing_app)

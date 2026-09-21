@@ -8,8 +8,8 @@ from types import SimpleNamespace
 import httpx
 import jsonschema
 import pytest
-from mcp.server.lowlevel.server import request_ctx
-from mcp.types import CallToolRequest, CallToolRequestParams
+from mcp.server import ServerRequestContext
+from mcp.server.mcpserver import Context
 
 from erp_billing.adapters import BusinessAuthenticatedJsonClient, ErpAuthenticatedHttpAdapter
 from erp_billing.presentation import present_billing_result
@@ -53,17 +53,21 @@ def _protocol_server(tools):
 
 
 async def _call_billing_protocol(server, name, **arguments):
-    """必须经过 lowlevel handler，不能绕过 presenter 或官方 outputSchema 校验。"""
-    token = request_ctx.set(SimpleNamespace(request=SimpleNamespace(headers={})))
-    try:
-        response = await server._mcp_server.request_handlers[CallToolRequest](
-            CallToolRequest(params=CallToolRequestParams(name=name, arguments=arguments)),
-        )
-    finally:
-        request_ctx.reset(token)
-    result = response.root
-    assert result.isError is False, result.content
-    assert isinstance(result.structuredContent, dict)
+    """必须经过 MCPServer 公共入口，不能绕过 presenter 或 outputSchema 校验。"""
+    request_context = ServerRequestContext(
+        session=SimpleNamespace(),
+        lifespan_context=None,
+        protocol_version="2026-07-28",
+        method="tools/call",
+        request_id=1,
+        request=SimpleNamespace(headers={}),
+    )
+    result = await server.call_tool(
+        name,
+        arguments,
+        Context(request_context=request_context, mcp_server=server),
+    )
+    assert isinstance(result.structured_content, dict)
     assert len(result.content) == 1
     assert result.content[0].type == "text"
     return result
@@ -91,13 +95,13 @@ def test_protocol_filtered_preview_confirmation_submit_and_replay(tmp_path):
 
     async def scenario():
         search = await _call_billing_protocol(server, "searchProducts", keywords=["土豆"])
-        product = search.structuredContent["results"][0]["product"]
+        product = search.structured_content["results"][0]["product"]
         references = await _call_billing_protocol(
             server, "searchBillingReferences", reference_type="customer", keyword=PREVIEW["customer"],
         )
-        customer = references.structuredContent["options"][0]
+        customer = references.structured_content["options"][0]
         first = await _call_billing_protocol(server, "previewSalesOrder", **PREVIEW)
-        pending = first.structuredContent
+        pending = first.structured_content
         assert pending["ready_to_submit"] is False
         assert pending["preview_id"] is None
         assert pending["preview"] is None
@@ -119,7 +123,7 @@ def test_protocol_filtered_preview_confirmation_submit_and_replay(tmp_path):
             confirmed_products=[{key: candidate[key] for key in ("line_id", "product_id")}],
             confirmed_units=[confirmation],
         )
-        prepared = ready.structuredContent
+        prepared = ready.structured_content
         assert prepared["ready_to_submit"] is True
         assert prepared["unit_warnings"] == []
         assert prepared["required_actions"] == ["confirm_submit"]
@@ -130,18 +134,20 @@ def test_protocol_filtered_preview_confirmation_submit_and_replay(tmp_path):
         assert api.created_payloads == []
 
         rejected = await _call_billing_protocol(server, "submitSalesOrder", preview_id=preview_id)
-        assert rejected.structuredContent["ok"] is False
-        assert rejected.structuredContent["error"]["code"] == "erp_document_confirmation_required"
+        assert rejected.is_error is True
+        assert rejected.structured_content["ok"] is False
+        assert rejected.structured_content["error"]["code"] == "erp_document_confirmation_required"
         assert api.created_payloads == []
         submitted = await _call_billing_protocol(
             server, "submitSalesOrder", preview_id=preview_id, confirmed_by_user=True,
         )
+        assert submitted.is_error is False
         replay = await _call_billing_protocol(
             server, "submitSalesOrder", preview_id=preview_id, confirmed_by_user=True,
         )
-        assert submitted.structuredContent["submitted"] is True
-        assert submitted.structuredContent["idempotent_replay"] is False
-        assert replay.structuredContent == {**submitted.structuredContent, "idempotent_replay": True}
+        assert submitted.structured_content["submitted"] is True
+        assert submitted.structured_content["idempotent_replay"] is False
+        assert replay.structured_content == {**submitted.structured_content, "idempotent_replay": True}
         assert len(api.created_payloads) == 1
         assert api.created_payloads[0]["customerId"] == customer["id"]
         assert api.created_payloads[0]["items"] == [
@@ -156,7 +162,7 @@ def test_protocol_filtered_preview_confirmation_submit_and_replay(tmp_path):
         assert visible["明细"][0]["金额"] == 14
         assert prepared["preview"]["items"][0]["line_amount"] == 14
         assert visible["合计金额"] == 14
-        assert submitted.structuredContent["order_no"] in submitted.content[0].text
+        assert submitted.structured_content["order_no"] in submitted.content[0].text
         # 先验证写入闭环和业务展示，再检查控制值不能因中文标签包装而泄漏。
         for result in (search, references, first, ready, rejected, submitted, replay):
             _assert_business_text(
@@ -234,7 +240,7 @@ def test_protocol_filtered_sales_detail_can_update_existing_line(tmp_path, item_
 
     async def scenario():
         detail = await _call_billing_protocol(server, "getSalesOrder", order_id="123")
-        order = detail.structuredContent["order"]
+        order = detail.structured_content["order"]
         item, = order["items"]
         assert order["id"] == "123"
         assert item[item_id_key] == "7894561230001"
@@ -255,7 +261,7 @@ def test_protocol_filtered_sales_detail_can_update_existing_line(tmp_path, item_
                 "unit_id": item["unitId"], "conversion_rate": item["conversionRate"],
             }],
         )
-        assert updated.structuredContent["modified"] is True
+        assert updated.structured_content["modified"] is True
         assert len(http.put_calls) == 1
         path, body = http.put_calls[0]
         assert path == "/sales/orders/123"

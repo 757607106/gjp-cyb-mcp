@@ -31,7 +31,7 @@ import pytest
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
-# mcp 1.29 起 streamable_http_client 不再接受 headers 参数，
+# MCP SDK 2.x 的 streamable_http_client 不接受 headers 参数，
 # 需通过自定义 httpx.AsyncClient 传入鉴权头；read 超时对齐 MCP 默认 300 秒。
 _HTTP_TIMEOUT = httpx.Timeout(30, read=300)
 
@@ -341,7 +341,7 @@ def _call_protocol_error(
                 async with ClientSession(read, write) as session:
                     await session.initialize()
                     result = await session.call_tool(tool, arguments or {})
-                    assert result.isError, "预期 MCP 协议级错误，实际成功返回"
+                    assert result.is_error, "预期 MCP 协议级错误，实际成功返回"
                     return " ".join(
                         getattr(block, "text", "")
                         for block in (result.content or [])
@@ -419,9 +419,9 @@ def test_initialize_lists_all_tools(server_url):
     }
     assert len(names) == 59
     for tool in tools:
-        assert tool.inputSchema["type"] == "object"
-        assert tool.outputSchema is not None
-        assert tool.outputSchema["type"] == "object"
+        assert tool.input_schema["type"] == "object"
+        assert tool.output_schema is not None
+        assert tool.output_schema["type"] == "object"
 
 
 def test_missing_api_key_rejected(server_url):

@@ -27,7 +27,6 @@ from gjp_common.context import InvocationContext
 from gjp_common.errors import DomainError
 from gjp_common.logging_config import (
     clip_log_text,
-    credential_dump_enabled,
     elapsed_ms,
 )
 from gjp_common.paths import resolve_output_path
@@ -1548,9 +1547,7 @@ class BusinessAuthenticatedJsonClient:
                 "ERP 请求开始 method=%s url=%s headers=%s body=%s",
                 method,
                 url,
-                json.dumps(headers, ensure_ascii=False)
-                if credential_dump_enabled()
-                else "<已脱敏>",
+                "<已脱敏>",
                 clip_log_text(json.dumps(payload, ensure_ascii=False))
                 if payload is not None
                 else "<无>",

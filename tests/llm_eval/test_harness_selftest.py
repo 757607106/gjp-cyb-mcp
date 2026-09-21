@@ -423,23 +423,23 @@ def test_metadata_covers_all_published_tools_without_answer_in_utterances(publis
             assert scenario.expected_params["confirmed_by_user"] is True
             assert "确认" in scenario.utterance
         for name, payload in scenario.mock_results.items():
-            jsonschema.validate(payload, published_tools[name].outputSchema)
+            jsonschema.validate(payload, published_tools[name].output_schema)
         pending = {}
         for message in scenario.history:
             for call in message.get("tool_calls", []):
                 name = call["function"]["name"]
-                jsonschema.validate(json.loads(call["function"]["arguments"]), published_tools[name].inputSchema)
+                jsonschema.validate(json.loads(call["function"]["arguments"]), published_tools[name].input_schema)
                 pending[call["id"]] = name
             if message["role"] == "tool":
                 name = pending.pop(message["tool_call_id"])
-                jsonschema.validate(json.loads(message["content"]), published_tools[name].outputSchema)
+                jsonschema.validate(json.loads(message["content"]), published_tools[name].output_schema)
         assert pending == {}
 
 
 @pytest.mark.parametrize("scenario", _METADATA_SCENARIOS, ids=lambda s: s.scenario_id)
 def test_metadata_scripted_scenarios_against_actual_tools_list(published_tools, scenario):
     tools = [{"type": "function", "function": {
-        "name": t.name, "description": t.description, "parameters": t.inputSchema,
+        "name": t.name, "description": t.description, "parameters": t.input_schema,
     }} for t in published_tools.values()]
     result = asyncio.run(harness.run_scenario(
         harness.ScriptedModel(scenario), NoExecutionEndpoint(), scenario, tools=tools, metadata_only=True,

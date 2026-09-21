@@ -6,7 +6,7 @@ from gjp_common.logging_config import configure_logging
 def _logging_env(tmp_path, enabled: str, level: str = "INFO"):
     path = tmp_path / ".env"
     path.write_text(
-        "GJP_LOG_ENABLED=%s\nGJP_LOG_LEVEL=%s\nGJP_LOG_CONTEXT=true\n"
+        "GJP_LOG_ENABLED=%s\nGJP_LOG_LEVEL=%s\n"
         % (enabled, level),
         encoding="utf-8",
     )
@@ -35,5 +35,4 @@ def test_terminal_logging_writes_execution_stage_to_stderr(tmp_path, monkeypatch
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "终端执行日志已开启" in captured.err
-    assert "model_context=True" in captured.err
     assert "执行阶段=compile" in captured.err

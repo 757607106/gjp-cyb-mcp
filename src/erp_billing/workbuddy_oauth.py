@@ -705,7 +705,7 @@ class WorkBuddyOAuthProtectionMiddleware:
         self,
         app: ASGIApp,
         provider: WorkBuddyOAuthProvider,
-        protected_paths: Sequence[str] = ("/mcp", "/sse", "/messages/"),
+        protected_paths: Sequence[str] = ("/mcp",),
     ) -> None:
         self._app = app
         self._provider = provider

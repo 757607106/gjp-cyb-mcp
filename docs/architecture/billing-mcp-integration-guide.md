@@ -6,7 +6,6 @@
 |---|---|
 | MCP Server | `erp-billing` |
 | Streamable HTTP | `POST /mcp` |
-| SSE | `GET /sse` |
 | 工具数 | 59（销售、采购、库存、资金往来、报表五域） |
 | 读取权限 | `billing:read` |
 | 写单权限 | `billing:write` |

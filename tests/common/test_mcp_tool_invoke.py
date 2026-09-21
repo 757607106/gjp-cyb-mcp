@@ -1,4 +1,4 @@
-"""验证 FastMCP 发布层的工具调用行为与 HTTP 装配。"""
+"""验证 MCPServer 发布层的工具调用行为与 HTTP 装配。"""
 
 from __future__ import annotations
 
@@ -7,9 +7,8 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from mcp.server.fastmcp.exceptions import ToolError
-from mcp.server.lowlevel.server import request_ctx
-from mcp.types import CallToolRequest, CallToolRequestParams
+from mcp.server import ServerRequestContext
+from mcp.server.mcpserver import Context
 from starlette.routing import Route
 from starlette.testclient import TestClient
 
@@ -51,7 +50,12 @@ class _DictHeaders:
 
 
 def _fake_request_context() -> SimpleNamespace:
-    return SimpleNamespace(
+    return ServerRequestContext(
+        session=SimpleNamespace(),
+        lifespan_context=None,
+        protocol_version="2026-07-28",
+        method="tools/call",
+        request_id=1,
         request=SimpleNamespace(
             headers=_DictHeaders({"authorization": "Bearer test-token"}),
         ),
@@ -118,30 +122,18 @@ def _make_enum_server() -> Any:
 
 
 def _call(server: Any, name: str, arguments: dict[str, Any]) -> Any:
-    token = request_ctx.set(_fake_request_context())
-    try:
-        return asyncio.run(
-            server._tool_manager.call_tool(name, arguments, convert_result=True),
-        )
-    finally:
-        request_ctx.reset(token)
+    return asyncio.run(
+        server.call_tool(
+            name,
+            arguments,
+            Context(request_context=_fake_request_context(), mcp_server=server),
+        ),
+    )
 
 
 def _call_protocol(server: Any, name: str, arguments: dict[str, Any]) -> Any:
-    """走 lowlevel CallToolRequest 回调，覆盖参数契约守卫与官方校验。"""
-    token = request_ctx.set(_fake_request_context())
-    try:
-        handler = server._mcp_server.request_handlers[CallToolRequest]
-        response = asyncio.run(
-            handler(
-                CallToolRequest(
-                    params=CallToolRequestParams(name=name, arguments=arguments),
-                ),
-            ),
-        )
-        return response.root
-    finally:
-        request_ctx.reset(token)
+    """走 MCPServer 公共调用入口，覆盖参数契约与结果映射。"""
+    return _call(server, name, arguments)
 
 
 def test_call_tool_dispatches_to_session_toolset() -> None:
@@ -151,17 +143,17 @@ def test_call_tool_dispatches_to_session_toolset() -> None:
     server = _make_server(identity)
     result = _call(server, "sampleTool", {"limit": 5})
 
-    unstructured, structured = result
-    assert structured == {"ok": True, "limit": 5}
+    assert result.structured_content == {"ok": True, "limit": 5}
     assert _CALLS == ["invoked"]
     assert identity.seen_authorization == ["Bearer test-token"]
 
 
 def test_call_tool_type_error_becomes_tool_error() -> None:
-    """参数类型非法时由 pydantic 校验拒绝，转为协议级 ToolError。"""
+    """参数类型非法时由 JSON Schema 校验拒绝，转为协议级工具错误。"""
     server = _make_server()
-    with pytest.raises(ToolError):
-        _call(server, "sampleTool", {"limit": "not-a-number"})
+    result = _call(server, "sampleTool", {"limit": "not-a-number"})
+    assert result.is_error is True
+    assert result.structured_content["error"]["code"] == "tool_arguments_invalid"
 
 
 def test_protocol_call_passes_through_guard() -> None:
@@ -170,8 +162,8 @@ def test_protocol_call_passes_through_guard() -> None:
     server = _make_enum_server()
     result = _call_protocol(server, "typedTool", {"level": "warn"})
 
-    assert result.isError is False
-    assert result.structuredContent == {"ok": True, "level": "warn"}
+    assert result.is_error is False
+    assert result.structured_content == {"ok": True, "level": "warn"}
     assert _CALLS == ["typed"]
 
 
@@ -190,7 +182,7 @@ def test_protocol_call_projects_both_content_and_structured_result() -> None:
 
     result = _call_protocol(server, "sampleTool", {"limit": 5})
 
-    assert result.structuredContent == {"ok": True}
+    assert result.structured_content == {"ok": True}
     assert [block.text for block in result.content] == [
         "业务展示：仅保留业务信息",
     ]
@@ -215,8 +207,8 @@ def test_arguments_guard_dictionary_result_uses_both_projections() -> None:
 
     result = _call_protocol(server, "sampleTool", {"unknownField": "internal-value"})
 
-    assert result.isError is False
-    assert result.structuredContent == {
+    assert result.is_error is True
+    assert result.structured_content == {
         "ok": False,
         "error": {"code": "tool_arguments_invalid", "message": "请核对业务信息。"},
     }
@@ -230,7 +222,7 @@ def test_protocol_schema_violation_is_protocol_error() -> None:
     server = _make_enum_server()
     result = _call_protocol(server, "typedTool", {"level": "urgent"})
 
-    assert result.isError is True
+    assert result.is_error is True
     text = " ".join(block.text for block in result.content)
     assert "Input validation error" in text
     assert "urgent" in text
@@ -243,7 +235,7 @@ def test_protocol_schema_type_violation_is_protocol_error() -> None:
     server = _make_enum_server()
     result = _call_protocol(server, "typedTool", {"level": 3})
 
-    assert result.isError is True
+    assert result.is_error is True
     text = " ".join(block.text for block in result.content)
     assert "Input validation error" in text
     assert _CALLS == []
@@ -255,10 +247,10 @@ def test_protocol_unknown_argument_returns_structured_error() -> None:
     server = _make_server()
     result = _call_protocol(server, "sampleTool", {"pageValue": 1})
 
-    assert result.isError is False
-    assert result.structuredContent["ok"] is False
-    assert result.structuredContent["error"]["code"] == "tool_arguments_invalid"
-    assert "pageValue" in result.structuredContent["error"]["message"]
+    assert result.is_error is True
+    assert result.structured_content["ok"] is False
+    assert result.structured_content["error"]["code"] == "tool_arguments_invalid"
+    assert "pageValue" in result.structured_content["error"]["message"]
     assert _CALLS == []
 
 
@@ -281,7 +273,7 @@ def test_protocol_missing_required_argument_is_protocol_error() -> None:
     )
     result = _call_protocol(server, "requiredTool", {})
 
-    assert result.isError is True
+    assert result.is_error is True
     text = " ".join(block.text for block in result.content)
     assert "Input validation error" in text
     assert "order_id" in text
@@ -296,7 +288,7 @@ def test_call_tool_identity_failure_propagates() -> None:
 
     _CALLS.clear()
     server = _make_server(_RejectingIdentity())
-    with pytest.raises(ToolError):
+    with pytest.raises(PermissionError):
         _call(server, "sampleTool", {"limit": 5})
     assert _CALLS == []
 
@@ -330,7 +322,7 @@ def test_call_tool_rejects_schema_mismatch() -> None:
         _RecordingIdentity(),
         _RuntimeResolver(),
     )
-    with pytest.raises(ToolError):
+    with pytest.raises(ValueError):
         _call(server, "sampleTool", {"limit": 5})
 
 
@@ -355,6 +347,128 @@ def test_http_app_keeps_mcp_route() -> None:
 
     assert "/healthz" in paths
     assert "/mcp" in paths
+
+
+def test_http_app_serves_2026_tools_list_on_public_host() -> None:
+    """2026-07-28 使用逐请求元数据，无需 initialize 握手。"""
+    app = create_mcp_http_app(
+        _make_server(),
+        allowed_hosts=["mcp.example.com"],
+        allowed_origins=["https://app.example.com"],
+    )
+    request = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/list",
+        "params": {
+            "_meta": {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {},
+                "io.modelcontextprotocol/clientInfo": {"name": "test", "version": "1"},
+            },
+        },
+    }
+    headers = {
+        "Host": "mcp.example.com",
+        "Origin": "https://app.example.com",
+        "MCP-Protocol-Version": "2026-07-28",
+        "Mcp-Method": "tools/list",
+        "Accept": "application/json",
+    }
+
+    with TestClient(app) as client:
+        response = client.post("/mcp", json=request, headers=headers)
+
+    assert response.status_code == 200
+    assert response.json()["result"]["tools"][0]["name"] == "sampleTool"
+
+
+def test_http_app_rejects_unconfigured_host_and_origin() -> None:
+    app = create_mcp_http_app(
+        _make_server(),
+        allowed_hosts=["mcp.example.com"],
+        allowed_origins=["https://app.example.com"],
+    )
+    request = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/list",
+        "params": {
+            "_meta": {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {},
+            },
+        },
+    }
+    headers = {
+        "MCP-Protocol-Version": "2026-07-28",
+        "Mcp-Method": "tools/list",
+        "Accept": "application/json",
+    }
+
+    with TestClient(app) as client:
+        bad_host = client.post(
+            "/mcp",
+            json=request,
+            headers={**headers, "Host": "evil.example.com"},
+        )
+        bad_origin = client.post(
+            "/mcp",
+            json=request,
+            headers={
+                **headers,
+                "Host": "mcp.example.com",
+                "Origin": "https://evil.example.com",
+            },
+        )
+
+    assert bad_host.status_code == 421
+    assert bad_origin.status_code == 403
+
+
+def test_http_app_2026_business_failure_sets_is_error() -> None:
+    async def failing_tool() -> dict[str, Any]:
+        return {"ok": False, "error": {"code": "business_rejected", "message": "业务拒绝"}}
+
+    toolset = SessionToolSet(
+        [SessionFunctionTool(failing_tool)],
+        contexts=InvocationContextStore(default=_context()),
+    )
+    server = create_mcp_server(
+        "test-service",
+        toolset,
+        _RecordingIdentity(),
+        _StaticToolSet(toolset),
+    )
+    app = create_mcp_http_app(server)
+    request = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "failingTool",
+            "arguments": {},
+            "_meta": {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {},
+            },
+        },
+    }
+    headers = {
+        "Host": "localhost",
+        "Authorization": "Bearer test-token",
+        "MCP-Protocol-Version": "2026-07-28",
+        "Mcp-Method": "tools/call",
+        "Mcp-Name": "failingTool",
+        "Accept": "application/json",
+    }
+
+    with TestClient(app) as client:
+        response = client.post("/mcp", json=request, headers=headers)
+
+    assert response.status_code == 200
+    assert response.json()["result"]["isError"] is True
+    assert response.json()["result"]["structuredContent"]["error"]["code"] == "business_rejected"
 
 
 def test_http_app_runs_shutdown_callback() -> None:
@@ -389,7 +503,7 @@ def test_args_descriptions_reach_published_parameter_schema() -> None:
     toolset = SessionToolSet([tool], contexts=InvocationContextStore(default=_context()))
     server = create_mcp_server("test", toolset, _RecordingIdentity(), _StaticToolSet(toolset))
     published, = asyncio.run(server.list_tools())
-    properties = published.inputSchema["properties"]
+    properties = published.input_schema["properties"]
     assert properties["limit"] == {
         "title": "Limit", "default": 10, "type": "integer",
         "description": "每页返回数量。 范围由参数契约限定，不推断额外数据。",

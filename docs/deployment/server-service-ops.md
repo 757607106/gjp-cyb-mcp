@@ -25,8 +25,8 @@ journalctl -u erp-billing-workbuddy-mcp -n 100 --no-pager
 journalctl -u erp-billing-workbuddy-mcp -f
 ```
 
-日志只允许记录脱敏后的请求摘要。`--debug-dump` 会暴露完整凭据，只能在隔离测试环境
-短时使用，完成后必须重启回 INFO 并处理调试日志。
+日志只允许记录脱敏后的请求摘要；服务不提供任何输出完整凭据的调试开关。
+DEBUG 只应短时使用，完成后必须重启回 INFO 并处理调试日志。
 
 ## 启停与重启
 

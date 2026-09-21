@@ -265,7 +265,7 @@ class McpEndpoint:
         result = await self._session.list_tools()
         definitions = []
         for tool in result.tools:
-            schema = tool.inputSchema if isinstance(tool.inputSchema, dict) else {}
+            schema = tool.input_schema if isinstance(tool.input_schema, dict) else {}
             definitions.append(
                 {
                     "type": "function",

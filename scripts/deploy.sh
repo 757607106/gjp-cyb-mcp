@@ -40,21 +40,15 @@ fi
 
 # 调试参数仅用于 nohup 部署
 LOG_LEVEL="INFO"
-DUMP_CREDENTIALS=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --debug)
             LOG_LEVEL="DEBUG"
             shift
             ;;
-        --debug-dump)
-            LOG_LEVEL="DEBUG"
-            DUMP_CREDENTIALS="true"
-            shift
-            ;;
         *)
             echo "未知参数：$1"
-            echo "用法：$0 [--debug] [--debug-dump]"
+            echo "用法：$0 [--debug]"
             exit 1
             ;;
     esac
@@ -129,7 +123,6 @@ start_service() {
             info "ERP 地址来源：config/$GJP_ENV.env"
         fi
         export GJP_LOG_LEVEL="$LOG_LEVEL"
-        [ -n "$DUMP_CREDENTIALS" ] && export GJP_DEBUG_DUMP_CREDENTIALS="$DUMP_CREDENTIALS"
         # 确保 uv 在 PATH 中
         export PATH="/usr/local/bin:$PATH"
 

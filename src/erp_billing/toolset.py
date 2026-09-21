@@ -651,7 +651,6 @@ class BillingToolSet(QueryTools, DocumentTools, SessionToolSet):
             [
                 SessionFunctionTool(
                     self.sync_products,
-                    is_concurrency_safe=False,
                     output_schema=_SYNC_PRODUCTS_OUTPUT_SCHEMA,
                     input_schema_override={
                         "type": "object",
@@ -683,13 +682,11 @@ class BillingToolSet(QueryTools, DocumentTools, SessionToolSet):
                 SessionFunctionTool(
                     self.preview_sales_order,
                     is_read_only=True,
-                    is_concurrency_safe=False,
                     output_schema=_PREVIEW_SALES_ORDER_OUTPUT_SCHEMA,
                     input_schema_override=_PREVIEW_SALES_ORDER_INPUT_SCHEMA,
                 ),
                 SessionFunctionTool(
                     self.submit_sales_order,
-                    is_concurrency_safe=False,
                     output_schema=_SUBMIT_SALES_ORDER_OUTPUT_SCHEMA,
                 ),
                 SessionFunctionTool(
@@ -705,12 +702,10 @@ class BillingToolSet(QueryTools, DocumentTools, SessionToolSet):
                 ),
                 SessionFunctionTool(
                     self.void_sales_order,
-                    is_concurrency_safe=False,
                     output_schema=_VOID_SALES_ORDER_OUTPUT_SCHEMA,
                 ),
                 SessionFunctionTool(
                     self.update_sales_order,
-                    is_concurrency_safe=False,
                     output_schema=_UPDATE_SALES_ORDER_OUTPUT_SCHEMA,
                     input_schema_override=_UPDATE_SALES_ORDER_INPUT_SCHEMA,
                 ),

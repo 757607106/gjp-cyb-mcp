@@ -71,7 +71,15 @@ systemctl enable --now erp-billing-mcp
 ```
 
 Nginx 使用独立域名反代 `127.0.0.1:8102`，保留真实 Host 和转发协议，并关闭代理
-缓冲以支持 Streamable HTTP/SSE：
+缓冲以支持 Streamable HTTP：
+
+同时在 `/etc/erp-billing/legacy.env` 配置实际公网域名；多个值用逗号分隔。浏览器
+客户端还需显式配置允许的 Origin：
+
+```bash
+GJP_MCP_ALLOWED_HOSTS=mcp.example.com
+GJP_MCP_ALLOWED_ORIGINS=https://app.example.com
+```
 
 ```nginx
 location / {
@@ -114,8 +122,11 @@ systemctl is-active erp-billing-mcp
 ss -ltnp | grep ':8102'
 curl -i -X POST http://127.0.0.1:8102/mcp \
   -H 'Content-Type: application/json' \
-  -H 'Accept: application/json, text/event-stream' \
-  --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"deploy-check","version":"1.0"}}}'
+  -H 'Accept: application/json' \
+  -H 'X-API-Key: <test-api-key>' \
+  -H 'MCP-Protocol-Version: 2026-07-28' \
+  -H 'Mcp-Method: tools/list' \
+  --data '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{},"io.modelcontextprotocol/clientInfo":{"name":"deploy-check","version":"1.0"}}}}'
 ```
 
 生产验收还应确认：HTTPS 正常、未授权请求被拒绝、日志不包含凭据、读工具可用；写工具

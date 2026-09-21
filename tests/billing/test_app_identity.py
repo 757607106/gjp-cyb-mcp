@@ -9,10 +9,15 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from starlette.applications import Starlette
+from starlette.responses import JSONResponse
+from starlette.routing import Route
+from starlette.testclient import TestClient
 
 from erp_billing.app import (
     ApiKeyIdentityResolver,
     DirectJwtIdentityResolver,
+    LegacyCredentialProtectionMiddleware,
     SessionCredentialStore,
     _CompositeIdentityResolver,
     _create_identity_resolver,
@@ -332,3 +337,21 @@ def test_production_without_secret_allows_api_key_and_bearer(
     bearer_context = resolver.resolve(_mcp_context(token))
     assert bearer_context.tenant_id == "tenant-1"
     assert store.resolve(bearer_context).value == token
+
+
+def test_legacy_http_boundary_rejects_missing_and_invalid_credentials() -> None:
+    async def endpoint(_request):
+        return JSONResponse({"ok": True})
+
+    app = LegacyCredentialProtectionMiddleware(
+        Starlette(routes=[Route("/mcp", endpoint=endpoint, methods=["POST"])]),
+    )
+    with TestClient(app) as client:
+        missing = client.post("/mcp")
+        malformed = client.post("/mcp", headers={"Authorization": "Bearer invalid"})
+        api_key = client.post("/mcp", headers={"X-API-Key": "ak_test"})
+
+    assert missing.status_code == 401
+    assert malformed.status_code == 401
+    assert missing.headers["www-authenticate"].startswith("Bearer")
+    assert api_key.status_code == 200

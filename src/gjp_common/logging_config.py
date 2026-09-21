@@ -14,8 +14,6 @@ from .config import _read_local_env
 LOGGER_NAME = "gjp_common"
 # 统一挂载 handler 的包命名空间；只含本项目业务包，不接管第三方 SDK 的协议层日志
 PACKAGE_LOGGERS = ("gjp_common", "erp_billing")
-# 凭据原文转储开关：独立于日志级别，仅本地调试开启
-CREDENTIAL_DUMP_ENV = "GJP_DEBUG_DUMP_CREDENTIALS"
 # 单条日志中业务参数与响应体的最大字符数，避免长文本淹没终端
 LOG_TEXT_LIMIT = 2000
 TRUE_VALUES = {"1", "true", "yes", "on", "enable", "enabled"}
@@ -50,16 +48,6 @@ def _enabled(value: str) -> bool:
     return True
 
 
-def credential_dump_enabled() -> bool:
-    """是否允许在 DEBUG 日志中输出凭据原文（Authorization、Cookie）。
-
-    与日志级别完全独立且默认关闭：生产即使整体跑 DEBUG，只要不显式开启本开关
-    就不会把访问令牌写进日志。仅接受明确的真值，未识别的取值一律视为关闭。
-    """
-    local_env = _read_local_env()
-    return _setting(local_env, CREDENTIAL_DUMP_ENV, "false").lower() in TRUE_VALUES
-
-
 def clip_log_text(text: str) -> str:
     """截断超长日志文本并标注原始长度，避免刷屏又不丢失规模信息。"""
     if len(text) <= LOG_TEXT_LIMIT:
@@ -83,8 +71,6 @@ def configure_logging() -> bool:
     enabled = _enabled(_setting(local_env, "GJP_LOG_ENABLED", "true"))
     level_name = _setting(local_env, "GJP_LOG_LEVEL", "INFO").upper()
     level = LEVELS.get(level_name, logging.INFO)
-    context_enabled = _enabled(_setting(local_env, "GJP_LOG_CONTEXT", "false"))
-
     package_loggers = [logging.getLogger(name) for name in PACKAGE_LOGGERS]
     for package_logger in package_loggers:
         package_logger.handlers.clear()
@@ -106,9 +92,8 @@ def configure_logging() -> bool:
         package_logger.setLevel(level)
         package_logger.addHandler(handler)
     logging.getLogger(LOGGER_NAME).info(
-        "终端执行日志已开启 level=%s model_context=%s",
+        "终端执行日志已开启 level=%s",
         logging.getLevelName(level),
-        context_enabled,
     )
     if level_name not in LEVELS:
         logging.getLogger(LOGGER_NAME).warning("未知日志级别 %s，已使用 INFO", level_name)

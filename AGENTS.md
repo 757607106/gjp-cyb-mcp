@@ -73,7 +73,7 @@ MCP 只覆盖对话式业务场景，按场景组织工具，不镜像 ERP 全�
 
 | 类别 | 选型 |
 |---|---|
-| MCP 框架 | MCP Python SDK（mcp >= 1.28，< 2，Streamable HTTP） |
+| MCP 框架 | MCP Python SDK（mcp >= 2.2，< 3，MCP 2026-07-28 Streamable HTTP） |
 | 语言 | Python >= 3.11 |
 | 包管理 | uv + pyproject.toml |
 | 模型支持 | OpenAI / Anthropic / DashScope / DeepSeek / Gemini / Moonshot / xAI / Ollama（多模态 VL 模型可直接读图开单） |
@@ -100,7 +100,7 @@ integrations/workbuddy/gjp-erp-billing/  # WorkBuddy 连接器元数据与 erp-b
 
 - 站在 Agent 应用开发架构师角度设计项目架构。
 - 遵循 MCP Python SDK（modelcontextprotocol/python-sdk）官方语法，遇到问题先查官方文档。
-- `mcp` 依赖使用稳定正式版本，当前约束 `>=1.28,<2`；升级时同步更新依赖锁文件并回归工具契约。
+- `mcp` 依赖使用稳定正式版本，当前约束 `>=2.2,<3`；升级时同步更新依赖锁文件并回归工具契约。
 - 禁止过度设计，逻辑清晰易维护。
 - 遇到设计问题应重构，不以兼容分支或临时补丁掩盖问题。
 - 业务逻辑和测试逻辑严格分开，不遗留无关代码或文件。
@@ -116,7 +116,7 @@ integrations/workbuddy/gjp-erp-billing/  # WorkBuddy 连接器元数据与 erp-b
 
 - ERP 测试环境 OpenAPI 文档：[API 接口与数据结构](https://test-ai.yuncyb.com/aicyberp-api/v3/api-docs)。后续新增或扩展 MCP 工具时，先核对接口路径、HTTP 方法、请求参数、响应结构及 `components.schemas` 中的数据约束，再实现 `BillingApiPort` 与 Adapter 映射。
 - ERP 测试环境业务 API 基地址：`https://test-ai.yuncyb.com/aicyberp-api`；`/v3/api-docs` 是文档地址，不是业务请求基地址。生产地址由部署配置提供。
-- MCP Python SDK 官方仓库：[modelcontextprotocol/python-sdk](https://github.com/modelcontextprotocol/python-sdk)。工具定义、FastMCP 服务组装与传输层以仓库 README 和文档为准，不直接套用其他框架示例。
+- MCP Python SDK 官方仓库：[modelcontextprotocol/python-sdk](https://github.com/modelcontextprotocol/python-sdk)。工具定义、MCPServer 服务组装与传输层以仓库 README 和文档为准，不直接套用其他框架示例。
 - OpenAPI 用于核对契约，不代表所有接口都应发布为 MCP；按「业务场景覆盖」章节约定的范围扩展，凭据继续由服务端注入。
 
 ### 项目文档
