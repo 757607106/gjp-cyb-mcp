@@ -187,11 +187,12 @@ _DOCUMENT_UPDATE_OUTPUT_SCHEMA = {
 
 _CONFIRMED_PRODUCTS_INPUT = {
     "type": "array",
+    "description": "用户从预览或 searchProducts 候选中选定的商品，绑定当前完整商品文本的行后重新预览；不是提交确认。",
     "items": {
         "type": "object",
         "properties": {
-            "line_id": {"type": "string"},
-            "product_id": {"type": "string"},
+            "line_id": {"type": "string", "description": "当前同类预览返回的商品行 line_id（如 L001），不是 ERP 单据明细 ID；不得自造或错行。"},
+            "product_id": {"type": "string", "description": "用户选定的 ERP 商品内部 ID，取自预览商品候选或 searchProducts；不是商品名称或编号。"},
         },
         "required": ["line_id", "product_id"],
     },
@@ -199,13 +200,14 @@ _CONFIRMED_PRODUCTS_INPUT = {
 
 _CONFIRMED_UNITS_INPUT = {
     "type": "array",
+    "description": "针对预览 unit_warnings，由用户按该行已匹配商品的 ERP 单位确认数量后重新预览；不得自行换算。",
     "items": {
         "type": "object",
         "properties": {
-            "line_id": {"type": "string"},
-            "product_id": {"type": "string"},
-            "unit": {"type": "string"},
-            "quantity": {"type": "number", "minimum": 0.0001},
+            "line_id": {"type": "string", "description": "当前预览中待确认单位的商品行 line_id，必须存在且不能重复；不是 ERP 明细 ID。"},
+            "product_id": {"type": "string", "description": "该行预览已匹配的 ERP 商品内部 ID，必须与 line_id 对应商品一致。"},
+            "unit": {"type": "string", "description": "该商品预览或 searchProducts 返回的 ERP 单位，必须与已匹配商品单位一致，不能自造包装单位。"},
+            "quantity": {"type": "number", "minimum": 0.0001, "description": "用户按上述 ERP 单位明确确认的数量，至少 0.0001；覆盖该行数量，不做隐式单位换算。"},
         },
         "required": ["line_id", "product_id", "unit", "quantity"],
         "additionalProperties": False,
@@ -214,12 +216,13 @@ _CONFIRMED_UNITS_INPUT = {
 
 _CONFIRMED_PRICES_INPUT = {
     "type": "array",
+    "description": "用户确认的采购单价，覆盖目录最近采购价；根据 previewPurchaseOrder 的 price_warnings 补价后重新预览。",
     "items": {
         "type": "object",
         "properties": {
-            "line_id": {"type": "string"},
-            "product_id": {"type": "string"},
-            "unit_price": {"type": "number", "exclusiveMinimum": 0},
+            "line_id": {"type": "string", "description": "previewPurchaseOrder 返回的当前商品行 line_id，必须存在且不能重复；不是 ERP 明细 ID。"},
+            "product_id": {"type": "string", "description": "该采购行预览已匹配的 ERP 商品内部 ID，须与 line_id 对应商品一致。"},
+            "unit_price": {"type": "number", "exclusiveMinimum": 0, "description": "用户明确提供或确认的该商品 ERP 单位采购单价，必须大于 0；不能用销售价代替或自行估价。"},
         },
         "required": ["line_id", "product_id", "unit_price"],
         "additionalProperties": False,
@@ -228,12 +231,13 @@ _CONFIRMED_PRICES_INPUT = {
 
 _RETURN_ITEMS_INPUT = {
     "type": "array",
+    "description": "从原销售单或原采购单选择退货商品；省略明细时使用快捷退货预填的全部商品及可退数量。",
     "items": {
         "type": "object",
         "properties": {
-            "product_id": {"type": "string"},
-            "quantity": {"type": "number", "minimum": 0.0001},
-            "unit_price": {"type": "number", "minimum": 0},
+            "product_id": {"type": "string", "description": "原销售/采购单明细或对应退货预览 items 返回的 ERP 商品内部 ID，必须在源单可退明细中；不是退货单 ID。"},
+            "quantity": {"type": "number", "minimum": 0.0001, "description": "用户指定的本次退货数量，沿用源单单位，须大于 0 且不超过快捷退货预填的可退数量（已扣历史退货）。"},
+            "unit_price": {"type": "number", "minimum": 0, "description": "可选的本次退货单价，用户确认后覆盖源单单价；省略沿用快捷退货预填单价，允许为 0。"},
         },
         "required": ["product_id", "quantity"],
         "additionalProperties": False,
@@ -242,15 +246,17 @@ _RETURN_ITEMS_INPUT = {
 
 _WRITEOFF_DETAILS_INPUT = {
     "type": "array",
+    "description": "独立收付款单的业务单据核销分配，可列多单；先查询对应单据核实往来单位和金额，不是商品明细。",
     "items": {
         "type": "object",
         "properties": {
             "biz_type": {
                 "type": "string",
                 "enum": ["sales_order", "purchase_order", "sales_return", "purchase_return"],
+                "description": "被核销单据类型：sales_order=销售单、purchase_order=采购单、sales_return=销售退货单、purchase_return=采购退货单；收款通常核销销售单/采购退货，付款通常核销采购单/销售退货。",
             },
-            "biz_id": {"type": "string"},
-            "writeoff_amount": {"type": "number", "minimum": 0},
+            "biz_id": {"type": "string", "description": "与 biz_type 对应的业务单据内部 ID，取自 getSalesOrder、getPurchaseOrder、getSalesReturn 或 getPurchaseReturn 返回详情；不是业务单号、商品 ID、源单 ID 或收付款单 ID，不做单号解析。"},
+            "writeoff_amount": {"type": "number", "minimum": 0, "description": "用户指定分配到该业务单据的核销金额；实现要求大于 0，所有行合计不能超过本次收/付款总额（不含优惠）。"},
         },
         "required": ["biz_type", "biz_id", "writeoff_amount"],
         "additionalProperties": False,
@@ -260,63 +266,64 @@ _WRITEOFF_DETAILS_INPUT = {
 _PREVIEW_PURCHASE_ORDER_INPUT_SCHEMA = {
     "type": "object",
     "properties": {
-        "order_text": {"type": "string", "description": "完整商品文本，含商品和数量"},
-        "supplier": {"type": "string", "description": "供应商名称、编号或 ID"},
-        "warehouse": {"type": "string", "description": "入库仓库名称、编号或 ID"},
-        "handler": {"type": "string", "description": "经手人名称、编号或 ID"},
-        "order_date": {"type": "string", "description": "YYYY-MM-DD"},
-        "remark": {"type": "string"},
+        "order_text": {"type": "string", "description": "向供应商采购入库的完整商品文本，须含商品和数量；多轮修改仍传完整明细，商品候选用 searchProducts 查询。"},
+        "supplier": {"type": "string", "description": "采购供应商，业务必填；名称、编号或 searchBillingReferences 返回的供应商 ID。"},
+        "warehouse": {"type": "string", "description": "采购入库仓库，业务必填；名称、编号或 searchBillingReferences 返回的仓库 ID。"},
+        "handler": {"type": "string", "description": "采购经手人，业务必填；名称、编号或 searchBillingReferences 返回的经手人 ID。"},
+        "order_date": {"type": "string", "description": "采购录单日期 YYYY-MM-DD，业务必填，不默认当天。"},
+        "remark": {"type": "string", "description": "可选的采购整单备注，最多 200 个字符。"},
         "confirmed_products": _CONFIRMED_PRODUCTS_INPUT,
         "confirmed_units": _CONFIRMED_UNITS_INPUT,
         "confirmed_prices": _CONFIRMED_PRICES_INPUT,
-        "partial": {"type": "boolean", "default": False},
+        "partial": {"type": "boolean", "default": False, "description": "默认要求全部商品就绪；仅在用户同意跳过未匹配行时传 true，生成仅含已匹配商品的预览，不直接提交。"},
     },
 }
 
 _LIST_PURCHASE_ORDERS_INPUT_SCHEMA = {
     "type": "object",
     "properties": {
-        "page": {"type": "integer", "minimum": 1, "default": 1},
-        "page_size": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20},
-        "start_date": {"type": "string", "description": "YYYY-MM-DD"},
-        "end_date": {"type": "string", "description": "YYYY-MM-DD"},
-        "status": {"type": "integer", "enum": [0, 1, 2, 3]},
-        "payment_status": {"type": "integer", "enum": [0, 1, 2]},
-        "return_status": {"type": "integer", "enum": [0, 1, 2]},
-        "order_no": {"type": "string"},
-        "supplier_id": {"type": "string"},
+        "page": {"type": "integer", "minimum": 1, "default": 1, "description": "采购单列表页码，从 1 开始；has_more 为 true 时可继续翻页。"},
+        "page_size": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20, "description": "每页采购单数量，1 到 100，默认 20；不是统计范围。"},
+        "start_date": {"type": "string", "description": "采购单筛选开始日期 YYYY-MM-DD；留空不限制起始日期。"},
+        "end_date": {"type": "string", "description": "采购单筛选结束日期 YYYY-MM-DD，不早于开始日期；留空不限制结束日期。"},
+        "status": {"type": "integer", "enum": [0, 1, 2, 3], "description": "采购单状态：0=草稿、1=预付、2=已生效、3=已作废；省略不按状态筛选。"},
+        "payment_status": {"type": "integer", "enum": [0, 1, 2], "description": "采购付款状态：0=未付款、1=部分付款、2=已完成；省略不筛选。"},
+        "return_status": {"type": "integer", "enum": [0, 1, 2], "description": "采购退货状态：0=无退货、1=部分退货、2=全部退货；省略不筛选。"},
+        "order_no": {"type": "string", "description": "采购业务单号的模糊匹配关键词，不是内部 ID；留空不按单号筛选。"},
+        "supplier_id": {"type": "string", "description": "供应商内部 ID 或名称，候选通过 searchBillingReferences 查询；留空查询所有供应商。"},
     },
 }
 
 _UPDATE_PURCHASE_ORDER_INPUT_SCHEMA = {
     "type": "object",
     "properties": {
-        "order_id": {"type": "string", "description": "内部 ID 或业务单号 orderNo"},
-        "order_date": {"type": "string", "description": "YYYY-MM-DD"},
-        "handler_id": {"type": "string", "description": "经手人内部 ID 或名称"},
-        "supplier_id": {"type": "string", "description": "供应商内部 ID 或名称"},
-        "warehouse_id": {"type": "string", "description": "入库仓库内部 ID 或名称"},
+        "order_id": {"type": "string", "description": "先经 getPurchaseOrder 核实的采购单内部 ID 或业务单号 orderNo，不是采购退货单 ID。"},
+        "order_date": {"type": "string", "description": "修改后的采购录单日期 YYYY-MM-DD；省略保留原值，传入时不能为空。"},
+        "handler_id": {"type": "string", "description": "新经手人的内部 ID 或名称，取自 searchBillingReferences；省略保留，传入时不能为空。"},
+        "supplier_id": {"type": "string", "description": "新供应商的内部 ID 或名称，取自 searchBillingReferences；留空保留原供应商。"},
+        "warehouse_id": {"type": "string", "description": "新入库仓库的内部 ID 或名称，取自 searchBillingReferences；留空保留原仓库。"},
         "items": {
             "type": "array",
+            "description": "修改后的完整采购明细，传入即整体替换而非增量更新，不能为空数组；基于 getPurchaseOrder 保留未改行，省略保留全部原明细。",
             "items": {
                 "type": "object",
                 "properties": {
-                    "product_id": {"type": "string"},
-                    "quantity": {"type": "number"},
-                    "unit": {"type": "string"},
-                    "unit_price": {"type": "number"},
-                    "order_item_id": {"type": "string"},
-                    "remark": {"type": "string"},
+                    "product_id": {"type": "string", "description": "ERP 商品内部 ID，原行取自 getPurchaseOrder，新商品通过 searchProducts 确认；不是商品名称或单据 ID。"},
+                    "quantity": {"type": "number", "description": "修改后该行采购数量，按该行单位计，必须大于 0；不是本次增减数量。"},
+                    "unit": {"type": "string", "description": "该行采购单位，取自 getPurchaseOrder 或 searchProducts 的商品单位并由用户核实；不自动换算。"},
+                    "unit_price": {"type": "number", "description": "该行采购单价，必填；保留原价或传用户确认的新价。此修改接口校验非负数，与新建采购必须正价不同。"},
+                    "order_item_id": {"type": "string", "description": "可选的原采购明细行标识，保留原行时取自 getPurchaseOrder 对应明细；不是商品 ID 或预览 line_id，不得自造。"},
+                    "remark": {"type": "string", "description": "该商品行备注，不是整单备注；保留原行时从 getPurchaseOrder 对应明细取值。"},
                 },
                 "required": ["product_id", "quantity", "unit_price"],
             },
         },
-        "remark": {"type": "string"},
-        "discount_amount": {"type": "number"},
-        "discount_account_id": {"type": "string"},
-        "payment_amount": {"type": "number"},
-        "payment_account_id": {"type": "string"},
-        "confirmed_by_user": {"type": "boolean", "default": False},
+        "remark": {"type": "string", "description": "修改后的整单备注，最多 200 个字符；省略保留，空字符串清空。"},
+        "discount_amount": {"type": "number", "description": "修改后的采购单优惠金额，非负，允许 0；省略保留原值。"},
+        "discount_account_id": {"type": "string", "description": "优惠承担结算账户的内部 ID，取自 searchBillingReferences；直接传 ID，不解析名称，留空不修改。"},
+        "payment_amount": {"type": "number", "description": "修改后的采购单付款金额，非负，允许 0；省略保留。仅追加一笔付款请用 previewPurchasePayment。"},
+        "payment_account_id": {"type": "string", "description": "付款结算账户内部 ID，取自 searchBillingReferences；直接传 ID，不解析名称，留空不修改。"},
+        "confirmed_by_user": {"type": "boolean", "default": False, "description": "仅在 getPurchaseOrder 核实原单且用户明确确认本次修改内容后传 true；未确认不调用，不得代用户自造确认。"},
     },
     "required": ["order_id"],
 }
@@ -324,18 +331,18 @@ _UPDATE_PURCHASE_ORDER_INPUT_SCHEMA = {
 _PREVIEW_PURCHASE_RETURN_INPUT_SCHEMA = {
     "type": "object",
     "properties": {
-        "order_id": {"type": "string", "description": "采购单内部 ID 或业务单号 orderNo"},
+        "order_id": {"type": "string", "description": "原采购单内部 ID 或业务单号 orderNo，取自 listPurchaseOrders/getPurchaseOrder；不是采购退货单 ID，也不是销售单。"},
         "items": {
             "type": "array",
-            "description": "退货明细；不传默认整单退货（全部商品原数量）",
+            "description": "退给供应商的商品及数量，每行含 product_id、quantity，可选 unit_price；省略按快捷退货预填的全部可退明细退货，传入时不能为空数组。",
             "items": _RETURN_ITEMS_INPUT["items"],
         },
-        "refund_amount": {"type": "number", "minimum": 0, "description": "退货同时收到的退款金额"},
-        "refund_account_id": {"type": "string", "description": "退款收款账户"},
-        "discount_amount": {"type": "number", "minimum": 0, "description": "优惠/减免金额"},
-        "discount_account_id": {"type": "string", "description": "优惠承担账户"},
-        "return_date": {"type": "string", "description": "YYYY-MM-DD，默认源单日期或当天"},
-        "remark": {"type": "string"},
+        "refund_amount": {"type": "number", "minimum": 0, "description": "退货时向供应商收回的退款金额，非负；省略或 0 不随退货收款。与优惠同时提供时合计不得超过退货总额。"},
+        "refund_account_id": {"type": "string", "description": "接收供应商退款的结算账户名称、编号或 ID，候选用 searchBillingReferences；退款大于 0 时必填并须唯一匹配。"},
+        "discount_amount": {"type": "number", "minimum": 0, "description": "本次采购退货优惠/减免金额，非负；省略或 0 不附加优惠。与退款同时提供时合计不得超过退货总额。"},
+        "discount_account_id": {"type": "string", "description": "优惠承担结算账户名称、编号或 ID，候选用 searchBillingReferences；优惠大于 0 时必填并须唯一匹配。"},
+        "return_date": {"type": "string", "description": "采购退货日期 YYYY-MM-DD；省略用原单快捷退货返回的 returnDate，无该值时用当天。"},
+        "remark": {"type": "string", "description": "可选的本次采购退货整单备注。"},
     },
     "required": ["order_id"],
 }
@@ -343,31 +350,31 @@ _PREVIEW_PURCHASE_RETURN_INPUT_SCHEMA = {
 _LIST_PURCHASE_RETURNS_INPUT_SCHEMA = {
     "type": "object",
     "properties": {
-        "page": {"type": "integer", "minimum": 1, "default": 1},
-        "page_size": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20},
-        "start_date": {"type": "string", "description": "YYYY-MM-DD"},
-        "end_date": {"type": "string", "description": "YYYY-MM-DD"},
-        "status": {"type": "integer", "enum": [0, 1, 2, 3]},
-        "return_no": {"type": "string"},
-        "supplier_id": {"type": "string"},
+        "page": {"type": "integer", "minimum": 1, "default": 1, "description": "采购退货单列表页码，从 1 开始；has_more 为 true 时可继续翻页。"},
+        "page_size": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20, "description": "每页采购退货单数量，1 到 100，默认 20。"},
+        "start_date": {"type": "string", "description": "采购退货单筛选开始日期 YYYY-MM-DD；留空不限制起始日期。"},
+        "end_date": {"type": "string", "description": "采购退货单筛选结束日期 YYYY-MM-DD，不早于开始日期；留空不限制结束日期。"},
+        "status": {"type": "integer", "enum": [0, 1, 2, 3], "description": "退货单状态筛选，0=草稿、2=已生效、3=已作废；省略不筛选，其余状态含义以 ERP 为准。"},
+        "return_no": {"type": "string", "description": "采购退货业务单号的模糊匹配关键词，不是原采购单号；留空不筛选。"},
+        "supplier_id": {"type": "string", "description": "供应商内部 ID 或名称，候选通过 searchBillingReferences 查询；留空查询所有供应商。"},
     },
 }
 
 _PREVIEW_SALES_RETURN_INPUT_SCHEMA = {
     "type": "object",
     "properties": {
-        "order_id": {"type": "string", "description": "销售单内部 ID 或业务单号 orderNo"},
+        "order_id": {"type": "string", "description": "原销售单内部 ID 或业务单号 orderNo，取自 listSalesOrders/getSalesOrder；不是销售退货单 ID，也不是采购单。"},
         "items": {
             "type": "array",
-            "description": "退货明细；不传默认整单退货（全部商品原数量）",
+            "description": "客户退回的商品及数量，每行含 product_id、quantity，可选 unit_price；省略按快捷退货预填的全部可退明细退货，传入时不能为空数组。",
             "items": _RETURN_ITEMS_INPUT["items"],
         },
-        "refund_amount": {"type": "number", "minimum": 0, "description": "退货同时退给客户的金额"},
-        "refund_account_id": {"type": "string", "description": "退款账户"},
-        "discount_amount": {"type": "number", "minimum": 0, "description": "折让金额"},
-        "discount_account_id": {"type": "string", "description": "折让承担账户"},
-        "return_date": {"type": "string", "description": "YYYY-MM-DD，默认源单日期或当天"},
-        "remark": {"type": "string"},
+        "refund_amount": {"type": "number", "minimum": 0, "description": "退货时支付给客户的退款金额，非负；省略或 0 不随退货退款。与折让同时提供时合计不得超过退货总额。"},
+        "refund_account_id": {"type": "string", "description": "向客户退款的结算账户名称、编号或 ID，候选用 searchBillingReferences；退款大于 0 时必填并须唯一匹配。"},
+        "discount_amount": {"type": "number", "minimum": 0, "description": "本次销售退货折让金额，非负；省略或 0 不附加折让。与退款同时提供时合计不得超过退货总额。"},
+        "discount_account_id": {"type": "string", "description": "折让承担结算账户名称、编号或 ID，候选用 searchBillingReferences；折让大于 0 时必填并须唯一匹配。"},
+        "return_date": {"type": "string", "description": "销售退货日期 YYYY-MM-DD；省略用原单快捷退货返回的 returnDate，无该值时用当天。"},
+        "remark": {"type": "string", "description": "可选的本次销售退货整单备注。"},
     },
     "required": ["order_id"],
 }
@@ -375,25 +382,25 @@ _PREVIEW_SALES_RETURN_INPUT_SCHEMA = {
 _LIST_SALES_RETURNS_INPUT_SCHEMA = {
     "type": "object",
     "properties": {
-        "page": {"type": "integer", "minimum": 1, "default": 1},
-        "page_size": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20},
-        "start_date": {"type": "string", "description": "YYYY-MM-DD"},
-        "end_date": {"type": "string", "description": "YYYY-MM-DD"},
-        "status": {"type": "integer", "enum": [0, 1, 2, 3]},
-        "refund_status": {"type": "integer", "enum": [0, 1, 2]},
-        "return_no": {"type": "string"},
-        "customer_id": {"type": "string"},
+        "page": {"type": "integer", "minimum": 1, "default": 1, "description": "销售退货单列表页码，从 1 开始；has_more 为 true 时可继续翻页。"},
+        "page_size": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20, "description": "每页销售退货单数量，1 到 100，默认 20。"},
+        "start_date": {"type": "string", "description": "销售退货单筛选开始日期 YYYY-MM-DD；留空不限制起始日期。"},
+        "end_date": {"type": "string", "description": "销售退货单筛选结束日期 YYYY-MM-DD，不早于开始日期；留空不限制结束日期。"},
+        "status": {"type": "integer", "enum": [0, 1, 2, 3], "description": "退货单状态筛选，0=草稿、2=已生效、3=已作废；省略不筛选，其余状态含义以 ERP 为准。"},
+        "refund_status": {"type": "integer", "enum": [0, 1, 2], "description": "向客户退款的状态：0=未退款、1=部分退款、2=已完成；省略不筛选。"},
+        "return_no": {"type": "string", "description": "销售退货业务单号的模糊匹配关键词，不是原销售单号；留空不筛选。"},
+        "customer_id": {"type": "string", "description": "客户内部 ID 或名称，候选通过 searchBillingReferences 查询；留空查询所有客户。"},
     },
 }
 
 _PREVIEW_SALES_RECEIPT_INPUT_SCHEMA = {
     "type": "object",
     "properties": {
-        "order_id": {"type": "string", "description": "销售单内部 ID 或业务单号 orderNo"},
-        "receipt_amount": {"type": "number", "minimum": 0, "description": "本次收款金额"},
-        "receipt_account": {"type": "string", "description": "收款结算账户名称、编号或 ID"},
-        "discount_amount": {"type": "number", "minimum": 0, "description": "免账金额（优惠/折让）"},
-        "discount_account": {"type": "string", "description": "免账承担账户"},
+        "order_id": {"type": "string", "description": "本次继续收款的单笔销售单内部 ID 或 orderNo，取自 listSalesOrders/getSalesOrder；不是独立收款单或销售退货单 ID。"},
+        "receipt_amount": {"type": "number", "minimum": 0, "description": "本次追加的收款金额，非负，不是累计已收金额；可为 0 但与免账不能同时为 0，合计不得超过该单未收金额。"},
+        "receipt_account": {"type": "string", "description": "收款结算账户名称、编号或 searchBillingReferences 返回的 ID；即使收款为 0、仅免账也须提供并匹配。"},
+        "discount_amount": {"type": "number", "minimum": 0, "description": "本次免账金额（优惠/折让），非负，省略按 0；与收款合计须大于 0 且不超过该单未收金额。"},
+        "discount_account": {"type": "string", "description": "免账承担结算账户名称、编号或 searchBillingReferences 返回的 ID；免账大于 0 时必填并须匹配。"},
     },
     "required": ["order_id", "receipt_amount", "receipt_account"],
 }
@@ -401,11 +408,11 @@ _PREVIEW_SALES_RECEIPT_INPUT_SCHEMA = {
 _PREVIEW_PURCHASE_PAYMENT_INPUT_SCHEMA = {
     "type": "object",
     "properties": {
-        "order_id": {"type": "string", "description": "采购单内部 ID 或业务单号 orderNo"},
-        "payment_amount": {"type": "number", "minimum": 0, "description": "本次付款金额"},
-        "payment_account": {"type": "string", "description": "付款结算账户名称、编号或 ID"},
-        "discount_amount": {"type": "number", "minimum": 0, "description": "免账金额（优惠/折让）"},
-        "discount_account": {"type": "string", "description": "免账承担账户"},
+        "order_id": {"type": "string", "description": "本次继续付款的单笔采购单内部 ID 或 orderNo，取自 listPurchaseOrders/getPurchaseOrder；不是独立付款单或采购退货单 ID。"},
+        "payment_amount": {"type": "number", "minimum": 0, "description": "本次追加的付款金额，非负，不是累计已付金额；可为 0 但与免账不能同时为 0，合计不得超过该单未付金额。"},
+        "payment_account": {"type": "string", "description": "付款结算账户名称、编号或 searchBillingReferences 返回的 ID；即使付款为 0、仅免账也须提供并匹配。"},
+        "discount_amount": {"type": "number", "minimum": 0, "description": "本次免账金额（优惠/折让），非负，省略按 0；与付款合计须大于 0 且不超过该单未付金额。"},
+        "discount_account": {"type": "string", "description": "免账承担结算账户名称、编号或 searchBillingReferences 返回的 ID；免账大于 0 时必填并须匹配。"},
     },
     "required": ["order_id", "payment_amount", "payment_account"],
 }
@@ -413,31 +420,31 @@ _PREVIEW_PURCHASE_PAYMENT_INPUT_SCHEMA = {
 _PREVIEW_STOCK_TRANSFER_INPUT_SCHEMA = {
     "type": "object",
     "properties": {
-        "order_text": {"type": "string", "description": "调拨商品文本，含商品和数量"},
-        "from_warehouse": {"type": "string", "description": "调出仓库名称、编号或 ID"},
-        "to_warehouse": {"type": "string", "description": "调入仓库名称、编号或 ID"},
-        "handler": {"type": "string", "description": "经手人名称、编号或 ID"},
-        "transfer_date": {"type": "string", "description": "YYYY-MM-DD，默认当天"},
-        "remark": {"type": "string"},
+        "order_text": {"type": "string", "description": "仓库间调拨的完整商品文本，须含商品和数量；修改后传完整明细，商品候选用 searchProducts 查询。"},
+        "from_warehouse": {"type": "string", "description": "必填，调出仓库名称、编号或 searchBillingReferences 返回的仓库 ID，须与调入仓库不同。"},
+        "to_warehouse": {"type": "string", "description": "必填，调入仓库名称、编号或 searchBillingReferences 返回的仓库 ID，须与调出仓库不同。"},
+        "handler": {"type": "string", "description": "必填，调拨经手人名称、编号或 searchBillingReferences 返回的经手人 ID。"},
+        "transfer_date": {"type": "string", "description": "调拨日期 YYYY-MM-DD；省略默认当天。"},
+        "remark": {"type": "string", "description": "可选的调拨整单备注，最多 200 个字符。"},
         "confirmed_products": _CONFIRMED_PRODUCTS_INPUT,
         "confirmed_units": _CONFIRMED_UNITS_INPUT,
-        "partial": {"type": "boolean", "default": False},
+        "partial": {"type": "boolean", "default": False, "description": "默认要求全部商品就绪；仅在用户同意跳过未匹配行时传 true，生成部分调拨预览，不直接提交。"},
     },
 }
 
 _PREVIEW_OTHER_STOCK_DOC_INPUT_SCHEMA = {
     "type": "object",
     "properties": {
-        "kind": {"type": "string", "enum": ["inbound", "outbound"]},
-        "order_text": {"type": "string", "description": "商品文本，含商品和数量"},
-        "warehouse": {"type": "string", "description": "仓库名称、编号或 ID"},
-        "handler": {"type": "string", "description": "经手人名称、编号或 ID"},
-        "doc_type": {"type": "string", "description": "入库/出库类型 ID 或名称（如报损、报溢）"},
-        "doc_date": {"type": "string", "description": "YYYY-MM-DD，默认当天"},
-        "remark": {"type": "string"},
+        "kind": {"type": "string", "enum": ["inbound", "outbound"], "description": "单仓库存变动方向：inbound=其他入库（如报溢），outbound=其他出库（如报损）；不是仓库间调拨。"},
+        "order_text": {"type": "string", "description": "其他出入库的完整商品文本，须含商品和数量；修改后传完整明细，商品候选用 searchProducts 查询。"},
+        "warehouse": {"type": "string", "description": "必填，发生其他出入库的仓库名称、编号或 searchBillingReferences 返回的仓库 ID。"},
+        "handler": {"type": "string", "description": "必填，单据经手人名称、编号或 searchBillingReferences 返回的经手人 ID。"},
+        "doc_type": {"type": "string", "description": "必填，与 kind 同方向的其他入库/出库类型 ID 或名称；先用 listStockDocTypes 查询，如报损、报溢，不得自造类型。"},
+        "doc_date": {"type": "string", "description": "其他出入库单据日期 YYYY-MM-DD；省略默认当天。"},
+        "remark": {"type": "string", "description": "可选的其他出入库整单备注，最多 200 个字符。"},
         "confirmed_products": _CONFIRMED_PRODUCTS_INPUT,
         "confirmed_units": _CONFIRMED_UNITS_INPUT,
-        "partial": {"type": "boolean", "default": False},
+        "partial": {"type": "boolean", "default": False, "description": "默认要求全部商品就绪；仅在用户同意跳过未匹配行时传 true，生成部分出入库预览，不直接提交。"},
     },
     "required": ["kind"],
 }
@@ -445,24 +452,24 @@ _PREVIEW_OTHER_STOCK_DOC_INPUT_SCHEMA = {
 _PREVIEW_RECEIPT_ORDER_INPUT_SCHEMA = {
     "type": "object",
     "properties": {
-        "receipt_amount": {"type": "number", "minimum": 0.01, "description": "收款总额"},
-        "account": {"type": "string", "description": "收款结算账户名称、编号或 ID"},
-        "handler": {"type": "string", "description": "经手人名称、编号或 ID"},
-        "customer": {"type": "string", "description": "客户名称或 ID；核销销售单时必填"},
-        "supplier": {"type": "string", "description": "供应商名称或 ID；核销采购退货单时使用"},
-        "order_date": {"type": "string", "description": "YYYY-MM-DD，默认当天"},
-        "discount_amount": {"type": "number", "minimum": 0, "description": "优惠（抹零）金额"},
-        "discount_account": {"type": "string", "description": "免账承担账户"},
+        "receipt_amount": {"type": "number", "minimum": 0.01, "description": "本次独立收款总额，至少 0.01；不能用 0 金额仅免账，所有核销行合计不得超过此金额。"},
+        "account": {"type": "string", "description": "必填，收款结算账户名称、编号或 searchBillingReferences 返回的账户 ID。"},
+        "handler": {"type": "string", "description": "必填，收款经手人名称、编号或 searchBillingReferences 返回的经手人 ID。"},
+        "customer": {"type": "string", "description": "收款往来客户名称或 searchBillingReferences 返回的 ID；核销销售类单据时必填并须匹配，与 supplier 只能提供其一。"},
+        "supplier": {"type": "string", "description": "收款往来供应商名称或 searchBillingReferences 返回的 ID；核销采购类单据（如采购退货）时必填并须匹配，与 customer 只能提供其一。"},
+        "order_date": {"type": "string", "description": "独立收款单日期 YYYY-MM-DD；省略默认当天。"},
+        "discount_amount": {"type": "number", "minimum": 0, "description": "本次收款优惠（抹零）金额，非负；省略或 0 不附加优惠，不增加可核销总额。"},
+        "discount_account": {"type": "string", "description": "免账承担结算账户名称、编号或 searchBillingReferences 返回的 ID；优惠大于 0 时必填并须匹配。"},
         "fund_type": {
             "type": "string",
-            "description": "款项类型名称、编号或 ID；不传且无核销时返回候选列表",
+            "description": "收款款项类型名称、编号或 ID；省略时按销售单/采购退货核销推断系统类型，无法推断则从本预览 reference_resolutions.fund_type.candidates 选择后重试。无单独款项类型工具；无核销收款须选适用的自定义类型。",
         },
         "writeoff_details": {
             "type": "array",
-            "description": "核销明细；不传则只收款不核销",
+            "description": "独立收款核销分配，可含多单；通常核销销售单或采购退货单，每行含 biz_type、对应单据内部 biz_id 和正数 writeoff_amount。核实往来单位，合计不超过收款总额；省略或空数组只收款不核销。",
             "items": _WRITEOFF_DETAILS_INPUT["items"],
         },
-        "remark": {"type": "string"},
+        "remark": {"type": "string", "description": "可选的独立收款单备注，最多 200 个字符。"},
     },
     "required": ["receipt_amount", "account", "handler"],
 }
@@ -470,24 +477,24 @@ _PREVIEW_RECEIPT_ORDER_INPUT_SCHEMA = {
 _PREVIEW_PAYMENT_ORDER_INPUT_SCHEMA = {
     "type": "object",
     "properties": {
-        "payment_amount": {"type": "number", "minimum": 0.01, "description": "付款总额"},
-        "account": {"type": "string", "description": "付款结算账户名称、编号或 ID"},
-        "handler": {"type": "string", "description": "经手人名称、编号或 ID"},
-        "supplier": {"type": "string", "description": "供应商名称或 ID；核销采购单时必填"},
-        "customer": {"type": "string", "description": "客户名称或 ID；核销销售退货单时使用"},
-        "order_date": {"type": "string", "description": "YYYY-MM-DD，默认当天"},
-        "discount_amount": {"type": "number", "minimum": 0, "description": "优惠（抹零）金额"},
-        "discount_account": {"type": "string", "description": "免账承担账户"},
+        "payment_amount": {"type": "number", "minimum": 0.01, "description": "本次独立付款总额，至少 0.01；不能用 0 金额仅免账，所有核销行合计不得超过此金额。"},
+        "account": {"type": "string", "description": "必填，付款结算账户名称、编号或 searchBillingReferences 返回的账户 ID。"},
+        "handler": {"type": "string", "description": "必填，付款经手人名称、编号或 searchBillingReferences 返回的经手人 ID。"},
+        "supplier": {"type": "string", "description": "付款往来供应商名称或 searchBillingReferences 返回的 ID；核销采购类单据时必填并须匹配，与 customer 只能提供其一。"},
+        "customer": {"type": "string", "description": "付款往来客户名称或 searchBillingReferences 返回的 ID；核销销售类单据（如销售退货）时必填并须匹配，与 supplier 只能提供其一。"},
+        "order_date": {"type": "string", "description": "独立付款单日期 YYYY-MM-DD；省略默认当天。"},
+        "discount_amount": {"type": "number", "minimum": 0, "description": "本次付款优惠（抹零）金额，非负；省略或 0 不附加优惠，不增加可核销总额。"},
+        "discount_account": {"type": "string", "description": "免账承担结算账户名称、编号或 searchBillingReferences 返回的 ID；优惠大于 0 时必填并须匹配。"},
         "fund_type": {
             "type": "string",
-            "description": "款项类型名称、编号或 ID；不传且无核销时返回候选列表",
+            "description": "付款款项类型名称、编号或 ID；省略时按采购单/销售退货核销推断系统类型，无法推断则从本预览 reference_resolutions.fund_type.candidates 选择后重试，无单独款项类型工具。",
         },
         "writeoff_details": {
             "type": "array",
-            "description": "核销明细；不传则只付款不核销",
+            "description": "独立付款核销分配，可含多单；通常核销采购单或销售退货单，每行含 biz_type、对应单据内部 biz_id 和正数 writeoff_amount。核实往来单位，合计不超过付款总额；省略或空数组只付款不核销。",
             "items": _WRITEOFF_DETAILS_INPUT["items"],
         },
-        "remark": {"type": "string"},
+        "remark": {"type": "string", "description": "可选的独立付款单备注，最多 200 个字符。"},
     },
     "required": ["payment_amount", "account", "handler"],
 }
@@ -495,14 +502,14 @@ _PREVIEW_PAYMENT_ORDER_INPUT_SCHEMA = {
 _LIST_FINANCIAL_ORDERS_INPUT_SCHEMA = {
     "type": "object",
     "properties": {
-        "page": {"type": "integer", "minimum": 1, "default": 1},
-        "page_size": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20},
-        "start_date": {"type": "string", "description": "YYYY-MM-DD"},
-        "end_date": {"type": "string", "description": "YYYY-MM-DD"},
-        "status": {"type": "integer", "enum": [0, 2, 3]},
-        "order_no": {"type": "string"},
-        "counterparty_id": {"type": "string", "description": "客户或供应商内部 ID、名称"},
-        "account_id": {"type": "string"},
+        "page": {"type": "integer", "minimum": 1, "default": 1, "description": "独立收款/付款单列表页码，从 1 开始；has_more 为 true 时可继续翻页。"},
+        "page_size": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20, "description": "每页单据数量，1 到 100，默认 20；不是统计范围。"},
+        "start_date": {"type": "string", "description": "收付款单筛选开始日期 YYYY-MM-DD；留空不限制起始日期。"},
+        "end_date": {"type": "string", "description": "收付款单筛选结束日期 YYYY-MM-DD，不早于开始日期；留空不限制结束日期。"},
+        "status": {"type": "integer", "enum": [0, 2, 3], "description": "财务单据状态：0=草稿、2=已生效、3=已作废；省略不按状态筛选。"},
+        "order_no": {"type": "string", "description": "独立收款/付款业务单号的模糊匹配关键词，不是被核销的销售/采购单号；留空不筛选。"},
+        "counterparty_id": {"type": "string", "description": "往来客户或供应商的内部 ID、名称，候选用 searchBillingReferences；先尝试匹配客户再供应商，留空不筛选。"},
+        "account_id": {"type": "string", "description": "结算账户内部 ID 或名称，候选用 searchBillingReferences；留空不按账户筛选。"},
     },
 }
 
@@ -546,26 +553,30 @@ class DocumentTools:
         confirmed_prices: list[dict[str, Any]] | None = None,
         partial: bool = False,
     ) -> dict[str, Any]:
-        """校验完整采购单信息、匹配商品并生成不可变提交预览。
+        """预览向供应商采购入库的采购单，不用于向供应商退货或客户销售退货。
 
-        采购价默认取商品目录的最近采购价；目录无有效采购价（为空或 0，
-        ERP 拒绝 0 价采购行）的商品会出现在 price_warnings 中，需通过
-        confirmed_prices 确认单价后重新预览。
+        采购退货用 previewPurchaseReturn，销售退货用 previewSalesReturn。
+        基础资料用 searchBillingReferences，商品用 searchProducts 查候选。
+        采购价默认取目录最近采购价；缺价或 0 价会返回 price_warnings，
+        必须取得用户确认的正数采购价，通过 confirmed_prices 重新预览。
+        本工具仅预览，无远端写入；根据 required_actions 补齐并重新调用，
+        ready_to_submit=true 且取得 preview_id 后，用户明确确认该预览
+        才能调用 submitPurchaseOrder；就绪不等于用户已确认。
 
         Args:
-            order_text: 完整商品文本，必须包含商品和数量；多轮修改后传完整内容。
-            supplier: 必填，供应商名称、编号或候选返回的 ID。
-            warehouse: 必填，入库仓库名称、编号或候选返回的 ID。
-            handler: 必填，经手人名称、编号或候选返回的 ID。
-            order_date: 必填，录单日期，格式 YYYY-MM-DD。
-            remark: 可选的整单备注，最多 200 个字符。
-            confirmed_products: 用户确认的商品列表，元素格式为
-                {"line_id": "L001", "product_id": "ERP商品ID"}。
-            confirmed_units: 用户按 ERP 单位确认后的行数据，含 line_id、
-                product_id、unit、quantity。
-            confirmed_prices: 用户确认的采购单价，元素格式为
-                {"line_id": "L001", "product_id": "ERP商品ID", "unit_price": 3.5}。
-            partial: 为 true 时只提交已匹配商品，跳过未匹配行。
+            order_text: 完整采购商品文本，须包含商品和数量；多轮修改仍传完整明细。
+            supplier: 业务必填，供应商名称、编号或 searchBillingReferences 返回的 ID。
+            warehouse: 业务必填，入库仓库名称、编号或 searchBillingReferences 返回的 ID。
+            handler: 业务必填，经手人名称、编号或 searchBillingReferences 返回的 ID。
+            order_date: 业务必填，采购录单日期 YYYY-MM-DD，不默认当天。
+            remark: 可选的采购整单备注，最多 200 个字符。
+            confirmed_products: 用户选定的商品绑定列表，每行含当前预览 line_id 和
+                预览或 searchProducts 候选的 product_id；不是提交确认。
+            confirmed_units: 用户对 unit_warnings 确认的行，含当前 line_id、该行已匹配
+                product_id、ERP unit 和按该单位确认的 quantity（至少 0.0001），不自行换算。
+            confirmed_prices: 用户确认的采购价列表，每行含当前 line_id、已匹配 product_id
+                和正数 unit_price；覆盖目录采购价，不用销售价或自行估价。
+            partial: 默认 false；用户同意跳过未匹配行时传 true，仅预览已匹配商品，不直接提交。
         """
         try:
             context = self._contexts.get()
@@ -665,12 +676,18 @@ class DocumentTools:
         idempotency_key: str | None = None,
         confirmed_by_user: bool = False,
     ) -> dict[str, Any]:
-        """用户明确确认预览后，把采购单写入真实 ERP（保存过账）。
+        """将已确认的采购入库预览写入 ERP 并保存过账，不提交采购退货。
+
+        先调用 previewPurchaseOrder，使用最近一次就绪预览；用户明确确认
+        后才能调用本工具，未确认不得调用或自造 confirmed_by_user=true。
+        成功后可用 getPurchaseOrder 核对；结果未知先查询，不盲目重提。
 
         Args:
-            preview_id: preview_purchase_order 返回的预览 ID；提交成功后失效。
-            idempotency_key: 可省略，默认使用 preview_id；显式指定时重试必须复用。
-            confirmed_by_user: 仅在用户明确确认该预览后传 true。
+            preview_id: 最近一次 previewPurchaseOrder 在 ready_to_submit=true 时返回且
+                已获用户确认的 preview_id；不得自造、跨类型或用旧预览，成功后消费失效。
+            idempotency_key: 可省略，默认 preview_id；显式值须非空且最多 128 字符，
+                同一提交重试复用原键，不得换键重复开单。
+            confirmed_by_user: 默认 false；仅在用户明确确认上述采购预览后传 true，不得代用户确认。
         """
 
         async def create(context: Any, payload: dict[str, Any]) -> str:
@@ -687,10 +704,15 @@ class DocumentTools:
         )
 
     async def get_purchase_order(self, order_id: str) -> dict[str, Any]:
-        """查询采购单详情，含商品明细、付款记录和状态。
+        """只读查询一张采购单的商品明细、付款记录和状态，不是采购统计报表。
+
+        不确定单据先用 listPurchaseOrders 定位，采购汇总分析用 queryPurchaseReport。
+        核实详情后可用 previewPurchaseReturn 退给供应商，或 previewPurchasePayment
+        继续付款；updatePurchaseOrder/voidPurchaseOrder 前须先本工具核实并取得用户确认。
 
         Args:
-            order_id: 采购单标识，同时接受内部 ID 和业务单号 orderNo。
+            order_id: 用户提供或 listPurchaseOrders 返回的采购单内部 ID 或业务单号 orderNo；
+                不是采购退货单 ID，也不是付款单 ID。
         """
         try:
             context = self._contexts.get()
@@ -714,18 +736,22 @@ class DocumentTools:
         order_no: str = "",
         supplier_id: str = "",
     ) -> dict[str, Any]:
-        """分页查询采购单列表，支持按日期、状态和供应商筛选。
+        """只读分页查找采购单，按日期、状态、供应商或单号定位业务单据。
+
+        采购退货记录用 listPurchaseReturns，采购统计分析用 queryPurchaseReport，
+        不要用当前页合计代替报表。选定单据后用 getPurchaseOrder 查看详情，
+        再衔接采购退货、继续付款或经确认的修改/作废。
 
         Args:
-            page: 页码，从 1 开始。
-            page_size: 每页数量，范围 1 到 100。
-            start_date: 开始日期，格式 YYYY-MM-DD。
-            end_date: 结束日期，格式 YYYY-MM-DD。
-            status: 单据状态：0=草稿 1=预付 2=已生效 3=已作废。
-            payment_status: 付款状态：0=未付款 1=部分付款 2=已完成。
-            return_status: 退货状态：0=无退货 1=部分退货 2=全部退货。
-            order_no: 单据编号模糊匹配关键词。
-            supplier_id: 供应商 ID 或名称。
+            page: 页码，从 1 开始，默认 1；has_more=true 时可继续翻页。
+            page_size: 每页单据数量，1 到 100，默认 20。
+            start_date: 筛选开始日期 YYYY-MM-DD；留空不限制起始日期。
+            end_date: 筛选结束日期 YYYY-MM-DD，不早于开始日期；留空不限制结束日期。
+            status: 单据状态：0=草稿、1=预付、2=已生效、3=已作废；省略不筛选。
+            payment_status: 付款状态：0=未付款、1=部分付款、2=已完成；省略不筛选。
+            return_status: 退货状态：0=无退货、1=部分退货、2=全部退货；省略不筛选。
+            order_no: 采购业务单号模糊匹配关键词，不是内部 ID；留空不筛选。
+            supplier_id: 供应商内部 ID 或名称，候选用 searchBillingReferences 查询；留空不筛选。
         """
         try:
             context = self._contexts.get()
@@ -753,14 +779,16 @@ class DocumentTools:
         order_id: str,
         confirmed_by_user: bool,
     ) -> dict[str, Any]:
-        """作废采购单；只有用户明确确认后才能执行。
+        """作废已存在的采购单并真实写入 ERP，不是向供应商退货。
 
-        作废后单据状态变为已作废，不可恢复。调用前建议先调用
-        get_purchase_order 向用户展示单据内容。
+        先用 getPurchaseOrder 核实内容和状态，用户明确确认作废后才能调用；
+        未确认不调用，不得自造 confirmed_by_user=true。作废不可恢复，
+        完成后可再用 getPurchaseOrder 核对；采购退货改用 previewPurchaseReturn。
 
         Args:
-            order_id: 采购单标识，同时接受内部 ID 和业务单号 orderNo。
-            confirmed_by_user: 仅在用户明确确认作废后传 true。
+            order_id: 经 getPurchaseOrder 核实的采购单内部 ID 或业务单号 orderNo，
+                不是采购退货单 ID。
+            confirmed_by_user: 仅在用户明确确认作废该采购单后传 true，不得代用户确认。
         """
         try:
             context = self._contexts.get()
@@ -791,24 +819,30 @@ class DocumentTools:
         payment_account_id: str = "",
         confirmed_by_user: bool = False,
     ) -> dict[str, Any]:
-        """修改已存在的采购单；只有用户明确确认后才能执行。
+        """修改已存在的采购单并真实写入 ERP，不新建采购单或采购退货单。
 
-        仅传需要修改的字段；省略字段由适配器保留 ERP 当前值。
-        items 传入时替换完整明细（每行必填 product_id、quantity、unit_price）。
+        先调用 getPurchaseOrder 核实原单和待改内容，取得用户明确确认后再调用；
+        未确认不调用，不得自造 confirmed_by_user=true。只传需要修改的字段，
+        省略字段保留 ERP 当前值；items 是完整替换，不是增量。完成后用
+        getPurchaseOrder 核对；仅追加一笔付款用 previewPurchasePayment。
 
         Args:
-            order_id: 采购单标识，同时接受内部 ID 和业务单号 orderNo。
-            order_date: 单据日期，格式 YYYY-MM-DD。
-            handler_id: 经手人内部 ID 或名称。
-            items: 商品明细列表，每行含 product_id、quantity、unit_price。
-            supplier_id: 供应商内部 ID 或名称。
-            warehouse_id: 入库仓库内部 ID 或名称。
-            remark: 备注；传空字符串表示清空。
-            discount_amount: 优惠金额。
-            discount_account_id: 优惠账户 ID。
-            payment_amount: 付款金额。
-            payment_account_id: 付款账户 ID。
-            confirmed_by_user: 仅在用户明确确认修改内容后传 true。
+            order_id: 经 getPurchaseOrder 核实的采购单内部 ID 或业务单号 orderNo。
+            order_date: 新录单日期 YYYY-MM-DD；省略保留，传入时不能为空。
+            handler_id: 新经手人内部 ID 或名称，取自 searchBillingReferences；省略保留，不能传空。
+            items: 修改后的完整非空明细，基于 getPurchaseOrder 保留未改行；每行必填
+                product_id（原单或 searchProducts 的商品 ID）、正数 quantity、非负 unit_price。
+                可选 unit、原行 order_item_id 和行 remark；省略整个参数保留原明细。
+            supplier_id: 新供应商内部 ID 或名称，取自 searchBillingReferences；留空不修改。
+            warehouse_id: 新入库仓库内部 ID 或名称，取自 searchBillingReferences；留空不修改。
+            remark: 新整单备注，最多 200 字符；省略保留，空字符串清空。
+            discount_amount: 新优惠金额，非负，允许 0；省略保留原值。
+            discount_account_id: 优惠结算账户内部 ID，取自 searchBillingReferences，
+                不解析名称；留空不修改。
+            payment_amount: 新采购单付款金额，非负，允许 0；省略保留，不是追加付款额。
+            payment_account_id: 付款结算账户内部 ID，取自 searchBillingReferences，
+                不解析名称；留空不修改。
+            confirmed_by_user: 默认 false；仅在核实原单且用户明确确认本次修改后传 true。
         """
         try:
             context = self._contexts.get()
@@ -883,21 +917,29 @@ class DocumentTools:
         return_date: str = "",
         remark: str = "",
     ) -> dict[str, Any]:
-        """基于采购单生成退货预览；不传 items 默认整单退货。
+        """预览把已采购商品退给供应商的采购退货单，可同时收回供应商退款。
 
-        先回读采购单快捷退货数据（供应商、仓库、经手人自动带出），
-        用户只需确认退货商品和数量。
+        不是新采购入库，也不是客户退货（后者用 previewSalesReturn）。先用
+        listPurchaseOrders/getPurchaseOrder 定位原采购单，不传已有退货单 ID。
+        本工具回读快捷退货数据，自动带出供应商、仓库、经手人与可退商品数量。
+        仅预览，无远端写入；检查 required_actions、ready_to_submit 和 preview_id，
+        未就绪先补齐重预览；就绪且用户明确确认后才能调用 submitPurchaseReturn。
 
         Args:
-            order_id: 采购单标识，同时接受内部 ID 和业务单号 orderNo。
-            items: 退货明细，每行含 product_id、quantity，可选 unit_price；
-                不传默认整单退货。
-            refund_amount: 退货同时收到的退款金额，可选。
-            refund_account_id: 退款收款账户；退款金额大于 0 时必填。
-            discount_amount: 优惠/减免金额，可选。
-            discount_account_id: 优惠承担账户；优惠金额大于 0 时必填。
-            return_date: 退货日期 YYYY-MM-DD；默认源单日期或当天。
-            remark: 备注。
+            order_id: 原采购单内部 ID 或业务单号 orderNo，来自 listPurchaseOrders/getPurchaseOrder；
+                不是采购退货单 ID。
+            items: 用户选定的退货行，product_id 必须来自源单可退明细，quantity 为源单单位的
+                正数且不超过可退数量；unit_price 可选、非负，省略用源价。省略 items
+                默认退快捷退货预填的全部可退商品数量（已扣历史退货），不能传空数组。
+            refund_amount: 本次收到供应商退款的金额，非负；省略或 0 不随退货收款。
+                与 discount_amount 同时提供时，两者合计不得超过退货总额。
+            refund_account_id: 退款收款结算账户名称、编号或 searchBillingReferences 返回的 ID；
+                退款大于 0 时必填，须唯一匹配。
+            discount_amount: 本次优惠/减免金额，非负；省略或 0 不附加优惠，合计规则同退款。
+            discount_account_id: 优惠承担结算账户名称、编号或 searchBillingReferences 返回的 ID；
+                优惠大于 0 时必填，须唯一匹配。
+            return_date: 退货日期 YYYY-MM-DD；省略用原单快捷退货的 returnDate，无值时用当天。
+            remark: 可选的采购退货整单备注。
         """
         try:
             context = self._contexts.get()
@@ -1014,12 +1056,18 @@ class DocumentTools:
         idempotency_key: str | None = None,
         confirmed_by_user: bool = False,
     ) -> dict[str, Any]:
-        """用户明确确认预览后，把采购退货单写入真实 ERP（保存过账）。
+        """将退给供应商的采购退货预览写入 ERP 并保存过账，不提交销售退货。
+
+        先调用 previewPurchaseReturn，用户明确确认最近的就绪预览后才能提交；
+        未确认不调用，不得自造 confirmed_by_user=true。成功后可用
+        getPurchaseReturn 核对，结果未知先用 listPurchaseReturns 查询，勿盲目重提。
 
         Args:
-            preview_id: preview_purchase_return 返回的预览 ID；提交成功后失效。
-            idempotency_key: 可省略，默认使用 preview_id；显式指定时重试必须复用。
-            confirmed_by_user: 仅在用户明确确认该预览后传 true。
+            preview_id: 最近一次 previewPurchaseReturn 在 ready_to_submit=true 时返回且
+                已获用户确认的 preview_id；不得自造、跨类型或用旧预览，成功后消费失效。
+            idempotency_key: 可省略，默认 preview_id；显式值须非空且最多 128 字符，
+                同一提交重试复用原键，不得换键重复退货。
+            confirmed_by_user: 默认 false；仅在用户明确确认上述采购退货预览后传 true，不得代用户确认。
         """
 
         async def create(context: Any, payload: dict[str, Any]) -> str:
@@ -1036,10 +1084,15 @@ class DocumentTools:
         )
 
     async def get_purchase_return(self, return_id: str) -> dict[str, Any]:
-        """查询采购退货单详情。
+        """只读查询一张采购退货单详情，即退给供应商的记录，不是原采购单。
+
+        先用 listPurchaseReturns 定位；voidPurchaseReturn 前须先核实此详情并取得
+        用户明确确认。可取本退货单内部 ID 供 previewReceiptOrder 核销供应商退款；
+        新发起采购退货则用 getPurchaseOrder 核实原采购单后调用 previewPurchaseReturn。
 
         Args:
-            return_id: 采购退货单标识，同时接受内部 ID 和业务单号 returnNo。
+            return_id: 用户提供或 listPurchaseReturns/submitPurchaseReturn 返回的采购退货单
+                内部 ID 或业务单号 returnNo；不是原采购单 ID。
         """
         try:
             context = self._contexts.get()
@@ -1061,16 +1114,20 @@ class DocumentTools:
         return_no: str = "",
         supplier_id: str = "",
     ) -> dict[str, Any]:
-        """分页查询采购退货单列表。
+        """只读分页查找退给供应商的采购退货单，不是采购入库单或销售退货单。
+
+        返回单据列表而非采购统计；采购分析用 queryPurchaseReport，不以当前页
+        合计代替报表。选定退货单后用 getPurchaseReturn 核实详情，再确认作废
+        或用 previewReceiptOrder 预览退款核销；新退货来源请查 listPurchaseOrders。
 
         Args:
-            page: 页码，从 1 开始。
-            page_size: 每页数量，范围 1 到 100。
-            start_date: 开始日期，格式 YYYY-MM-DD。
-            end_date: 结束日期，格式 YYYY-MM-DD。
-            status: 单据状态：0=草稿 2=已生效 3=已作废。
-            return_no: 退货单编号模糊匹配关键词。
-            supplier_id: 供应商 ID 或名称。
+            page: 页码，从 1 开始，默认 1；has_more=true 时可继续翻页。
+            page_size: 每页退货单数量，1 到 100，默认 20。
+            start_date: 筛选开始日期 YYYY-MM-DD；留空不限制起始日期。
+            end_date: 筛选结束日期 YYYY-MM-DD，不早于开始日期；留空不限制结束日期。
+            status: 退货单状态：0=草稿、2=已生效、3=已作废；省略不筛选，其余状态以 ERP 为准。
+            return_no: 采购退货业务单号模糊匹配关键词，不是原采购单号；留空不筛选。
+            supplier_id: 供应商内部 ID 或名称，候选用 searchBillingReferences 查询；留空不筛选。
         """
         try:
             context = self._contexts.get()
@@ -1096,11 +1153,15 @@ class DocumentTools:
         return_id: str,
         confirmed_by_user: bool,
     ) -> dict[str, Any]:
-        """作废采购退货单；只有用户明确确认后才能执行。
+        """作废已存在的采购退货单并真实写入 ERP，不是作废原采购单或新增退货。
+
+        先调用 getPurchaseReturn 核实退货内容和状态，用户明确确认作废后才能调用；
+        未确认不调用，不得自造 confirmed_by_user=true。完成后可再用 getPurchaseReturn 核对。
 
         Args:
-            return_id: 采购退货单标识，同时接受内部 ID 和业务单号 returnNo。
-            confirmed_by_user: 仅在用户明确确认作废后传 true。
+            return_id: 经 getPurchaseReturn 核实的采购退货单内部 ID 或业务单号 returnNo，
+                不是源采购单 ID。
+            confirmed_by_user: 仅在用户明确确认作废该采购退货单后传 true，不得代用户确认。
         """
         try:
             context = self._contexts.get()
@@ -1131,21 +1192,29 @@ class DocumentTools:
         return_date: str = "",
         remark: str = "",
     ) -> dict[str, Any]:
-        """基于销售单生成退货预览；不传 items 默认整单退货。
+        """预览客户退回已售商品的销售退货单，可同时向客户退款。
 
-        先回读销售单快捷退货数据（客户、仓库、经手人自动带出），
-        用户只需确认退货商品、数量和退款方式。
+        向供应商退货用 previewPurchaseReturn。先用 listSalesOrders/getSalesOrder
+        定位原销售单，不传已有销售退货单 ID；快捷退货自动带出客户、仓库、
+        经手人与可退商品数量。仅预览，无远端写入；检查 required_actions、
+        ready_to_submit 和 preview_id，未就绪先补齐重预览；就绪且用户明确确认
+        后才能调用 submitSalesReturn。
 
         Args:
-            order_id: 销售单标识，同时接受内部 ID 和业务单号 orderNo。
-            items: 退货明细，每行含 product_id、quantity，可选 unit_price；
-                不传默认整单退货。
-            refund_amount: 退货同时退给客户的金额，可选。
-            refund_account_id: 退款账户；退款金额大于 0 时必填。
-            discount_amount: 折让金额，可选。
-            discount_account_id: 折让承担账户；折让金额大于 0 时必填。
-            return_date: 退货日期 YYYY-MM-DD；默认源单日期或当天。
-            remark: 备注。
+            order_id: 原销售单内部 ID 或业务单号 orderNo，来自 listSalesOrders/getSalesOrder；
+                不是销售退货单 ID 或采购单 ID。
+            items: 用户选定的退货行，product_id 必须来自源单可退明细，quantity 为源单单位的
+                正数且不超过可退数量；unit_price 可选、非负，省略用源价。省略 items
+                默认退快捷退货预填的全部可退商品数量（已扣历史退货），不能传空数组。
+            refund_amount: 本次退给客户的金额，非负；省略或 0 不随退货退款。
+                与 discount_amount 同时提供时，两者合计不得超过退货总额。
+            refund_account_id: 向客户退款的结算账户名称、编号或 searchBillingReferences 返回的 ID；
+                退款大于 0 时必填，须唯一匹配。
+            discount_amount: 本次折让金额，非负；省略或 0 不附加折让，合计规则同退款。
+            discount_account_id: 折让承担结算账户名称、编号或 searchBillingReferences 返回的 ID；
+                折让大于 0 时必填，须唯一匹配。
+            return_date: 退货日期 YYYY-MM-DD；省略用原单快捷退货的 returnDate，无值时用当天。
+            remark: 可选的销售退货整单备注。
         """
         try:
             context = self._contexts.get()
@@ -1262,12 +1331,18 @@ class DocumentTools:
         idempotency_key: str | None = None,
         confirmed_by_user: bool = False,
     ) -> dict[str, Any]:
-        """用户明确确认预览后，把销售退货单写入真实 ERP（保存过账）。
+        """将客户退货的销售退货预览写入 ERP 并保存过账，不提交采购退货。
+
+        先调用 previewSalesReturn，用户明确确认最近的就绪预览后才能提交；
+        未确认不调用，不得自造 confirmed_by_user=true。成功后可用
+        getSalesReturn 核对，结果未知先用 listSalesReturns 查询，勿盲目重提。
 
         Args:
-            preview_id: preview_sales_return 返回的预览 ID；提交成功后失效。
-            idempotency_key: 可省略，默认使用 preview_id；显式指定时重试必须复用。
-            confirmed_by_user: 仅在用户明确确认该预览后传 true。
+            preview_id: 最近一次 previewSalesReturn 在 ready_to_submit=true 时返回且
+                已获用户确认的 preview_id；不得自造、跨类型或用旧预览，成功后消费失效。
+            idempotency_key: 可省略，默认 preview_id；显式值须非空且最多 128 字符，
+                同一提交重试复用原键，不得换键重复退货。
+            confirmed_by_user: 默认 false；仅在用户明确确认上述销售退货预览后传 true，不得代用户确认。
         """
 
         async def create(context: Any, payload: dict[str, Any]) -> str:
@@ -1284,10 +1359,15 @@ class DocumentTools:
         )
 
     async def get_sales_return(self, return_id: str) -> dict[str, Any]:
-        """查询销售退货单详情。
+        """只读查询一张销售退货单详情，即客户退货记录，不是原销售单。
+
+        先用 listSalesReturns 定位；voidSalesReturn 前须先核实此详情并取得
+        用户明确确认。可取本退货单内部 ID 供 previewPaymentOrder 核销客户退款；
+        新发起客户退货则用 getSalesOrder 核实原销售单后调用 previewSalesReturn。
 
         Args:
-            return_id: 销售退货单标识，同时接受内部 ID 和业务单号 returnNo。
+            return_id: 用户提供或 listSalesReturns/submitSalesReturn 返回的销售退货单
+                内部 ID 或业务单号 returnNo；不是原销售单 ID。
         """
         try:
             context = self._contexts.get()
@@ -1310,17 +1390,21 @@ class DocumentTools:
         return_no: str = "",
         customer_id: str = "",
     ) -> dict[str, Any]:
-        """分页查询销售退货单列表。
+        """只读分页查找客户退货的销售退货单，不是销售原单或采购退货单。
+
+        返回单据列表而非销售统计；销售分析用 querySalesReport，不以当前页
+        合计代替报表。选定退货单后用 getSalesReturn 核实详情，再确认作废
+        或用 previewPaymentOrder 预览退款核销；新退货来源请查 listSalesOrders。
 
         Args:
-            page: 页码，从 1 开始。
-            page_size: 每页数量，范围 1 到 100。
-            start_date: 开始日期，格式 YYYY-MM-DD。
-            end_date: 结束日期，格式 YYYY-MM-DD。
-            status: 单据状态：0=草稿 2=已生效 3=已作废。
-            refund_status: 退款状态：0=未退款 1=部分退款 2=已完成。
-            return_no: 退货单编号模糊匹配关键词。
-            customer_id: 客户 ID 或名称。
+            page: 页码，从 1 开始，默认 1；has_more=true 时可继续翻页。
+            page_size: 每页退货单数量，1 到 100，默认 20。
+            start_date: 筛选开始日期 YYYY-MM-DD；留空不限制起始日期。
+            end_date: 筛选结束日期 YYYY-MM-DD，不早于开始日期；留空不限制结束日期。
+            status: 退货单状态：0=草稿、2=已生效、3=已作废；省略不筛选，其余状态以 ERP 为准。
+            refund_status: 退款状态：0=未退款、1=部分退款、2=已完成；省略不筛选。
+            return_no: 销售退货业务单号模糊匹配关键词，不是原销售单号；留空不筛选。
+            customer_id: 客户内部 ID 或名称，候选用 searchBillingReferences 查询；留空不筛选。
         """
         try:
             context = self._contexts.get()
@@ -1347,11 +1431,15 @@ class DocumentTools:
         return_id: str,
         confirmed_by_user: bool,
     ) -> dict[str, Any]:
-        """作废销售退货单；只有用户明确确认后才能执行。
+        """作废已存在的销售退货单并真实写入 ERP，不是作废原销售单或新增退货。
+
+        先调用 getSalesReturn 核实退货内容和状态，用户明确确认作废后才能调用；
+        未确认不调用，不得自造 confirmed_by_user=true。完成后可再用 getSalesReturn 核对。
 
         Args:
-            return_id: 销售退货单标识，同时接受内部 ID 和业务单号 returnNo。
-            confirmed_by_user: 仅在用户明确确认作废后传 true。
+            return_id: 经 getSalesReturn 核实的销售退货单内部 ID 或业务单号 returnNo，
+                不是源销售单 ID。
+            confirmed_by_user: 仅在用户明确确认作废该销售退货单后传 true，不得代用户确认。
         """
         try:
             context = self._contexts.get()
@@ -1379,14 +1467,23 @@ class DocumentTools:
         discount_amount: float | None = None,
         discount_account: str = "",
     ) -> dict[str, Any]:
-        """生成销售单继续收款预览，展示订单应收上下文与收款金额。
+        """预览对单笔销售单继续收款或免账，不新建独立收款单。
+
+        先用 listSalesOrders/getSalesOrder 核实目标销售单及未收金额；需要独立
+        收款单或多单核销用 previewReceiptOrder，客户退货用 previewSalesReturn。
+        本工具仅预览，无远端写入；返回 required_actions、ready_to_submit、preview_id，
+        按候选补齐后重预览，用户明确确认就绪预览后才能调用 submitSalesReceipt。
 
         Args:
-            order_id: 销售单标识，同时接受内部 ID 和业务单号 orderNo。
-            receipt_amount: 本次收款金额；与免账金额不能同时为 0。
-            receipt_account: 收款结算账户名称、编号或候选返回的 ID。
-            discount_amount: 免账金额（优惠/折让），可选。
-            discount_account: 免账承担账户；免账金额大于 0 时必填。
+            order_id: 目标销售单内部 ID 或业务单号 orderNo，来自 listSalesOrders/getSalesOrder，
+                不是收款单或销售退货单 ID。
+            receipt_amount: 本次追加收款金额，非负，不是累计已收；可为 0，但与免账不能同时为 0，
+                两者合计不得超过该单未收金额。
+            receipt_account: 收款结算账户名称、编号或 searchBillingReferences 返回的 ID；
+                即使收款为 0、仅免账也必须提供并匹配。
+            discount_amount: 本次免账金额（优惠/折让），非负，省略按 0；与收款合计受未收金额限制。
+            discount_account: 免账承担结算账户名称、编号或 searchBillingReferences 返回的 ID；
+                免账大于 0 时必填并须匹配。
         """
         try:
             context = self._contexts.get()
@@ -1486,12 +1583,18 @@ class DocumentTools:
         idempotency_key: str | None = None,
         confirmed_by_user: bool = False,
     ) -> dict[str, Any]:
-        """用户明确确认预览后，把收款写入销售单（继续收款）。
+        """将已确认的单笔继续收款/免账写入销售单，不提交独立收款单。
+
+        先调用 previewSalesReceipt，用户明确确认最近的就绪预览后才能提交；
+        未确认不调用，不得自造 confirmed_by_user=true。提交后用 getSalesOrder
+        核对收款状态；结果未知也先核对，不盲目重收。
 
         Args:
-            preview_id: preview_sales_receipt 返回的预览 ID；提交成功后失效。
-            idempotency_key: 可省略，默认使用 preview_id；显式指定时重试必须复用。
-            confirmed_by_user: 仅在用户明确确认该预览后传 true。
+            preview_id: 最近一次 previewSalesReceipt 在 ready_to_submit=true 时返回且
+                已获用户确认的 preview_id；不得使用 previewReceiptOrder 的 ID、自造或用旧预览，成功后消费失效。
+            idempotency_key: 可省略，默认 preview_id；显式值须非空且最多 128 字符，
+                同一提交重试复用原键，不得换键重复收款。
+            confirmed_by_user: 默认 false；仅在用户明确确认上述单笔收款预览后传 true，不得代用户确认。
         """
 
         async def create(context: Any, payload: dict[str, Any]) -> str:
@@ -1517,14 +1620,23 @@ class DocumentTools:
         discount_amount: float | None = None,
         discount_account: str = "",
     ) -> dict[str, Any]:
-        """生成采购单继续付款预览，展示订单应付上下文与付款金额。
+        """预览对单笔采购单继续付款或免账，不新建独立付款单。
+
+        先用 listPurchaseOrders/getPurchaseOrder 核实目标采购单及未付金额；需要
+        独立付款单或多单核销用 previewPaymentOrder，采购退货用 previewPurchaseReturn。
+        本工具仅预览，无远端写入；返回 required_actions、ready_to_submit、preview_id，
+        按候选补齐后重预览，用户明确确认就绪预览后才能调用 submitPurchasePayment。
 
         Args:
-            order_id: 采购单标识，同时接受内部 ID 和业务单号 orderNo。
-            payment_amount: 本次付款金额；与免账金额不能同时为 0。
-            payment_account: 付款结算账户名称、编号或候选返回的 ID。
-            discount_amount: 免账金额（优惠/折让），可选。
-            discount_account: 免账承担账户；免账金额大于 0 时必填。
+            order_id: 目标采购单内部 ID 或业务单号 orderNo，来自 listPurchaseOrders/getPurchaseOrder，
+                不是付款单或采购退货单 ID。
+            payment_amount: 本次追加付款金额，非负，不是累计已付；可为 0，但与免账不能同时为 0，
+                两者合计不得超过该单未付金额。
+            payment_account: 付款结算账户名称、编号或 searchBillingReferences 返回的 ID；
+                即使付款为 0、仅免账也必须提供并匹配。
+            discount_amount: 本次免账金额（优惠/折让），非负，省略按 0；与付款合计受未付金额限制。
+            discount_account: 免账承担结算账户名称、编号或 searchBillingReferences 返回的 ID；
+                免账大于 0 时必填并须匹配。
         """
         try:
             context = self._contexts.get()
@@ -1624,12 +1736,18 @@ class DocumentTools:
         idempotency_key: str | None = None,
         confirmed_by_user: bool = False,
     ) -> dict[str, Any]:
-        """用户明确确认预览后，把付款写入采购单（继续付款）。
+        """将已确认的单笔继续付款/免账写入采购单，不提交独立付款单。
+
+        先调用 previewPurchasePayment，用户明确确认最近的就绪预览后才能提交；
+        未确认不调用，不得自造 confirmed_by_user=true。提交后用 getPurchaseOrder
+        核对付款状态；结果未知也先核对，不盲目重付。
 
         Args:
-            preview_id: preview_purchase_payment 返回的预览 ID；提交成功后失效。
-            idempotency_key: 可省略，默认使用 preview_id；显式指定时重试必须复用。
-            confirmed_by_user: 仅在用户明确确认该预览后传 true。
+            preview_id: 最近一次 previewPurchasePayment 在 ready_to_submit=true 时返回且
+                已获用户确认的 preview_id；不得使用 previewPaymentOrder 的 ID、自造或用旧预览，成功后消费失效。
+            idempotency_key: 可省略，默认 preview_id；显式值须非空且最多 128 字符，
+                同一提交重试复用原键，不得换键重复付款。
+            confirmed_by_user: 默认 false；仅在用户明确确认上述单笔付款预览后传 true，不得代用户确认。
         """
 
         async def create(context: Any, payload: dict[str, Any]) -> str:
@@ -1663,19 +1781,25 @@ class DocumentTools:
         confirmed_units: list[dict[str, Any]] | None = None,
         partial: bool = False,
     ) -> dict[str, Any]:
-        """校验调拨单信息、匹配商品并生成不可变提交预览。
+        """预览商品从一个仓库调到另一个仓库的库存调拨单，不是采购或销售。
+
+        调出、调入仓库必须不同；单仓报损/报溢用 previewOtherStockDoc。
+        仓库和经手人候选用 searchBillingReferences，商品候选用 searchProducts。
+        本工具仅预览，无远端写入；根据 required_actions 补商品/单位等并重预览，
+        ready_to_submit=true 且取得 preview_id 后，用户明确确认才能调用 submitStockTransfer。
 
         Args:
-            order_text: 调拨商品文本，必须包含商品和数量。
-            from_warehouse: 必填，调出仓库名称、编号或候选返回的 ID。
-            to_warehouse: 必填，调入仓库名称、编号或候选返回的 ID。
-            handler: 必填，经手人名称、编号或候选返回的 ID。
-            transfer_date: 调拨日期 YYYY-MM-DD；默认当天。
-            remark: 可选备注，最多 200 个字符。
-            confirmed_products: 用户确认的商品列表，元素格式为
-                {"line_id": "L001", "product_id": "ERP商品ID"}。
-            confirmed_units: 用户按 ERP 单位确认后的行数据。
-            partial: 为 true 时只提交已匹配商品，跳过未匹配行。
+            order_text: 完整调拨商品文本，须含商品和数量；多轮修改仍传完整明细。
+            from_warehouse: 必填，调出仓库名称、编号或 searchBillingReferences 返回的 ID。
+            to_warehouse: 必填，调入仓库名称、编号或 searchBillingReferences 返回的 ID，须不同于调出仓库。
+            handler: 必填，经手人名称、编号或 searchBillingReferences 返回的 ID。
+            transfer_date: 调拨日期 YYYY-MM-DD；省略默认当天。
+            remark: 可选的调拨整单备注，最多 200 个字符。
+            confirmed_products: 用户选定的商品绑定列表，每行含当前预览 line_id 和
+                预览或 searchProducts 候选的 product_id；不是提交确认。
+            confirmed_units: 用户对 unit_warnings 确认的行，含当前 line_id、已匹配 product_id、
+                ERP unit 及按该单位确认的 quantity（至少 0.0001），不自行换算。
+            partial: 默认 false；用户同意跳过未匹配行时传 true，仅预览已匹配商品，不直接提交。
         """
         try:
             context = self._contexts.get()
@@ -1790,12 +1914,18 @@ class DocumentTools:
         idempotency_key: str | None = None,
         confirmed_by_user: bool = False,
     ) -> dict[str, Any]:
-        """用户明确确认预览后，把调拨单写入真实 ERP（保存过账）。
+        """将已确认的仓库间调拨预览写入 ERP 并保存过账，不提交报损/报溢单。
+
+        先调用 previewStockTransfer，用户明确确认最近的就绪预览后才能提交；
+        未确认不调用，不得自造 confirmed_by_user=true。结果未知时先核对 ERP，
+        不盲目重提；可用 queryStockLogs 查看库存变动。
 
         Args:
-            preview_id: preview_stock_transfer 返回的预览 ID；提交成功后失效。
-            idempotency_key: 可省略，默认使用 preview_id；显式指定时重试必须复用。
-            confirmed_by_user: 仅在用户明确确认该预览后传 true。
+            preview_id: 最近一次 previewStockTransfer 在 ready_to_submit=true 时返回且
+                已获用户确认的 preview_id；不得自造、跨类型或用旧预览，成功后消费失效。
+            idempotency_key: 可省略，默认 preview_id；显式值须非空且最多 128 字符，
+                同一提交重试复用原键，不得换键重复调拨。
+            confirmed_by_user: 默认 false；仅在用户明确确认上述调拨预览后传 true，不得代用户确认。
         """
 
         async def create(context: Any, payload: dict[str, Any]) -> str:
@@ -1824,20 +1954,27 @@ class DocumentTools:
         confirmed_units: list[dict[str, Any]] | None = None,
         partial: bool = False,
     ) -> dict[str, Any]:
-        """校验其他入库/出库单（报损、报溢等）并生成不可变提交预览。
+        """预览单个仓库的其他入库/出库单，用于报溢、报损等非购销库存变动。
+
+        仓库间移动用 previewStockTransfer，不用报损/报溢替代销售或采购退货。
+        先用 listStockDocTypes 查询方向对应的类型；基础资料用 searchBillingReferences，
+        商品用 searchProducts 查候选。仅预览，无远端写入；按 required_actions 补齐
+        并重预览，ready_to_submit=true 且取得 preview_id 后，用户明确确认才能调用
+        submitOtherStockDoc。
 
         Args:
-            kind: 单据方向：inbound=其他入库，outbound=其他出库。
-            order_text: 商品文本，必须包含商品和数量。
-            warehouse: 必填，仓库名称、编号或候选返回的 ID。
-            handler: 必填，经手人名称、编号或候选返回的 ID。
-            doc_type: 必填，入库/出库类型 ID 或名称（先用
-                list_stock_doc_types 查询可用类型，如报损、报溢）。
-            doc_date: 单据日期 YYYY-MM-DD；默认当天。
-            remark: 可选备注，最多 200 个字符。
-            confirmed_products: 用户确认的商品列表。
-            confirmed_units: 用户按 ERP 单位确认后的行数据。
-            partial: 为 true 时只提交已匹配商品，跳过未匹配行。
+            kind: 单据方向，inbound=其他入库（如报溢），outbound=其他出库（如报损）。
+            order_text: 完整出入库商品文本，须含商品和数量；多轮修改仍传完整明细。
+            warehouse: 必填，发生出入库的仓库名称、编号或 searchBillingReferences 返回的 ID。
+            handler: 必填，经手人名称、编号或 searchBillingReferences 返回的 ID。
+            doc_type: 必填，listStockDocTypes 返回的与 kind 同方向的类型 ID 或名称，不能自造。
+            doc_date: 出入库单据日期 YYYY-MM-DD；省略默认当天。
+            remark: 可选的整单备注，最多 200 个字符。
+            confirmed_products: 用户选定的商品绑定列表，每行含当前预览 line_id 和
+                预览或 searchProducts 候选的 product_id；不是提交确认。
+            confirmed_units: 用户对 unit_warnings 确认的行，含当前 line_id、已匹配 product_id、
+                ERP unit 及按该单位确认的 quantity（至少 0.0001），不自行换算。
+            partial: 默认 false；用户同意跳过未匹配行时传 true，仅预览已匹配商品，不直接提交。
         """
         try:
             context = self._contexts.get()
@@ -1953,12 +2090,18 @@ class DocumentTools:
         idempotency_key: str | None = None,
         confirmed_by_user: bool = False,
     ) -> dict[str, Any]:
-        """用户明确确认预览后，把其他入库/出库单写入真实 ERP（保存过账）。
+        """将已确认的其他入库/出库预览写入 ERP 并保存过账，不提交仓库调拨单。
+
+        先调用 previewOtherStockDoc，方向和类型沿用最近预览；用户明确确认就绪
+        预览后才能提交，未确认不调用，不得自造 confirmed_by_user=true。
+        结果未知先核对 ERP，不盲目重提；可用 queryStockLogs 查看库存变动。
 
         Args:
-            preview_id: preview_other_stock_doc 返回的预览 ID；提交成功后失效。
-            idempotency_key: 可省略，默认使用 preview_id；显式指定时重试必须复用。
-            confirmed_by_user: 仅在用户明确确认该预览后传 true。
+            preview_id: 最近一次 previewOtherStockDoc 在 ready_to_submit=true 时返回且
+                已获用户确认的 preview_id；不得自造、跨类型或用旧预览，成功后消费失效。
+            idempotency_key: 可省略，默认 preview_id；显式值须非空且最多 128 字符，
+                同一提交重试复用原键，不得换键重复出入库。
+            confirmed_by_user: 默认 false；仅在用户明确确认上述出入库预览后传 true，不得代用户确认。
         """
 
         async def create(context: Any, payload: dict[str, Any]) -> str:
@@ -1993,26 +2136,36 @@ class DocumentTools:
         writeoff_details: list[dict[str, Any]] | None = None,
         remark: str = "",
     ) -> dict[str, Any]:
-        """生成收款单预览；不关联销售单的独立收款（含核销）用此工具。
+        """预览独立收款单，可不核销，也可将一笔收款分配到多张业务单据核销。
 
-        销售单上的继续收款请用 preview_sales_receipt。
+        单笔销售单继续收款用 previewSalesReceipt；本工具通常核销销售单应收或
+        采购退货退款。核销前用 getSalesOrder/getPurchaseReturn 等对应详情工具
+        核实单据、往来单位及内部 ID；基础资料用 searchBillingReferences 查候选。
+        仅预览，无远端写入；按 required_actions 和候选补齐后重新预览，
+        ready_to_submit=true 且取得 preview_id 后，用户明确确认才能调用 submitReceiptOrder。
 
         Args:
-            receipt_amount: 收款总额，必须大于 0。
-            account: 必填，收款结算账户名称、编号或候选返回的 ID。
-            handler: 必填，经手人名称、编号或候选返回的 ID。
-            customer: 客户名称或 ID；核销销售单/销售退货单时必填。
-            supplier: 供应商名称或 ID；核销采购退货单时使用。
-            order_date: 单据日期 YYYY-MM-DD；默认当天。
-            discount_amount: 优惠（抹零）金额，可选。
-            discount_account: 免账承担账户；优惠金额大于 0 时必填。
-            fund_type: 款项类型名称、编号或 ID；带核销时默认按场景选
-                系统类型（核销销售单=销售收款，核销采购退货单=采购退款
-                收款），无核销时必填，缺省时返回候选列表。
-            writeoff_details: 核销明细，每行含 biz_type（sales_order、
-                purchase_order、sales_return、purchase_return）、biz_id、
-                writeoff_amount；核销总额不能超过收款金额。
-            remark: 备注。
+            receipt_amount: 独立收款总额，至少 0.01；不能以 0 金额仅免账，核销合计不得超过此金额。
+            account: 必填，收款结算账户名称、编号或 searchBillingReferences 返回的 ID。
+            handler: 必填，经手人名称、编号或 searchBillingReferences 返回的 ID。
+            customer: 客户名称或 searchBillingReferences 返回的 ID；核销销售类单据时须匹配，
+                与 supplier 只能提供其一。
+            supplier: 供应商名称或 searchBillingReferences 返回的 ID；核销采购类单据时须匹配，
+                如采购退货退款，与 customer 只能提供其一。
+            order_date: 独立收款单日期 YYYY-MM-DD；省略默认当天。
+            discount_amount: 优惠（抹零）金额，非负；省略或 0 不附加优惠，不增加可核销总额。
+            discount_account: 免账承担结算账户名称、编号或 searchBillingReferences 返回的 ID；
+                优惠大于 0 时必填并须匹配。
+            fund_type: 收款款项类型名称、编号或 ID；省略时按销售单核销推断销售收款、
+                按采购退货核销推断采购退款收款，无法推断时从本预览
+                reference_resolutions.fund_type.candidates 选择后重预览，无单独款项类型工具。
+                无核销收款须选适用的自定义类型，不能用强制核销的系统销售收款类型。
+            writeoff_details: 可选多单核销分配；每行 biz_type 为 sales_order（销售单）、
+                purchase_order（采购单）、sales_return（销售退货）、purchase_return（采购退货）；
+                biz_id 取对应 getSalesOrder/getPurchaseOrder/getSalesReturn/getPurchaseReturn
+                的单据内部 ID，不是单号或退货的源单 ID；writeoff_amount 须为正，合计不超过
+                receipt_amount。核实各单往来单位；省略或空数组只收款不核销。
+            remark: 可选的独立收款单备注，最多 200 个字符。
         """
         try:
             context = self._contexts.get()
@@ -2056,12 +2209,18 @@ class DocumentTools:
         idempotency_key: str | None = None,
         confirmed_by_user: bool = False,
     ) -> dict[str, Any]:
-        """用户明确确认预览后，把收款单写入真实 ERP（保存生效）。
+        """将独立收款单及预览中的核销分配写入 ERP 并保存生效，不是销售单继续收款。
+
+        先调用 previewReceiptOrder，用户明确确认最近的就绪预览后才能提交；
+        未确认不调用，不得自造 confirmed_by_user=true。成功后可用 getReceiptOrder
+        核对，结果未知先用 listReceiptOrders 查询，勿盲目重提。
 
         Args:
-            preview_id: preview_receipt_order 返回的预览 ID；提交成功后失效。
-            idempotency_key: 可省略，默认使用 preview_id；显式指定时重试必须复用。
-            confirmed_by_user: 仅在用户明确确认该预览后传 true。
+            preview_id: 最近一次 previewReceiptOrder 在 ready_to_submit=true 时返回且
+                已获用户确认的 preview_id；不得使用 previewSalesReceipt 的 ID、自造或用旧预览，成功后消费失效。
+            idempotency_key: 可省略，默认 preview_id；显式值须非空且最多 128 字符，
+                同一提交重试复用原键，不得换键重复收款。
+            confirmed_by_user: 默认 false；仅在用户明确确认上述独立收款预览后传 true，不得代用户确认。
         """
 
         async def create(context: Any, payload: dict[str, Any]) -> str:
@@ -2078,10 +2237,14 @@ class DocumentTools:
         )
 
     async def get_receipt_order(self, order_id: str) -> dict[str, Any]:
-        """查询收款单详情，含核销明细。
+        """只读查询一张独立收款单详情及核销明细，不是销售单的收款记录或统计报表。
+
+        不确定单据先用 listReceiptOrders 定位；voidReceiptOrder 前须先核实此详情
+        并取得用户明确确认。销售单继续收款状态查 getSalesOrder，结算统计用 querySettlementReport。
 
         Args:
-            order_id: 收款单标识，同时接受内部 ID 和业务单号 orderNo。
+            order_id: 用户提供或 listReceiptOrders/submitReceiptOrder 返回的独立收款单
+                内部 ID 或业务单号 orderNo；不是被核销的销售单或采购退货单 ID。
         """
         try:
             context = self._contexts.get()
@@ -2104,17 +2267,21 @@ class DocumentTools:
         counterparty_id: str = "",
         account_id: str = "",
     ) -> dict[str, Any]:
-        """分页查询收款单列表。
+        """只读分页查找独立收款单，支持日期、状态、往来单位及结算账户筛选。
+
+        不是销售订单列表或结算汇总，结算统计用 querySettlementReport，不以当前页
+        合计代替报表。选定单据后用 getReceiptOrder 核实详情，明确确认后才可 voidReceiptOrder。
 
         Args:
-            page: 页码，从 1 开始。
-            page_size: 每页数量，范围 1 到 100。
-            start_date: 开始日期，格式 YYYY-MM-DD。
-            end_date: 结束日期，格式 YYYY-MM-DD。
-            status: 单据状态：0=草稿 2=已生效 3=已作废。
-            order_no: 单据编号模糊匹配关键词。
-            counterparty_id: 客户或供应商 ID、名称。
-            account_id: 结算账户 ID 或名称。
+            page: 页码，从 1 开始，默认 1；has_more=true 时可继续翻页。
+            page_size: 每页收款单数量，1 到 100，默认 20。
+            start_date: 筛选开始日期 YYYY-MM-DD；留空不限制起始日期。
+            end_date: 筛选结束日期 YYYY-MM-DD，不早于开始日期；留空不限制结束日期。
+            status: 收款单状态：0=草稿、2=已生效、3=已作废；省略不筛选。
+            order_no: 独立收款业务单号模糊匹配关键词，不是被核销单据的单号；留空不筛选。
+            counterparty_id: 客户或供应商内部 ID、名称，候选用 searchBillingReferences；
+                先尝试客户再供应商，留空不筛选。
+            account_id: 结算账户内部 ID 或名称，候选用 searchBillingReferences；留空不筛选。
         """
         try:
             context = self._contexts.get()
@@ -2136,11 +2303,16 @@ class DocumentTools:
         order_id: str,
         confirmed_by_user: bool,
     ) -> dict[str, Any]:
-        """作废收款单；只有用户明确确认后才能执行。
+        """作废独立收款单并真实写入 ERP，不是作废销售单或发起客户退款。
+
+        先调用 getReceiptOrder 核实收款内容、核销明细和状态，用户明确确认作废
+        后才能调用；未确认不调用，不得自造 confirmed_by_user=true。
+        完成后可再用 getReceiptOrder 核对。
 
         Args:
-            order_id: 收款单标识，同时接受内部 ID 和业务单号 orderNo。
-            confirmed_by_user: 仅在用户明确确认作废后传 true。
+            order_id: 经 getReceiptOrder 核实的独立收款单内部 ID 或业务单号 orderNo，
+                不是被核销的业务单据 ID。
+            confirmed_by_user: 仅在用户明确确认作废该收款单后传 true，不得代用户确认。
         """
         try:
             context = self._contexts.get()
@@ -2166,25 +2338,35 @@ class DocumentTools:
         writeoff_details: list[dict[str, Any]] | None = None,
         remark: str = "",
     ) -> dict[str, Any]:
-        """生成付款单预览；不关联采购单的独立付款（含核销）用此工具。
+        """预览独立付款单，可不核销，也可将一笔付款分配到多张业务单据核销。
 
-        采购单上的继续付款请用 preview_purchase_payment。
+        单笔采购单继续付款用 previewPurchasePayment；本工具通常核销采购单应付
+        或销售退货退款。核销前用 getPurchaseOrder/getSalesReturn 等对应详情工具
+        核实单据、往来单位及内部 ID；基础资料用 searchBillingReferences 查候选。
+        仅预览，无远端写入；按 required_actions 和候选补齐后重新预览，
+        ready_to_submit=true 且取得 preview_id 后，用户明确确认才能调用 submitPaymentOrder。
 
         Args:
-            payment_amount: 付款总额，必须大于 0。
-            account: 必填，付款结算账户名称、编号或候选返回的 ID。
-            handler: 必填，经手人名称、编号或候选返回的 ID。
-            supplier: 供应商名称或 ID；核销采购单/采购退货单时必填。
-            customer: 客户名称或 ID；核销销售退货单时使用。
-            order_date: 单据日期 YYYY-MM-DD；默认当天。
-            discount_amount: 优惠（抹零）金额，可选。
-            discount_account: 免账承担账户；优惠金额大于 0 时必填。
-            fund_type: 款项类型名称、编号或 ID；带核销时默认按场景选
-                系统类型（核销采购单=采购付款，核销销售退货单=销售退款
-                付款），无核销时必填，缺省时返回候选列表。
-            writeoff_details: 核销明细，每行含 biz_type、biz_id、writeoff_amount；
-                核销总额不能超过付款金额。
-            remark: 备注。
+            payment_amount: 独立付款总额，至少 0.01；不能以 0 金额仅免账，核销合计不得超过此金额。
+            account: 必填，付款结算账户名称、编号或 searchBillingReferences 返回的 ID。
+            handler: 必填，经手人名称、编号或 searchBillingReferences 返回的 ID。
+            supplier: 供应商名称或 searchBillingReferences 返回的 ID；核销采购类单据时须匹配，
+                与 customer 只能提供其一。
+            customer: 客户名称或 searchBillingReferences 返回的 ID；核销销售类单据时须匹配，
+                如销售退货退款，与 supplier 只能提供其一。
+            order_date: 独立付款单日期 YYYY-MM-DD；省略默认当天。
+            discount_amount: 优惠（抹零）金额，非负；省略或 0 不附加优惠，不增加可核销总额。
+            discount_account: 免账承担结算账户名称、编号或 searchBillingReferences 返回的 ID；
+                优惠大于 0 时必填并须匹配。
+            fund_type: 付款款项类型名称、编号或 ID；省略时按采购单核销推断采购付款、
+                按销售退货核销推断销售退款付款，无法推断时从本预览
+                reference_resolutions.fund_type.candidates 选择后重预览，无单独款项类型工具。
+            writeoff_details: 可选多单核销分配；每行 biz_type 为 sales_order（销售单）、
+                purchase_order（采购单）、sales_return（销售退货）、purchase_return（采购退货）；
+                biz_id 取对应 getSalesOrder/getPurchaseOrder/getSalesReturn/getPurchaseReturn
+                的单据内部 ID，不是单号或退货的源单 ID；writeoff_amount 须为正，合计不超过
+                payment_amount。核实各单往来单位；省略或空数组只付款不核销。
+            remark: 可选的独立付款单备注，最多 200 个字符。
         """
         try:
             context = self._contexts.get()
@@ -2228,12 +2410,18 @@ class DocumentTools:
         idempotency_key: str | None = None,
         confirmed_by_user: bool = False,
     ) -> dict[str, Any]:
-        """用户明确确认预览后，把付款单写入真实 ERP（保存生效）。
+        """将独立付款单及预览中的核销分配写入 ERP 并保存生效，不是采购单继续付款。
+
+        先调用 previewPaymentOrder，用户明确确认最近的就绪预览后才能提交；
+        未确认不调用，不得自造 confirmed_by_user=true。成功后可用 getPaymentOrder
+        核对，结果未知先用 listPaymentOrders 查询，勿盲目重提。
 
         Args:
-            preview_id: preview_payment_order 返回的预览 ID；提交成功后失效。
-            idempotency_key: 可省略，默认使用 preview_id；显式指定时重试必须复用。
-            confirmed_by_user: 仅在用户明确确认该预览后传 true。
+            preview_id: 最近一次 previewPaymentOrder 在 ready_to_submit=true 时返回且
+                已获用户确认的 preview_id；不得使用 previewPurchasePayment 的 ID、自造或用旧预览，成功后消费失效。
+            idempotency_key: 可省略，默认 preview_id；显式值须非空且最多 128 字符，
+                同一提交重试复用原键，不得换键重复付款。
+            confirmed_by_user: 默认 false；仅在用户明确确认上述独立付款预览后传 true，不得代用户确认。
         """
 
         async def create(context: Any, payload: dict[str, Any]) -> str:
@@ -2250,10 +2438,14 @@ class DocumentTools:
         )
 
     async def get_payment_order(self, order_id: str) -> dict[str, Any]:
-        """查询付款单详情，含核销明细。
+        """只读查询一张独立付款单详情及核销明细，不是采购单的付款记录或统计报表。
+
+        不确定单据先用 listPaymentOrders 定位；voidPaymentOrder 前须先核实此详情
+        并取得用户明确确认。采购单继续付款状态查 getPurchaseOrder，结算统计用 querySettlementReport。
 
         Args:
-            order_id: 付款单标识，同时接受内部 ID 和业务单号 orderNo。
+            order_id: 用户提供或 listPaymentOrders/submitPaymentOrder 返回的独立付款单
+                内部 ID 或业务单号 orderNo；不是被核销的采购单或销售退货单 ID。
         """
         try:
             context = self._contexts.get()
@@ -2276,17 +2468,21 @@ class DocumentTools:
         counterparty_id: str = "",
         account_id: str = "",
     ) -> dict[str, Any]:
-        """分页查询付款单列表。
+        """只读分页查找独立付款单，支持日期、状态、往来单位及结算账户筛选。
+
+        不是采购订单列表或结算汇总，结算统计用 querySettlementReport，不以当前页
+        合计代替报表。选定单据后用 getPaymentOrder 核实详情，明确确认后才可 voidPaymentOrder。
 
         Args:
-            page: 页码，从 1 开始。
-            page_size: 每页数量，范围 1 到 100。
-            start_date: 开始日期，格式 YYYY-MM-DD。
-            end_date: 结束日期，格式 YYYY-MM-DD。
-            status: 单据状态：0=草稿 2=已生效 3=已作废。
-            order_no: 单据编号模糊匹配关键词。
-            counterparty_id: 供应商或客户 ID、名称。
-            account_id: 结算账户 ID 或名称。
+            page: 页码，从 1 开始，默认 1；has_more=true 时可继续翻页。
+            page_size: 每页付款单数量，1 到 100，默认 20。
+            start_date: 筛选开始日期 YYYY-MM-DD；留空不限制起始日期。
+            end_date: 筛选结束日期 YYYY-MM-DD，不早于开始日期；留空不限制结束日期。
+            status: 付款单状态：0=草稿、2=已生效、3=已作废；省略不筛选。
+            order_no: 独立付款业务单号模糊匹配关键词，不是被核销单据的单号；留空不筛选。
+            counterparty_id: 供应商或客户内部 ID、名称，候选用 searchBillingReferences；
+                实际先尝试客户再供应商，留空不筛选。
+            account_id: 结算账户内部 ID 或名称，候选用 searchBillingReferences；留空不筛选。
         """
         try:
             context = self._contexts.get()
@@ -2308,11 +2504,16 @@ class DocumentTools:
         order_id: str,
         confirmed_by_user: bool,
     ) -> dict[str, Any]:
-        """作废付款单；只有用户明确确认后才能执行。
+        """作废独立付款单并真实写入 ERP，不是作废采购单或发起采购退货。
+
+        先调用 getPaymentOrder 核实付款内容、核销明细和状态，用户明确确认作废
+        后才能调用；未确认不调用，不得自造 confirmed_by_user=true。
+        完成后可再用 getPaymentOrder 核对。
 
         Args:
-            order_id: 付款单标识，同时接受内部 ID 和业务单号 orderNo。
-            confirmed_by_user: 仅在用户明确确认作废后传 true。
+            order_id: 经 getPaymentOrder 核实的独立付款单内部 ID 或业务单号 orderNo，
+                不是被核销的业务单据 ID。
+            confirmed_by_user: 仅在用户明确确认作废该付款单后传 true，不得代用户确认。
         """
         try:
             context = self._contexts.get()

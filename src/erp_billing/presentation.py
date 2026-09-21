@@ -1,13 +1,4 @@
-"""ERP MCP 用户展示投影。
-
-工具内部结果同时承担两类职责：
-
-* 结构化结果供 Agent 继续完成匹配、确认和提交；
-* 文本 content 供用户界面和纯文本客户端展示。
-
-本模块只处理第二类结果，不修改业务 ToolSet、Port 或 ERP API 的数据契约。
-内部控制字段和 ERP 技术字段从展示投影中剥离，业务字段保留并使用中文标签。
-"""
+"""ERP MCP 双通道白名单：业务文本与保留必要执行字段的结构化结果。"""
 
 from __future__ import annotations
 
@@ -16,48 +7,50 @@ import re
 from typing import Any
 
 
-_HIDDEN_KEYS = frozenset(
-    {
-        "ok",
-        "code",
-        "details",
-        "error",
-        "preview_id",
-        "document_id",
-        "line_id",
-        "selection_token",
-        "idempotency_key",
-        "catalog_version",
-        "required_actions",
-        "confirmed_products",
-        "confirmed_units",
-        "confirmed_prices",
-        "partial",
-        "source",
-        "raw",
-        "payload",
-        "page",
-        "page_size",
-        "query",
-        "reference_type",
-        "total",
-        "sort_order",
-        "biz_flag",
-        "image_url",
-        "image_urls",
-        "field",
-    },
-)
+_COMMON_EXECUTION_FIELDS = frozenset({
+    "ok", "page", "page_size", "total", "query", "keyword", "reference_type",
+    "kind", "type", "view", "is_system", "ready_to_submit", "save_type",
+})
 
-_HIDDEN_KEY_PARTS = (
-    "trace",
-    "token",
-    "credential",
-    "authorization",
-    "password",
-    "secret",
-    "version",
-)
+_EXECUTION_FIELDS_BY_TOOL = {
+    "search_products": frozenset({"product_id"}),
+    "search_billing_references": frozenset({"id", "code"}),
+    "list_stock_doc_types": frozenset({"id"}),
+    "get_sales_order": frozenset({"id", "product_id", "order_item_id", "biz_id", "unit_id"}),
+    **dict.fromkeys(
+        (
+            "preview_sales_order", "preview_purchase_order", "preview_sales_return", "preview_purchase_return",
+            "preview_sales_receipt", "preview_purchase_payment", "preview_stock_transfer", "preview_other_stock_doc",
+            "preview_receipt_order", "preview_payment_order",
+        ),
+        frozenset({
+            "preview_id", "required_actions", "confirmed_products", "field", "code",
+            "id", "product_id", "line_id", "order_id", "source_order_id", "biz_id",
+        }),
+    ),
+    **dict.fromkeys(
+        (
+            "list_sales_orders", "get_purchase_order", "list_purchase_orders",
+            "get_sales_return", "list_sales_returns", "get_purchase_return", "list_purchase_returns",
+            "get_receipt_order", "list_receipt_orders", "get_payment_order", "list_payment_orders",
+        ),
+        frozenset({"id", "product_id", "order_item_id", "biz_id"}),
+    ),
+    **dict.fromkeys(
+        (
+            "submit_sales_order", "submit_purchase_order", "submit_sales_return", "submit_purchase_return",
+            "submit_sales_receipt", "submit_purchase_payment", "submit_stock_transfer", "submit_other_stock_doc",
+            "submit_receipt_order", "submit_payment_order",
+        ),
+        frozenset({"document_id", "idempotent_replay"}),
+    ),
+    **dict.fromkeys(
+        ("query_stock", "get_stock_by_product", "query_stock_logs", "list_stock_alerts", "get_purchase_suggestions"),
+        frozenset({"product_id", "warehouse_id", "biz_id"}),
+    ),
+    "list_receivables": frozenset({"id", "customer_id", "biz_id"}),
+    "list_payables": frozenset({"id", "supplier_id", "biz_id"}),
+}
 
 _LABELS = {
     "product_name": "商品名称",
@@ -74,6 +67,7 @@ _LABELS = {
     "erp_unit": "ERP单位",
     "unit_price": "单价",
     "amount": "金额",
+    "line_amount": "金额",
     "total_amount": "合计金额",
     "customer": "客户",
     "supplier": "供应商",
@@ -89,13 +83,9 @@ _LABELS = {
     "status": "状态",
     "payment_status": "付款状态",
     "return_status": "退货状态",
-    "save_type": "保存类型",
-    "kind": "类型",
-    "type": "类型",
-    "view": "视图",
     "is_default": "默认项",
     "missing_required_fields": "待补充信息",
-    "reference_resolutions": "基础资料匹配",
+    "reference_resolutions": "业务资料",
     "selected": "已选择",
     "candidates": "候选项",
     "options": "候选项",
@@ -116,10 +106,8 @@ _LABELS = {
     "submitted": "提交结果",
     "voided": "作废结果",
     "modified": "修改结果",
-    "ready_to_submit": "提交状态",
     "has_more": "还有更多",
-    "is_system": "系统项",
-    "unmatched_products": "未匹配商品",
+    "unmatched_products": "待确认商品",
     "recommended_products": "推荐商品",
     "unit_warnings": "单位提示",
     "price_warnings": "价格提示",
@@ -188,8 +176,6 @@ _LABELS = {
     "status_name": "状态",
     "payment_status_name": "付款状态",
     "return_status_name": "退货状态",
-    "create_time": "创建时间",
-    "update_time": "更新时间",
     "biz_date": "业务日期",
     "biz_no": "业务单号",
     "biz_type": "业务类型",
@@ -274,6 +260,128 @@ _LABELS = {
     "type_name": "类型名称",
     "product_count": "商品数",
     "label": "名称",
+    "order": "单据",
+    "document": "单据",
+    "list": "明细",
+    "children": "子项目",
+    "discount_rate": "折扣率",
+    "stock_status": "库存状态",
+    "invoice_status": "开票状态",
+    "receipt_account_name": "收款账户",
+    "payment_account_name": "付款账户",
+    "discount_account_name": "优惠账户",
+    "receipt_records": "收款记录",
+    "payment_records": "付款记录",
+    "return_date": "退货日期",
+    "source_order_no": "源单号",
+    "purchase_order_no": "采购单号",
+    "refund_amount": "应退金额",
+    "refunded_amount": "已退金额",
+    "unrefunded_amount": "未退金额",
+    "real_refund_amount": "实账退款金额",
+    "exempt_refund_amount": "免账退款金额",
+    "refund_status": "退款状态",
+    "refund_status_name": "退款状态",
+    "refund_account_name": "退款账户",
+    "refund_flows": "退款流水",
+    "refund_records": "退款记录",
+    "writeoff_payment_orders": "关联付款单",
+    "writeoff_receipt_orders": "关联收款单",
+    "source_paid_amount": "原单已付金额",
+    "source_payable_amount": "原单应付金额",
+    "is_base": "基本单位",
+    "preset_price1": "预设售价一",
+    "preset_price2": "预设售价二",
+    "receipt_no": "收款单号",
+    "receipt_date": "收款日期",
+    "receipt_time": "收款时间",
+    "payment_no": "付款单号",
+    "payment_date": "付款日期",
+    "payment_time": "付款时间",
+    "refund_no": "退款单号",
+    "refund_date": "退款日期",
+    "refund_time": "退款时间",
+    "source_type": "收付来源",
+    "source_type_name": "收付来源",
+    "real_amount": "实账金额",
+    "real_account_name": "实账账户",
+    "flow_date": "流水日期",
+    "document_date": "单据日期",
+    "business_no": "业务单号",
+    "business_type": "业务类型",
+    "business_type_name": "业务类型",
+    "flow_direction": "收支方向",
+    "flow_direction_name": "收支方向",
+    "before_balance": "变动前余额",
+    "after_balance": "变动后余额",
+    "payment_method": "支付方式",
+    "counterparty_type_name": "往来单位类型",
+    "account_type_name": "账户类型",
+    "is_virtual": "虚拟免账流水",
+    "payment_order_no": "付款单号",
+    "receipt_order_no": "收款单号",
+    "writeoff_amount": "核销金额",
+    "writeoff_time": "核销时间",
+    "writeoff_details": "核销明细",
+    "settled_amount": "已结金额",
+    "unsettled_amount": "未结金额",
+    "has_writeoff": "已核销",
+    "order_type": "单据类型",
+    "out_account_name": "付款账户",
+    "direction": "收付款性质",
+    "direction_name": "收付款性质",
+    "category_name": "商品分类",
+    "recent_logs": "最近流水",
+    "source_biz_type": "原单业务类型",
+    "transfer_no": "调拨单号",
+    "transfer_date": "调拨日期",
+    "from_warehouse_name": "调出仓库",
+    "to_warehouse_name": "调入仓库",
+    "inbound_no": "入库单号",
+    "inbound_date": "入库日期",
+    "inbound_type_name": "入库类型",
+    "outbound_no": "出库单号",
+    "outbound_date": "出库日期",
+    "outbound_type_name": "出库类型",
+    "range_receivable": "期间应收发生额",
+    "range_payable": "期间应付发生额",
+    "range_received": "期间已收金额",
+    "range_paid": "期间已付金额",
+    "range_unreceived": "期间应收净变动",
+    "range_unpaid": "期间应付净变动",
+    "range_occurrence_amount": "期间业务发生额",
+    "range_initial_completed_amount": "期间期初结清金额",
+    "range_settlement_amount": "期间结清金额",
+    "initial_as_of_start": "起日前余额",
+    "closing_as_of_end": "截止日余额",
+    "initial_arrears": "期初欠款",
+    "business_arrears": "业务欠款",
+    "total_arrears": "合计欠款",
+    "total_received": "当前页已收合计",
+    "total_unreceived": "当前页欠款合计",
+    "from_warehouse": "调出仓库",
+    "to_warehouse": "调入仓库",
+    "doc_date": "单据日期",
+    "doc_type": "单据类型",
+    "fund_type": "款项类型",
+    "account": "账户",
+    "receipt_account": "收款账户",
+    "payment_account": "付款账户",
+    "refund_account": "退款账户",
+    "discount_account": "优惠账户",
+    "客户": "客户",
+    "供应商": "供应商",
+    "退款金额": "退款金额",
+}
+
+_ENUM_FIELDS = frozenset({
+    "status", "payment_status", "return_status", "stock_status", "invoice_status", "refund_status",
+    "source_type", "business_type", "biz_type", "flow_direction", "counterparty_type", "account_type",
+    "order_type", "direction", "severity", "alert_type", "source_biz_type", "financial_status", "document_type",
+})
+_WARNING_PROMPTS = {
+    "unit_warnings": "请按ERP单位确认数量；系统不会猜测换算。",
+    "price_warnings": "商品缺少有效采购价，请确认单价后重新预览。",
 }
 
 _TECHNICAL_ERROR_CODES = frozenset(
@@ -309,18 +417,16 @@ def _snake_key(key: str) -> str:
     return value.replace("-", "_").lower()
 
 
-def _is_hidden_key(key: str) -> bool:
-    normalized = _snake_key(key)
-    if normalized in _HIDDEN_KEYS:
-        return True
-    if normalized == "id" or normalized.endswith("_id"):
-        return True
-    return any(part in normalized for part in _HIDDEN_KEY_PARTS)
-
-
-def _display_label(key: str) -> str:
-    normalized = _snake_key(key)
-    return _LABELS.get(normalized, str(key))
+def _filter_value(value: Any, allowed_fields: frozenset[str]) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: _filter_value(child, allowed_fields)
+            for key, child in value.items()
+            if _snake_key(key) in allowed_fields
+        }
+    if isinstance(value, (list, tuple)):
+        return [_filter_value(child, allowed_fields) for child in value]
+    return value
 
 
 # 数量/金额/价格类字段：上游 ERP 常把数值序列化为字符串，展示前归一为数字。
@@ -378,12 +484,17 @@ def _project_value(value: Any, *, key: str = "") -> Any:
         normalized_keys = {_snake_key(raw_key) for raw_key in value}
         projected: dict[str, Any] = {}
         for raw_key, raw_value in value.items():
-            if _is_hidden_key(raw_key):
-                continue
             normalized = _snake_key(raw_key)
+            if normalized not in _LABELS:
+                continue
             # 状态码与中文名称成对出现时（status + statusName）只保留名称
             if normalized + "_name" in normalized_keys:
                 continue
+            if normalized in _ENUM_FIELDS:
+                if not isinstance(raw_value, str):
+                    continue
+                if raw_value.isascii():
+                    continue
             if normalized == "is_default":
                 if raw_value:
                     projected["说明"] = "默认项"
@@ -392,27 +503,24 @@ def _project_value(value: Any, *, key: str = "") -> Any:
                 if raw_value:
                     projected["说明"] = "基本单位"
                 continue
-            if normalized == "is_system":
-                if raw_value:
-                    projected["说明"] = "系统项"
-                continue
             if normalized == "has_more":
                 if raw_value:
                     projected["提示"] = "还有更多结果"
                 continue
             if isinstance(raw_value, str):
-                child = _coerce_numeric_text(normalized, raw_value)
+                if normalized == "prompt" and key in _WARNING_PROMPTS:
+                    child = _WARNING_PROMPTS[key]
+                else:
+                    child = _coerce_numeric_text(normalized, raw_value)
             else:
                 child = _project_value(raw_value, key=normalized)
             if child in (None, "", [], {}):
                 continue
-            projected[_display_label(raw_key)] = child
+            projected[_LABELS[normalized]] = child
         return projected
     if isinstance(value, (list, tuple)):
         return [item for item in (_project_value(item, key=key) for item in value) if item not in (None, "", [], {})]
     if isinstance(value, bool):
-        if key == "ready_to_submit":
-            return "待确认提交" if value else "尚未就绪"
         if key in {"submitted", "voided", "modified"}:
             return "是" if value else "否"
         return value
@@ -420,11 +528,6 @@ def _project_value(value: Any, *, key: str = "") -> Any:
 
 
 def render_billing_result(tool_name: str, result: dict[str, Any]) -> str:
-    """把工具结果转换为只含业务信息的文本 content。
-
-    ``structuredContent`` 仍保持原结果，确保 Agent 的已有执行链和旧客户端
-    兼容；本函数只用于 MCP 协议的文本展示通道。
-    """
     if result.get("ok") is False:
         return _business_error(result)
 
@@ -438,4 +541,20 @@ def render_billing_result(tool_name: str, result: dict[str, Any]) -> str:
     )
 
 
-__all__ = ["render_billing_result"]
+def filter_billing_result(tool_name: str, result: dict[str, Any]) -> dict[str, Any]:
+    execution_fields = _EXECUTION_FIELDS_BY_TOOL.get(_snake_key(tool_name), frozenset())
+    allowed_fields = frozenset(_LABELS) | _COMMON_EXECUTION_FIELDS | execution_fields
+    projected = _filter_value(result, allowed_fields)
+    if isinstance(result.get("error"), dict):
+        projected["error"] = {
+            "code": str(result["error"].get("code") or ""),
+            "message": _business_error(result).removeprefix("业务处理未完成："),
+        }
+    return projected
+
+
+def present_billing_result(tool_name: str, result: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    return render_billing_result(tool_name, result), filter_billing_result(tool_name, result)
+
+
+__all__ = ["filter_billing_result", "present_billing_result", "render_billing_result"]

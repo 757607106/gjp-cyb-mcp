@@ -8,9 +8,30 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Callable
+from copy import deepcopy
 from typing import Any
 
 from mcp.server.fastmcp.utilities.func_metadata import func_metadata
+
+
+def _parameter_descriptions(docstring: str) -> dict[str, str]:
+    # SDK 不会把 Google 风格 Args 自动写入参数 Schema。
+    _, _, arguments = docstring.partition("\nArgs:\n")
+    descriptions: dict[str, str] = {}
+    current = ""
+    for line in arguments.splitlines():
+        if not line.strip():
+            continue
+        if not line.startswith("    "):
+            break
+        if not line.startswith("        "):
+            name, separator, description = line.strip().partition(":")
+            current = name if separator and name.isidentifier() else ""
+            if current:
+                descriptions[current] = description.strip()
+        elif current:
+            descriptions[current] += " " + line.strip()
+    return descriptions
 
 
 class SessionFunctionTool:
@@ -40,10 +61,14 @@ class SessionFunctionTool:
         self.is_concurrency_safe = is_concurrency_safe
         metadata = func_metadata(func)
         self.input_schema = (
-            dict(input_schema_override)
+            deepcopy(input_schema_override)
             if input_schema_override is not None
             else metadata.arg_model.model_json_schema(by_alias=True)
         )
+        descriptions = _parameter_descriptions(self.description)
+        for name, parameter in self.input_schema.get("properties", {}).items():
+            if descriptions.get(name) and not parameter.get("description"):
+                parameter["description"] = descriptions[name]
 
     @property
     def func(self) -> Callable:

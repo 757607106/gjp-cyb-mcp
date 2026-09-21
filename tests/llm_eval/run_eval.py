@@ -34,20 +34,22 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCENARIO_DIR = Path(__file__).resolve().parent / "scenarios"
 REPORT_DIR = Path(__file__).resolve().parent / "reports"
 DEFAULT_ERP_BASE_URL = "https://test-ai.yuncyb.com/aicyberp-api"
-# 脚本化模式只验证链路：不可达地址让工具快速返回结构化连接错误，
-# 避免合成 Key 打真实 ERP 触发令牌校验失败锁定（82005）
-SCRIPTED_ERP_BASE_URL = "https://127.0.0.1:1"
+# 脚本化模式默认不可达；metadata-only 固定使用此地址且不调用任何业务工具。
+SCRIPTED_ERP_BASE_URL = harness.SCRIPTED_ERP_BASE_URL
 
 harness.load_env_defaults(PROJECT_ROOT / "config" / "local.env", prefix="ERP_BILLING_EVAL_")
 
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="LLM 工具识别评测 runner")
-    mode = parser.add_mutually_exclusive_group(required=True)
-    mode.add_argument("--scripted", action="store_true", help="脚本化模型验证链路，无需凭据")
-    mode.add_argument("--llm-base-url", help="OpenAI 兼容基地址，如 https://dashscope.aliyuncs.com/compatible-mode/v1")
-    parser.add_argument("--llm-api-key", default="", help="模型 API Key")
-    parser.add_argument("--llm-model", default="", help="模型名，如 qwen-plus")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--scripted", action="store_true", help="脚本化回放验证链路，不代表模型准确率")
+    mode.add_argument("--llm-base-url", default=os.environ.get("ERP_BILLING_EVAL_LLM_BASE_URL", ""),
+                      help="OpenAI 兼容基地址，缺省读 ERP_BILLING_EVAL_LLM_BASE_URL")
+    parser.add_argument("--llm-api-key", default=os.environ.get("ERP_BILLING_EVAL_LLM_API_KEY", ""), help="模型 API Key")
+    parser.add_argument("--llm-model", default=os.environ.get("ERP_BILLING_EVAL_LLM_MODEL", ""), help="模型名")
+    parser.add_argument("--metadata-only", action="store_true",
+                        help="仅 tools/list 和合成响应；无业务 Prompt、无 ERP 执行，本地 ERP 地址固定不可达")
     parser.add_argument("--api-key", default="", help="MCP 服务 X-API-Key；缺省读 ERP_BILLING_EVAL_API_KEY（含 config/local.env），脚本化模式最后回退合成 Key")
     parser.add_argument("--mcp-url", default="", help="已部署 MCP 服务地址；不设则本地拉起服务子进程")
     parser.add_argument("--erp-base-url", default="", help="本地拉起服务时的 ERP 业务 API 基地址；缺省时脚本化模式用不可达地址，真实评测用测试环境")
@@ -64,21 +66,24 @@ def _main() -> int:
         print("真实评测需要同时提供 --llm-base-url / --llm-api-key / --llm-model", file=sys.stderr)
         return 2
 
-    api_key = args.api_key or os.environ.get("ERP_BILLING_EVAL_API_KEY", "")
+    api_key = args.api_key or (
+        "eval-metadata-key" if args.metadata_only else os.environ.get("ERP_BILLING_EVAL_API_KEY", "")
+    )
     if not api_key:
         if args.scripted:
             api_key = "eval-scripted-key"
         else:
             print("真实评测需要 X-API-Key（--api-key 或 config/local.env 的 ERP_BILLING_EVAL_API_KEY）", file=sys.stderr)
             return 2
-    erp_base_url = args.erp_base_url or (
+    erp_base_url = SCRIPTED_ERP_BASE_URL if args.metadata_only else (args.erp_base_url or (
         SCRIPTED_ERP_BASE_URL if args.scripted else DEFAULT_ERP_BASE_URL
-    )
+    ))
 
     scenarios = harness.load_scenarios(
         SCENARIO_DIR,
         tag_filter=args.tags.split(",") if args.tags else None,
         include_write=args.include_write,
+        metadata_only=args.metadata_only,
     )
     if not scenarios:
         print("没有匹配的场景", file=sys.stderr)
@@ -119,6 +124,7 @@ def _main() -> int:
                 mcp_url=mcp_url,
                 api_key=api_key,
                 max_rounds=args.max_rounds,
+                metadata_only=args.metadata_only,
                 on_result=lambda result: print(
                     "  [%s] %s → %s"
                     % (
@@ -145,6 +151,7 @@ def _main() -> int:
             {
                 "metrics": metrics,
                 "scripted": args.scripted,
+                "metadata_only": args.metadata_only,
                 "llm_model": None if args.scripted else args.llm_model,
                 "mcp_url": mcp_url,
                 "results": [harness.result_to_dict(result) for result in results],

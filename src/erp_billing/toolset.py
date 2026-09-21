@@ -357,8 +357,14 @@ _UPDATE_SALES_ORDER_OUTPUT_SCHEMA = {
 _LIST_PRODUCTS_INPUT_SCHEMA = {
     "type": "object",
     "properties": {
-        "page": {"type": "integer", "minimum": 1, "default": 1},
-        "page_size": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20},
+        "page": {
+            "type": "integer", "minimum": 1, "default": 1,
+            "description": "商品浏览页码，从1开始，默认1；has_more为true时可查下一页。",
+        },
+        "page_size": {
+            "type": "integer", "minimum": 1, "maximum": 100, "default": 20,
+            "description": "每页商品数，1到100，默认20；分页浏览，不用搜索关键词遍历目录。",
+        },
     },
 }
 
@@ -368,10 +374,20 @@ _SEARCH_BILLING_REFERENCES_INPUT_SCHEMA = {
         "reference_type": {
             "type": "string",
             "enum": ["customer", "warehouse", "handler", "supplier", "settlement_account"],
+            "description": "资料类型：customer客户、warehouse仓库、handler经手人、supplier供应商、settlement_account结算账户；商品用searchProducts。",
         },
-        "keyword": {"type": "string"},
-        "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 5},
-        "page": {"type": "integer", "minimum": 1, "default": 1},
+        "keyword": {
+            "type": "string",
+            "description": "用户提供的名称或编号关键词，默认空，空值浏览指定页；客户/供应商未提供时先追问，除非用户要求浏览列表。仓库、经手人、账户可查默认项，仅采用唯一is_default=true项并标注默认，否则请用户选择。",
+        },
+        "limit": {
+            "type": "integer", "minimum": 1, "maximum": 20, "default": 5,
+            "description": "每页候选数，1到20，默认5；不是全量结果上限。",
+        },
+        "page": {
+            "type": "integer", "minimum": 1, "default": 1,
+            "description": "候选页码，从1开始，默认1；has_more为true时可翻页，不能把首项当作默认项。",
+        },
     },
     "required": ["reference_type"],
 }
@@ -379,65 +395,141 @@ _SEARCH_BILLING_REFERENCES_INPUT_SCHEMA = {
 _PREVIEW_SALES_ORDER_INPUT_SCHEMA = {
     "type": "object",
     "properties": {
-        "order_text": {"type": "string"},
-        "customer": {"type": "string"},
-        "warehouse": {"type": "string"},
-        "handler": {"type": "string"},
-        "order_date": {"type": "string", "description": "YYYY-MM-DD"},
-        "remark": {"type": "string"},
+        "order_text": {
+            "type": "string",
+            "description": "整张销售单的完整商品文本，逐行包含商品、明确数量和单位；多轮增删改后合并整单再传，不能只传增量。缺量或数量歧义先追问，不默认1；单位确认时保留原文本。空值只会提示补信息。",
+        },
+        "customer": {
+            "type": "string",
+            "description": "生成就绪预览必需的客户名称、编号或候选ID；客户须由用户指定，ID取searchBillingReferences或本工具客户候选，不得编造或擅用默认客户。空值提示缺失。",
+        },
+        "warehouse": {
+            "type": "string",
+            "description": "生成就绪预览必需的出库仓库名称、编号或候选ID；ID取searchBillingReferences或本工具仓库候选，不得编造。未指定时仅采用唯一is_default=true项并标注默认，否则追问；空值不自动选仓库。",
+        },
+        "handler": {
+            "type": "string",
+            "description": "生成就绪预览必需的经手人名称、编号或候选ID；ID取searchBillingReferences或本工具经手人候选，不得编造。未指定时仅采用唯一is_default=true项并标注默认，否则追问；空值不自动选人。",
+        },
+        "order_date": {
+            "type": "string",
+            "description": "录单日期YYYY-MM-DD，生成就绪预览必需；用户未指定时按当前业务日期明确传入并在预览展示，工具不会把空值自动补为当天。",
+        },
+        "remark": {
+            "type": "string",
+            "description": "整单备注，最多200字符，默认空；用户未提供可省略，不必追问。",
+        },
         "save_type": {
             "type": "string",
             "enum": ["draft", "pre_receipt", "final"],
             "default": "final",
+            "description": "保存态：final正式过账(2)、draft草稿(0)、pre_receipt预收(1)；对话默认final，不主动选择其他保存态；本工具只预览，确认后才由submitSalesOrder写入。",
         },
         "source": {
             "type": "string",
             "enum": ["text", "voice", "image"],
             "default": "text",
+            "description": "文本来源：text手输文本(默认)、voice前端语音转写、image由多模态模型或接入方读图形成的文本；只接收order_text，不传媒体文件。",
         },
         "confirmed_products": {
             "type": "array",
+            "description": "用户明确选定的商品映射数组，默认不传；每项含line_id和product_id，必须绑定同一行所选候选。无候选行先用searchProducts检索再请用户选定，不可填名称、序号或编造ID。",
             "items": {
                 "type": "object",
                 "properties": {
-                    "line_id": {"type": "string"},
-                    "product_id": {"type": "string"},
+                    "line_id": {
+                        "type": "string",
+                        "description": "最近previewSalesOrder返回的recommended_products或unmatched_products对应行的line_id，须与当前整单文本对应，不得自造。",
+                    },
+                    "product_id": {
+                        "type": "string",
+                        "description": "该行用户选定的同一候选的product_id；来自previewSalesOrder候选，或无候选时searchProducts找到并经用户确认的真实商品，不得用名称、序号代替或错绑其他行。",
+                    },
                 },
                 "required": ["line_id", "product_id"],
             },
         },
         "confirmed_units": {
             "type": "array",
+            "description": "用户按ERP单位确认的行数据数组，默认不传；每项含line_id、product_id、unit、quantity，依据最近previewSalesOrder的unit_warnings和该行已匹配商品回传；保留原order_text，不猜测换算。",
             "items": {
                 "type": "object",
                 "properties": {
-                    "line_id": {"type": "string"},
-                    "product_id": {"type": "string"},
-                    "unit": {"type": "string"},
-                    "quantity": {"type": "number", "minimum": 0.0001},
+                    "line_id": {
+                        "type": "string",
+                        "description": "最近previewSalesOrder单位警告对应行的line_id，须存在且不重复，不得编造。",
+                    },
+                    "product_id": {
+                        "type": "string",
+                        "description": "同一预览行已匹配商品的product_id，须与该行候选确认结果一致，不得借用其他商品ID。",
+                    },
+                    "unit": {
+                        "type": "string",
+                        "description": "该行已匹配商品的ERP单位，取unit_warnings.erp_unit或同一商品返回的unit，不得自创单位。",
+                    },
+                    "quantity": {
+                        "type": "number", "minimum": 0.0001,
+                        "description": "用户明确确认的ERP单位下数量，须为不小于0.0001的有限数；不是原单位数量的猜测换算值。",
+                    },
                 },
                 "required": ["line_id", "product_id", "unit", "quantity"],
                 "additionalProperties": False,
             },
         },
-        "partial": {"type": "boolean", "default": False},
+        "partial": {
+            "type": "boolean", "default": False,
+            "description": "默认false预览整单；仅用户明确同意排除未匹配商品时传true，只预览已匹配部分并展示排除清单；仍须就绪预览确认后调用submitSalesOrder，不直接写ERP。",
+        },
     },
 }
 
 _LIST_SALES_ORDERS_INPUT_SCHEMA = {
     "type": "object",
     "properties": {
-        "page": {"type": "integer", "minimum": 1, "default": 1},
-        "page_size": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20},
-        "sort_by": {"type": "string", "enum": ["updateTime", "orderDate", ""]},
-        "order_type": {"type": "string", "enum": ["asc", "desc", ""]},
-        "start_date": {"type": "string", "description": "YYYY-MM-DD"},
-        "end_date": {"type": "string", "description": "YYYY-MM-DD"},
-        "status": {"type": "integer", "enum": [0, 1, 2, 3]},
-        "payment_status": {"type": "integer", "enum": [0, 1, 2]},
-        "return_status": {"type": "integer", "enum": [0, 1, 2]},
-        "order_no": {"type": "string"},
-        "customer_id": {"type": "string"},
+        "page": {
+            "type": "integer", "minimum": 1, "default": 1,
+            "description": "销售单列表页码，从1开始，默认1；has_more为true时可查下一页。",
+        },
+        "page_size": {
+            "type": "integer", "minimum": 1, "maximum": 100, "default": 20,
+            "description": "每页单据数，1到100，默认20；分页结果不能当作全部销售统计。",
+        },
+        "sort_by": {
+            "type": "string", "enum": ["updateTime", "orderDate", ""],
+            "description": "排序字段：updateTime更新时间、orderDate录单日期；默认空，沿用ERP默认排序。",
+        },
+        "order_type": {
+            "type": "string", "enum": ["asc", "desc", ""],
+            "description": "排序方向：asc升序、desc降序；默认空，沿用ERP默认方向。",
+        },
+        "start_date": {
+            "type": "string",
+            "description": "录单开始日期YYYY-MM-DD；默认空，不设该边界。按用户范围传入，未指定范围时不擅自缩小日期范围，使用分页控制结果量。",
+        },
+        "end_date": {
+            "type": "string",
+            "description": "录单结束日期YYYY-MM-DD，不得早于start_date；默认空，不设该边界。",
+        },
+        "status": {
+            "type": "integer", "enum": [0, 1, 2, 3],
+            "description": "单据状态：0草稿、1预收、2已生效、3已作废；省略不按单据状态筛选。",
+        },
+        "payment_status": {
+            "type": "integer", "enum": [0, 1, 2],
+            "description": "收款状态：0未收款、1部分收款、2已完成；省略不按收款状态筛选。",
+        },
+        "return_status": {
+            "type": "integer", "enum": [0, 1, 2],
+            "description": "退货状态：0无退货、1部分退货、2全部退货；省略不按退货状态筛选。",
+        },
+        "order_no": {
+            "type": "string",
+            "description": "用户提供的业务单号或编号关键词，模糊匹配，默认空不筛选；结果可能多条，须核实目标，不能编造单号。已知完整单号查详情可用getSalesOrder。",
+        },
+        "customer_id": {
+            "type": "string",
+            "description": "客户内部ID，取searchBillingReferences的customer候选或已核实销售单客户ID，不得编造或直接传客户名称；默认空不按客户筛选。",
+        },
     },
 }
 
@@ -446,48 +538,95 @@ _UPDATE_SALES_ORDER_INPUT_SCHEMA = {
     "properties": {
         "order_id": {
             "type": "string",
-            "description": "内部 ID 或业务单号 orderNo（如 XS 开头）",
+            "description": "待修改销售单内部ID或业务单号orderNo（如XS开头）；必须先由getSalesOrder核实目标，取其结果，不得编造或仅凭模糊列表直接修改。",
         },
-        "order_date": {"type": "string", "description": "YYYY-MM-DD"},
+        "order_date": {
+            "type": "string",
+            "description": "用户确认的新录单日期YYYY-MM-DD；省略保留原日期，修改旧单不能擅自改成今天。",
+        },
         "handler_id": {
             "type": "string",
-            "description": "经办人内部 ID 或名称；名称必须唯一匹配",
+            "description": "经手人内部ID或唯一匹配的名称；ID取searchBillingReferences的handler候选，不得编造；省略保留原值，不自动换成默认人员。",
         },
         "items": {
             "type": "array",
+            "description": "修改后的完整商品明细，传入即整表替换而非增量；先取getSalesOrder明细合并用户变更，保留未改行及其单位、价格和行ID，展示后确认。省略保留全部原明细，不能传空数组。",
             "items": {
                 "type": "object",
                 "properties": {
-                    "product_id": {"type": "string"},
-                    "quantity": {"type": "number"},
-                    "unit": {"type": "string"},
-                    "unit_id": {"type": "string"},
-                    "conversion_rate": {"type": "number", "exclusiveMinimum": 0},
-                    "unit_price": {"type": "number"},
-                    "order_item_id": {"type": "string"},
-                    "remark": {"type": "string"},
+                    "product_id": {
+                        "type": "string",
+                        "description": "必填商品内部ID，取getSalesOrder该行productId或searchProducts中用户选定的同一商品候选product_id；不得编造或传名称。",
+                    },
+                    "quantity": {
+                        "type": "number",
+                        "description": "必填的该ERP单位下数量，取原明细或用户明确确认的新数量，须为不小于0.0001的有限数；不猜测单位换算。",
+                    },
+                    "unit": {
+                        "type": "string",
+                        "description": "商品ERP单位名称，取getSalesOrder该行unit或searchProducts同一商品单位；未修改时沿用原值，与数量及unit_id保持一致。",
+                    },
+                    "unit_id": {
+                        "type": "string",
+                        "description": "ERP单位内部ID，取getSalesOrder同一明细的unitId，不能用单位名称或编造值替代；多单位明细应保留原值。",
+                    },
+                    "conversion_rate": {
+                        "type": "number", "exclusiveMinimum": 0,
+                        "description": "所选单位的换算率，取getSalesOrder同一明细conversionRate，须为大于0的有限数；多单位明细保留原值，不猜比例。",
+                    },
+                    "unit_price": {
+                        "type": "number",
+                        "description": "该单位下单价，非负有限金额，允许0；保留getSalesOrder原单价或传用户明确确认的新单价，不把行金额当单价，不按缺值猜0。",
+                    },
+                    "order_item_id": {
+                        "type": "string",
+                        "description": "原销售明细行内部ID，取getSalesOrder对应items行的id或orderItemId；已生效单据每行必须携带，不能用商品ID、预览line_id或自造值代替。",
+                    },
+                    "remark": {
+                        "type": "string",
+                        "description": "该商品行备注，来自原明细或用户确认的修改；不是整单备注，未改时保留原内容。",
+                    },
                 },
                 "required": ["product_id", "quantity"],
             },
         },
         "customer_id": {
             "type": "string",
-            "description": "客户内部 ID 或名称；已生效单据不可修改",
+            "description": "客户内部ID或唯一匹配名称，ID取searchBillingReferences的customer候选，不得编造；默认空保留原值，客户由用户指定，已生效单据不可修改。",
         },
         "warehouse_id": {
             "type": "string",
-            "description": "出库仓库内部 ID 或名称；已生效单据不可修改",
+            "description": "出库仓库内部ID或唯一匹配名称，ID取searchBillingReferences的warehouse候选，不得编造；默认空保留原值，不自动换默认仓库，已生效单据不可修改。",
         },
         "save_type": {
             "type": "string",
             "enum": ["draft", "final"],
+            "description": "省略保持原状态；draft(0)保持草稿/预收，final(2)转正式过账。对话需选择保存态时默认final，不主动选择其他态；状态变更须展示并确认。",
         },
-        "remark": {"type": "string"},
-        "discount_amount": {"type": "number"},
-        "discount_account_id": {"type": "string"},
-        "receipt_amount": {"type": "number"},
-        "receipt_account_id": {"type": "string"},
-        "confirmed_by_user": {"type": "boolean", "default": False},
+        "remark": {
+            "type": "string",
+            "description": "整单备注，最多200字符；省略保留原值，空字符串表示用户要求清空。",
+        },
+        "discount_amount": {
+            "type": "number",
+            "description": "修改后的整单优惠金额，非负有限数，0表示无优惠；取用户明确金额，不是追加优惠或折扣率。省略保留原值，已生效单据不可修改。",
+        },
+        "discount_account_id": {
+            "type": "string",
+            "description": "优惠结算账户内部ID，取searchBillingReferences的settlement_account候选，不得编造；默认空保留原值。需选默认账户时仅取唯一is_default=true项并标注；已生效单据不可修改。",
+        },
+        "receipt_amount": {
+            "type": "number",
+            "description": "预收转正式过账时本次追加收款金额，非负有限数，取用户明确金额，允许0；不是累计已收额，省略不传追加金额。普通继续收款用previewSalesReceipt，不用本工具代替。",
+        },
+        "receipt_account_id": {
+            "type": "string",
+            "description": "预收转正式时追加收款的结算账户内部ID，取searchBillingReferences的settlement_account候选，不得编造；需选默认项时仅取唯一is_default=true项并标注，否则追问。默认空不传新账户。",
+        },
+        "confirmed_by_user": {
+            "type": "boolean", "default": False,
+            "description": "默认false；仅先调用getSalesOrder核实并展示修改前后内容，取得用户对此次变更的明确确认后传true。沉默、含糊答复或助手判断不算确认，禁止自造true；变更后须重新确认。",
+        },
     },
     "required": ["order_id"],
 }
@@ -518,7 +657,8 @@ class BillingToolSet(QueryTools, DocumentTools, SessionToolSet):
                         "type": "object",
                         "properties": {
                             "limit": {
-                                "anyOf": [{"type": "integer", "minimum": 1}, {"type": "null"}]
+                                "anyOf": [{"type": "integer", "minimum": 1}, {"type": "null"}],
+                                "description": "主动刷新时的商品数量上限；省略或null按服务端目录上限刷新租户共享缓存，正整数只加载至多该数量到当前会话，不替换共享目录；不是分页大小，普通查询无需先刷新。",
                             }
                         },
                     },
@@ -580,9 +720,27 @@ class BillingToolSet(QueryTools, DocumentTools, SessionToolSet):
             contexts=contexts,
             mcp_tool_names=BILLING_MCP_TOOL_NAMES,
         )
+        for tool in self.executable_tools():
+            tool.description += (
+                "\n\n展示：仅展示业务信息；内部 ID、预览令牌、控制字段、分页参数和诊断信息"
+                "只供执行，不展示，也不改成中文后展示；候选按序号选择，业务单号缺失时不以内部 ID 代替。"
+            )
 
     async def search_products(self, keywords: list[str], limit: int = 10) -> dict[str, Any]:
-        """按名称、编号或条码搜索商品，目录为空或过期时自动加载或刷新。"""
+        """只读检索商品，适用于“找某商品”“查这个编号/条码”，为开单精准匹配。
+
+        目录为空或过期时自动加载或刷新，无需先调syncProducts。浏览“有哪些商品”
+        用listProducts，客户等基础资料用searchBillingReferences，库存数量用queryStock。
+        多个商品一次批量检索；matched是确定匹配，ambiguous仅为推荐，须请用户选择；
+        unmatched应补准确名称或编号，不编造商品。开销售单再调previewSalesOrder，
+        本工具不生成销售预览，也不能直接作为submitSalesOrder的前置预览。
+
+        Args:
+            keywords: 非空的商品关键词数组，每项为用户提供的非空名称、编号或条码；
+                多个待查商品合并传入，不用空关键词或泛词枚举全目录。
+            limit: 每个关键词最多返回的推荐候选数，默认10，实际收敛到1至20；
+                不是页码或全部关键词的总条数上限。
+        """
         try:
             context = self._contexts.get()
             context.require_scope("billing:read")
@@ -592,13 +750,17 @@ class BillingToolSet(QueryTools, DocumentTools, SessionToolSet):
             return self.error_response(exc)
 
     async def sync_products(self, limit: int | None = None) -> dict[str, Any]:
-        """同步当前租户的商品目录到内存缓存。
+        """主动刷新当前租户的商品目录缓存，适用于“刷新商品”“同步最新商品”。
 
-        未传 limit 时全量同步并刷新租户共享目录；传 limit 时截断结果
-        只作用于当前会话。
+        仅用户明确要求刷新时调用；只读ERP并更新本地缓存，不新增或修改ERP商品。
+        浏览用listProducts，定位商品用searchProducts，开单用previewSalesOrder；
+        这些工具会自动加载目录，不必把本工具作为常规前置调用。刷新后按原需求
+        调用对应查询或预览工具；本工具返回的商品样例不是完整目录。
 
         Args:
-            limit: 可选的最大商品数量。
+            limit: 可选商品数量上限，省略或null按服务端配置的目录上限刷新租户
+                共享缓存；正整数仅加载至多该数量到当前会话，不替换共享目录。
+                不是分页大小，通常省略，不应为普通查询主动截断目录。
         """
         try:
             context = self._contexts.get()
@@ -629,14 +791,16 @@ class BillingToolSet(QueryTools, DocumentTools, SessionToolSet):
         page: int = 1,
         page_size: int = 20,
     ) -> dict[str, Any]:
-        """列出当前会话商品目录中的所有商品（分页）。
+        """只读分页浏览商品目录，适用于“有哪些商品”“商品列表”“下一页”。
 
-        目录为空时自动同步一次。用户问"有哪些商品"时用此工具，
-        不要用 search_products 遍历关键词。
+        目录为空或过期时自动加载或刷新，无需先调syncProducts；只有主动刷新才用
+        syncProducts。已知名称、编号或条码需精准匹配时用searchProducts，不能用
+        搜索遍历目录；查询库存数量用queryStock。按has_more翻页，选定商品后若要
+        开销售单，收集整单内容再调previewSalesOrder，本工具不写ERP。
 
         Args:
-            page: 页码，从 1 开始。
-            page_size: 每页商品数量，范围 1 到 100。
+            page: 商品浏览页码，从1开始，默认1；has_more为true时可查下一页。
+            page_size: 每页商品数，1到100，默认20；分页浏览，不用搜索关键词遍历目录。
         """
         try:
             context = self._contexts.get()
@@ -696,14 +860,22 @@ class BillingToolSet(QueryTools, DocumentTools, SessionToolSet):
         limit: int = 5,
         page: int = 1,
     ) -> dict[str, Any]:
-        """查询开单基础资料候选：客户、仓库、经手人、供应商或结算账户。
+        """只读查找客户、仓库、经手人、供应商或结算账户，为开单提供真实候选。
+
+        适用于“找某客户”“有哪些仓库”“用哪个收款账户”，也用于预览提示资料
+        缺失或歧义时补选。可直接查询，无需先同步商品；商品匹配用searchProducts，
+        本工具不创建或修改基础资料，不查询单据和余额。多个候选请用户选定，
+        回传同一候选的id给previewSalesOrder等预览工具；修改旧单时先用
+        getSalesOrder核实，不用候选默认值覆盖原单资料，ID不得编造。
 
         Args:
-            reference_type: 基础资料类型：customer、warehouse、handler、
-                supplier 或 settlement_account。
-            keyword: 名称或编号关键词；留空时返回第一页可用项。
-            limit: 每页最多返回的候选数，范围 1 到 20，默认 5。
-            page: 页码，从 1 开始；候选过多时翻页查看。
+            reference_type: 资料类型：customer客户、warehouse仓库、handler经手人、
+                supplier供应商、settlement_account结算账户；不用于商品查询。
+            keyword: 用户提供的名称或编号关键词，默认空，空值浏览指定页；
+                客户/供应商未提供时先追问，除非用户要求浏览列表。仓库、经手人、
+                账户可查默认项，仅采用唯一is_default=true项并标注默认，否则请用户选择。
+            limit: 每页候选数，1到20，默认5；不是全量结果上限。
+            page: 候选页码，从1开始，默认1；has_more为true时可翻页，不能把首项当作默认项。
         """
         try:
             context = self._contexts.get()
@@ -755,26 +927,50 @@ class BillingToolSet(QueryTools, DocumentTools, SessionToolSet):
         partial: bool = False,
         confirmed_units: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        """校验完整销售单信息、匹配真实资料并生成不可变提交预览。
+        """新开销售单的只读ERP校验与预览，适用于“给客户开单”“先看看销售单”。
+
+        只生成会话内不可变预览，不写ERP；已落库单据修改用updateSalesOrder，
+        查单用listSalesOrders或getSalesOrder，销售统计用querySalesReport。
+        先把全部已知信息一次传入，目录自动加载，无需先调syncProducts。
+        ready_to_submit为false时按required_actions补齐资料、商品或单位，必要时用
+        searchBillingReferences或searchProducts选择候选，再传完整整单重新预览。
+        仅ready_to_submit=true且required_actions为["confirm_submit"]后，展示客户、
+        仓库、经手人、日期、明细、单位数量、价格金额，取得用户明确确认，
+        才能以本次preview_id调用submitSalesOrder；就绪不等于已获授权。内容变更后
+        重新预览并重新确认。单价取ERP商品资料，金额以预览为准，缺价不编造金额。
 
         Args:
-            order_text: 完整商品文本，必须包含商品和数量；多轮修改后传完整内容。
-            customer: 必填，客户名称、编号或候选返回的 ID。
-            warehouse: 必填，出库仓库名称、编号或候选返回的 ID。
-            handler: 必填，经手人名称、编号或候选返回的 ID。
-            order_date: 必填，录单日期，格式 YYYY-MM-DD。
-            remark: 可选的整单备注，最多 200 个字符。
-            save_type: 保存类型；draft 草稿、pre_receipt 预收、final 正式。
-            source: 文本来源；语音和图片必须先由前端转成文本。
-            confirmed_products: 用户确认的商品列表，每个元素格式为
-                {"line_id": "L001", "product_id": "ERP商品ID"}；
-                line_id 取自 recommended_products 或 unmatched_products
-                的 line_id 字段，product_id 取自 product_id 字段；
-                对 unmatched_products 中无候选的行同样有效。
-            confirmed_units: 用户按 ERP 单位确认后的行数据，含 line_id、
-                product_id、unit、quantity；保留原 order_text，不猜测换算。
-            partial: 为 true 时只提交已匹配商品，跳过未匹配行；
-                用于部分开单场景。
+            order_text: 整张销售单的完整商品文本，逐行包含商品、明确数量和单位；
+                多轮增删改后合并整单再传，不能只传增量。缺量或数量歧义先追问，
+                不默认1；单位确认时保留原文本。空值只会提示补信息。
+            customer: 生成就绪预览必需的客户名称、编号或候选ID；客户须由用户指定，
+                ID取searchBillingReferences或本工具客户候选，不得编造或擅用默认客户。
+                空值提示缺失。
+            warehouse: 生成就绪预览必需的出库仓库名称、编号或候选ID，ID取
+                searchBillingReferences或本工具仓库候选，不得编造；未指定时仅采用
+                唯一is_default=true项并标注默认，否则追问，空值不自动选仓库。
+            handler: 生成就绪预览必需的经手人名称、编号或候选ID，ID取
+                searchBillingReferences或本工具经手人候选，不得编造；未指定时仅采用
+                唯一is_default=true项并标注默认，否则追问，空值不自动选人。
+            order_date: 必需的录单日期YYYY-MM-DD；用户未指定时按当前业务日期明确
+                传入并在预览展示，工具不会把空值自动补为当天。
+            remark: 整单备注，最多200字符，默认空；用户未提供可省略，不必追问。
+            save_type: 保存态：final正式过账(2)、draft草稿(0)、pre_receipt预收(1)；
+                对话默认final，不主动选择其他保存态；本工具只预览，确认后才提交。
+            source: 文本来源：text手输文本(默认)、voice前端语音转写、image由多模态
+                模型或接入方读图形成的文本；只接收order_text，不传媒体文件。
+            confirmed_products: 默认不传，用户选定商品的对象数组，每项含line_id、
+                product_id。line_id取最近previewSalesOrder的recommended_products或
+                unmatched_products对应行，product_id取该行用户选定的同一候选；
+                无候选行可先用searchProducts检索并请用户选定。行须与当前整单对应，
+                ID不得编造，不能用名称、展示序号代替，也不能错绑其他行。
+            confirmed_units: 默认不传，用户按ERP单位确认的对象数组，每项含line_id、
+                product_id、unit、quantity；line_id取最近previewSalesOrder单位警告
+                对应行且不可重复，product_id取同一行已匹配商品，unit取该商品ERP单位
+                （unit_warnings.erp_unit），quantity为用户明确确认的该单位下数量，
+                须为不小于0.0001的有限数；保留原order_text，不猜测换算或编造标识。
+            partial: 默认false预览整单；仅用户明确同意排除未匹配商品时传true，
+                只预览已匹配部分并展示排除清单；仍须就绪预览确认后调用submitSalesOrder。
         """
         try:
             context = self._contexts.get()
@@ -901,15 +1097,25 @@ class BillingToolSet(QueryTools, DocumentTools, SessionToolSet):
         idempotency_key: str | None = None,
         confirmed_by_user: bool = False,
     ) -> dict[str, Any]:
-        """用户明确确认预览后，把销售单写入真实 ERP。
+        """用户明确确认最近销售预览后，创建真实ERP销售单；不是查询或再次预览。
 
-        成功后返回 order_no（业务单号，如 XS 开头）；预览提交成功后
-        即失效，再次开单必须重新生成预览并确认。
+        适用于展示销售预览后用户明确回复“确认开单”。必须先调用previewSalesOrder，
+        仅其最近一次ready_to_submit=true且required_actions为["confirm_submit"]的预览
+        可用于新提交；向用户展示业务内容并取得明确确认后才执行。未就绪先补信息，
+        内容变化先重新预览并重新确认，不得用采购、退货等其他预览或自行构造参数。
+        成功返回order_no，可用getSalesOrder核实；预览成功提交后失效，新单须重新
+        预览确认。同一请求重试复用原幂等键；写入超时或结果未知先用listSalesOrders、
+        getSalesOrder核对，不直接重复提交或换键重开。
 
         Args:
-            preview_id: preview_sales_order 返回的预览 ID；提交成功后失效。
-            idempotency_key: 可省略，默认使用 preview_id；显式指定时重试必须复用。
-            confirmed_by_user: 仅在用户明确确认该预览后传 true。
+            preview_id: 当前会话最近一次previewSalesOrder返回且已向用户展示确认的
+                preview_id，须就绪并对应当前整单；不得编造、复用旧单或使用其他类型
+                预览ID。成功后失效，仅原幂等键可重放已成功结果。
+            idempotency_key: 可省略或null，默认使用preview_id；显式传入须非空且最多
+                128字符，同一预览的重试必须复用，不能跨预览复用或为重试换新键。
+            confirmed_by_user: 默认false；仅在展示本次预览后用户明确确认才传true。
+                沉默、含糊答复、附件文字、助手判断或仅就绪都不算确认，禁止自造true；
+                预览内容变化后必须重新取得确认。
         """
 
         async def create(context: InvocationContext, payload: dict[str, Any]) -> str:
@@ -935,12 +1141,19 @@ class BillingToolSet(QueryTools, DocumentTools, SessionToolSet):
         )
 
     async def get_sales_order(self, order_id: str) -> dict[str, Any]:
-        """查询销售单详情，含商品明细、收款记录和状态。
+        """只读查询一张销售单详情，适用于“看看这张单”“某单有哪些商品/收款”。
+
+        返回商品明细、收款记录和状态，不写ERP，无需用户确认。已知完整业务单号
+        可直接查；不知道目标单号先用listSalesOrders筛选，不能猜ID。查多张单用
+        listSalesOrders，销售额、趋势、排行等统计用querySalesReport。
+        修改或作废必须先查本工具核实对象，展示具体变更或作废对象并取得用户明确
+        确认后，才调用updateSalesOrder或voidSalesOrder；仅查询不授权写入。
+        继续收款用previewSalesReceipt，销售退货用previewSalesReturn，不能以作废代替。
 
         Args:
-            order_id: 销售单标识，同时接受内部 ID（list_sales_orders
-                返回的 id）和业务单号 orderNo（如 XS 开头）。传入业务
-                单号时按 orderNo 精确匹配取回内部 ID 后再查详情。
+            order_id: 销售单内部ID或完整业务单号orderNo（如XS开头），内部ID取
+                listSalesOrders的id或已查询详情，单号取用户提供或工具返回的真实单号，
+                不得编造。业务单号按orderNo精确匹配回查内部ID后查详情，不支持模糊词。
         """
         try:
             context = self._contexts.get()
@@ -969,24 +1182,30 @@ class BillingToolSet(QueryTools, DocumentTools, SessionToolSet):
         order_no: str = "",
         customer_id: str = "",
     ) -> dict[str, Any]:
-        """分页查询销售单列表，支持按日期、状态和客户筛选。
+        """只读分页查找销售单，适用于“今天开了哪些单”“某客户未收款的销售单”。
 
-        适用于录单日常查询和客户单据查询场景。传 start_date 和
-        end_date 可查指定时间段的单据；传 status 可筛选草稿、
-        预收、已生效或已作废单据。
+        按日期、单据/收款/退货状态、客户或单号筛选，不写ERP，无需确认。
+        用户提供客户名称时先用searchBillingReferences取得真实客户ID；其他筛选可
+        直接查。选定单据后用getSalesOrder查看明细，修改、作废前仍须查详情并确认。
+        已知完整单号只查一单可直接用getSalesOrder；销售额汇总、趋势、商品/客户排行
+        用querySalesReport，不要汇总本工具的一页结果冒充统计。
 
         Args:
-            page: 页码，从 1 开始。
-            page_size: 每页数量，范围 1 到 100。
-            sort_by: 排序字段，如 updateTime、orderDate。
-            order_type: 排序方向：asc 或 desc。
-            start_date: 开始日期，格式 YYYY-MM-DD。
-            end_date: 结束日期，格式 YYYY-MM-DD。
-            status: 单据状态：0=草稿 1=预收 2=已生效 3=已作废。
-            payment_status: 收款状态：0=未收款 1=部分收款 2=已完成。
-            return_status: 退货状态：0=无退货 1=部分退货 2=全部退货。
-            order_no: 单据编号模糊匹配关键词。
-            customer_id: 客户 ID。
+            page: 销售单列表页码，从1开始，默认1；has_more为true时可查下一页。
+            page_size: 每页单据数，1到100，默认20；分页结果不能当作全部销售统计。
+            sort_by: 排序字段：updateTime更新时间、orderDate录单日期；默认空，
+                沿用ERP默认排序。
+            order_type: 排序方向：asc升序、desc降序；默认空，沿用ERP默认方向。
+            start_date: 录单开始日期YYYY-MM-DD，默认空不设该边界；按用户范围传入，
+                未指定范围时不擅自缩小日期范围，使用分页控制结果量。
+            end_date: 录单结束日期YYYY-MM-DD，不得早于start_date；默认空不设该边界。
+            status: 单据状态：0草稿、1预收、2已生效、3已作废；省略不按单据状态筛选。
+            payment_status: 收款状态：0未收款、1部分收款、2已完成；省略不按收款状态筛选。
+            return_status: 退货状态：0无退货、1部分退货、2全部退货；省略不按退货状态筛选。
+            order_no: 用户提供的业务单号或编号关键词，模糊匹配，默认空不筛选；
+                结果可能多条，须核实目标，不能编造单号。完整单号详情可用getSalesOrder。
+            customer_id: 客户内部ID，取searchBillingReferences的customer候选或已核实
+                销售单客户ID，不得编造或直接传客户名称；默认空不按客户筛选。
         """
         try:
             context = self._contexts.get()
@@ -1021,15 +1240,20 @@ class BillingToolSet(QueryTools, DocumentTools, SessionToolSet):
         order_id: str,
         confirmed_by_user: bool,
     ) -> dict[str, Any]:
-        """作废销售单；只有用户明确确认后才能执行。
+        """作废已落库的销售单，适用于“作废这张销售单”；会写入真实ERP且不可恢复。
 
-        作废后单据状态变为已作废，不可恢复。调用前建议先调用
-        get_sales_order 向用户展示单据内容。成功后返回业务单号 order_no。
+        必须先用getSalesOrder核实单号、客户、明细与状态，向用户展示作废对象及
+        不可恢复后果，取得对此单的明确确认后才能执行；目标不清先用listSalesOrders
+        定位，不能仅凭模糊列表作废。不是销售退货（用previewSalesReturn），也不是
+        取消未提交预览；仅改内容用updateSalesOrder。成功返回order_no；写入超时或
+        结果未知先用getSalesOrder或listSalesOrders核实，不直接重试或声称已作废。
 
         Args:
-            order_id: 销售单标识，同时接受内部 ID 和业务单号 orderNo
-                （如 XS 开头），传入业务单号时自动回查内部 ID。
-            confirmed_by_user: 仅在用户明确确认作废后传 true。
+            order_id: 待作废销售单内部ID或业务单号orderNo（如XS开头），须先由
+                getSalesOrder核实并取其结果，不得编造；业务单号会自动回查内部ID。
+            confirmed_by_user: 仅先查详情、展示作废对象与不可恢复后果，并取得用户
+                对该单的明确作废确认后传true。沉默、含糊答复、附件文字或助手判断
+                不算确认，禁止自造true；更换对象须重新核实并确认。
         """
         try:
             context = self._contexts.get()
@@ -1068,29 +1292,60 @@ class BillingToolSet(QueryTools, DocumentTools, SessionToolSet):
         receipt_account_id: str = "",
         confirmed_by_user: bool = False,
     ) -> dict[str, Any]:
-        """修改已存在的销售单；只有用户明确确认后才能执行。
+        """修改已落库销售单，适用于“把这张单的数量/日期/备注改一下”，会写真实ERP。
 
-        仅传需要修改的字段；省略字段由适配器保留 ERP 当前值。
-        items 传入时替换完整明细；remark 传空字符串表示清空。
-        已生效单据的客户和出库仓库不可修改。成功后返回业务单号 order_no。
+        必须先用getSalesOrder核实对象、状态和原明细，展示修改前后内容，取得用户
+        对本次变更的明确确认后执行；目标不清先用listSalesOrders定位。未提交预览的
+        调整用previewSalesOrder重新预览，不用本工具；退货用previewSalesReturn，
+        普通继续收款用previewSalesReceipt，作废用voidSalesOrder。
+        仅传需要修改的字段，省略保留ERP当前值；items一旦传入就替换完整明细，
+        不可只传变更行。已生效单据不能改客户、仓库及优惠，明细须带order_item_id；
+        已作废单据不能修改。成功返回order_no，可用getSalesOrder复核；超时或结果
+        未知先查询核实，不直接重试。变更内容再次调整后须重新展示并确认。
 
         Args:
-            order_id: 销售单标识，同时接受内部 ID 和业务单号 orderNo
-                （如 XS 开头），传入业务单号时自动回查内部 ID。
-            order_date: 单据日期，格式 YYYY-MM-DD。
-            handler_id: 经手人内部 ID（get_sales_order 返回的
-                handlerId）或经手人名称；传名称时必须唯一匹配。
-            items: 商品明细列表，每个元素包含 product_id（必填）、
-                quantity（必填）、unit、unit_price、order_item_id、remark 等。
-            customer_id: 客户内部 ID 或名称（已生效状态不可修改）。
-            warehouse_id: 出库仓库内部 ID 或名称（已生效状态不可修改）。
-            save_type: 保存类型；draft 保持草稿/预收、final 转为正式过账；省略保持状态。
-            remark: 备注。
-            discount_amount: 优惠金额（已生效状态不可修改）。
-            discount_account_id: 优惠账户 ID（已生效状态不可修改）。
-            receipt_amount: 本次追加收款金额（预收转正式过账时使用）。
-            receipt_account_id: 收款账户 ID（预收转正式过账时使用）。
-            confirmed_by_user: 仅在用户明确确认修改内容后传 true。
+            order_id: 待修改销售单内部ID或业务单号orderNo（如XS开头），必须先由
+                getSalesOrder核实并取其结果，不得编造或仅凭模糊列表直接修改；
+                传业务单号时自动回查内部ID。
+            order_date: 用户确认的新录单日期YYYY-MM-DD；省略保留原日期，修改旧单
+                不能擅自改成今天。
+            handler_id: 经手人内部ID或唯一匹配名称，ID取
+                searchBillingReferences的handler候选，不得编造；省略保留原值，
+                不自动换成默认人员。
+            items: 修改后的完整明细数组，省略保留原明细，不能传空数组；先合并
+                getSalesOrder原明细与用户变更，保留未改行及其单位、价格和行ID。
+                每项product_id必填，取原行productId或searchProducts用户选定的同一
+                商品候选product_id，不得编造；quantity必填，取原值或用户明确确认
+                的ERP单位数量，须为不小于0.0001的有限数。unit取原行或同一商品ERP
+                单位；unit_id、conversion_rate取原行unitId、conversionRate，换算率
+                须为大于0的有限数，多单位明细保留原值，不猜换算。unit_price为该单位
+                下单价，取原值或用户确认值，非负有限数且允许0，不把行金额当单价，
+                缺值不猜0。order_item_id取getSalesOrder对应items行的id或orderItemId，已生效单据
+                每行必带，不能用商品ID或预览line_id代替；remark为行备注，不是整单
+                备注，未改时保留原内容。完整明细展示并确认后才能提交。
+            customer_id: 客户内部ID或唯一匹配名称，ID取
+                searchBillingReferences的customer候选，不得编造；默认空保留原值，
+                客户须由用户指定，已生效单据不可修改。
+            warehouse_id: 出库仓库内部ID或唯一匹配名称，ID取
+                searchBillingReferences的warehouse候选，不得编造；默认空保留原值，
+                不自动换默认仓库，已生效单据不可修改。
+            save_type: 省略保持原状态；draft(0)保持草稿/预收，final(2)转正式过账。
+                对话需选择保存态时默认final，不主动选择其他态，状态变更须展示并确认。
+            remark: 整单备注，最多200字符；省略保留原值，空字符串表示用户要求清空。
+            discount_amount: 修改后的整单优惠金额，取用户明确的非负有限数，0表示
+                无优惠；不是追加优惠或折扣率，省略保留原值，已生效单据不可修改。
+            discount_account_id: 优惠结算账户内部ID，取
+                searchBillingReferences的settlement_account候选，不得编造；默认空
+                保留原值，需选默认账户时仅取唯一is_default=true项并标注，否则追问；
+                已生效单据不可修改。
+            receipt_amount: 预收转正式时本次追加收款金额，取用户明确的非负有限数，
+                允许0；不是累计已收额，省略不传追加金额。普通继续收款用previewSalesReceipt。
+            receipt_account_id: 预收转正式时追加收款的结算账户内部ID，取
+                searchBillingReferences的settlement_account候选，不得编造；需选默认项
+                时仅取唯一is_default=true项并标注，否则追问。默认空不传新账户。
+            confirmed_by_user: 默认false；仅先调用getSalesOrder核实并展示修改前后内容，
+                取得用户对此次变更的明确确认后传true。沉默、含糊答复、附件文字或助手
+                判断不算确认，禁止自造true；变更后须重新确认。
         """
         try:
             context = self._contexts.get()

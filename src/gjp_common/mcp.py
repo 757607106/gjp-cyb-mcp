@@ -94,7 +94,7 @@ def create_mcp_server(
     identity_resolver: McpIdentityResolver,
     toolset_resolver: McpToolSetResolver,
     instructions: str = "",
-    result_presenter: Callable[[str, dict[str, Any]], str] | None = None,
+    result_presenter: Callable[[str, dict[str, Any]], tuple[str, dict[str, Any]]] | None = None,
 ) -> FastMCP:
     """创建产品 MCP Server；身份、会话和业务 API 鉴权均由对接层注入。
 
@@ -168,7 +168,7 @@ def _register_session_tool(
 def _install_arguments_guard(
     server: FastMCP,
     tools: Sequence[SessionFunctionTool],
-    result_presenter: Callable[[str, dict[str, Any]], str] | None = None,
+    result_presenter: Callable[[str, dict[str, Any]], tuple[str, dict[str, Any]]] | None = None,
 ) -> None:
     """重注册 lowlevel call_tool 回调，恢复参数契约校验。
 
@@ -209,43 +209,19 @@ def _install_arguments_guard(
 def _present_tool_result(
     tool_name: str,
     result: Any,
-    presenter: Callable[[str, dict[str, Any]], str] | None,
+    presenter: Callable[[str, dict[str, Any]], tuple[str, dict[str, Any]]] | None,
 ) -> Any:
-    """替换 MCP 文本展示通道，同时保留原结构化结果。
-
-    FastMCP v1 在 ``convert_result=True`` 时返回
-    ``(unstructured_content, structured_content)``。这里仅替换前者，
-    让现有 Agent 继续读取原结构化结果，用户界面或纯文本客户端读取到
-    的则是业务展示投影。
-    """
     if presenter is None:
         return result
 
+    structured = result
     if isinstance(result, tuple) and len(result) == 2:
-        unstructured, structured = result
-        if isinstance(structured, dict):
-            return (
-                [
-                    TextContent(
-                        type="text",
-                        text=presenter(tool_name, structured),
-                    ),
-                ],
-                structured,
-            )
+        structured = result[1]
+    if not isinstance(structured, dict):
         return result
 
-    if isinstance(result, dict):
-        return (
-            [
-                TextContent(
-                    type="text",
-                    text=presenter(tool_name, result),
-                ),
-            ],
-            result,
-        )
-    return result
+    text, projected = presenter(tool_name, structured)
+    return [TextContent(type="text", text=text)], projected
 
 
 async def _dispatch_tool(

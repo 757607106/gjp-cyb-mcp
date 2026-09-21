@@ -175,8 +175,7 @@ def test_protocol_call_passes_through_guard() -> None:
     assert _CALLS == ["typed"]
 
 
-def test_protocol_call_can_present_business_content_without_changing_structured_result() -> None:
-    """展示投影只替换文本通道，Agent 现有结构化调用链保持不变。"""
+def test_protocol_call_projects_both_content_and_structured_result() -> None:
     toolset = SessionToolSet(
         [SessionFunctionTool(_sample_tool)],
         contexts=InvocationContextStore(default=_context()),
@@ -186,15 +185,43 @@ def test_protocol_call_can_present_business_content_without_changing_structured_
         toolset,
         _RecordingIdentity(),
         _StaticToolSet(toolset),
-        result_presenter=lambda _name, _result: "业务展示：仅保留业务信息",
+        result_presenter=lambda _name, result: ("业务展示：仅保留业务信息", {"ok": result["ok"]}),
     )
 
     result = _call_protocol(server, "sampleTool", {"limit": 5})
 
-    assert result.structuredContent == {"ok": True, "limit": 5}
+    assert result.structuredContent == {"ok": True}
     assert [block.text for block in result.content] == [
         "业务展示：仅保留业务信息",
     ]
+
+
+def test_arguments_guard_dictionary_result_uses_both_projections() -> None:
+    _CALLS.clear()
+    toolset = SessionToolSet(
+        [SessionFunctionTool(_sample_tool)],
+        contexts=InvocationContextStore(default=_context()),
+    )
+    server = create_mcp_server(
+        "test-service",
+        toolset,
+        _RecordingIdentity(),
+        _StaticToolSet(toolset),
+        result_presenter=lambda _name, result: (
+            "请核对业务信息。",
+            {"ok": result["ok"], "error": {"code": result["error"]["code"], "message": "请核对业务信息。"}},
+        ),
+    )
+
+    result = _call_protocol(server, "sampleTool", {"unknownField": "internal-value"})
+
+    assert result.isError is False
+    assert result.structuredContent == {
+        "ok": False,
+        "error": {"code": "tool_arguments_invalid", "message": "请核对业务信息。"},
+    }
+    assert [block.text for block in result.content] == ["请核对业务信息。"]
+    assert _CALLS == []
 
 
 def test_protocol_schema_violation_is_protocol_error() -> None:
@@ -342,3 +369,68 @@ def test_http_app_runs_shutdown_callback() -> None:
         assert closed == []
 
     assert closed == [True]
+
+
+def test_args_descriptions_reach_published_parameter_schema() -> None:
+    async def described_tool(limit: int = 10, keyword: str = "") -> dict[str, Any]:
+        """搜索业务记录。
+
+        Args:
+            limit: 每页返回数量。
+                范围由参数契约限定，不推断额外数据。
+            keyword: 用户提供的商品关键词。
+
+        Returns:
+            查询结果。
+        """
+        return {"ok": True}
+
+    tool = SessionFunctionTool(described_tool)
+    toolset = SessionToolSet([tool], contexts=InvocationContextStore(default=_context()))
+    server = create_mcp_server("test", toolset, _RecordingIdentity(), _StaticToolSet(toolset))
+    published, = asyncio.run(server.list_tools())
+    properties = published.inputSchema["properties"]
+    assert properties["limit"] == {
+        "title": "Limit", "default": 10, "type": "integer",
+        "description": "每页返回数量。 范围由参数契约限定，不推断额外数据。",
+    }
+    assert properties["keyword"]["description"] == "用户提供的商品关键词。"
+    assert "Returns" not in properties["keyword"]["description"]
+    assert "查询结果" not in properties["keyword"]["description"]
+
+
+def test_parameter_description_fill_preserves_override_and_shared_schema() -> None:
+    async def described_tool(limit: int = 10, keyword: str = "") -> dict[str, Any]:
+        """搜索业务记录。
+
+        Args:
+            limit: 文档中的数量说明。
+            keyword: 用户提供的关键词。
+        """
+        return {"ok": True}
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 10,
+                      "description": "显式范围说明优先。"},
+            "keyword": {"type": "string", "enum": ["甲", "乙"]},
+        },
+        "required": ["keyword"],
+        "additionalProperties": False,
+    }
+    tool = SessionFunctionTool(described_tool, input_schema_override=schema)
+    assert tool.input_schema["properties"]["limit"] == schema["properties"]["limit"]
+    assert tool.input_schema["properties"]["keyword"] == {
+        "type": "string", "enum": ["甲", "乙"], "description": "用户提供的关键词。",
+    }
+    assert "description" not in schema["properties"]["keyword"]
+    assert tool.input_schema["required"] == ["keyword"]
+    assert tool.input_schema["additionalProperties"] is False
+    tool.input_schema["properties"]["keyword"]["enum"].append("丙")
+    assert schema["properties"]["keyword"]["enum"] == ["甲", "乙"]
+
+
+def test_no_args_section_does_not_invent_parameter_descriptions() -> None:
+    tool = SessionFunctionTool(_sample_tool)
+    assert "description" not in tool.input_schema["properties"]["limit"]

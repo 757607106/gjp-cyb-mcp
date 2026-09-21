@@ -1,0 +1,2247 @@
+[
+  {
+    "scenario_id": "meta-sync",
+    "domain": "基础资料",
+    "utterance": "ERP 里刚更新了一批商品，请重新同步全部商品目录。",
+    "expected_tool": "syncProducts",
+    "tags": [
+      "metadata_only"
+    ],
+    "mock_results": {
+      "syncProducts": {
+        "ok": true,
+        "product_count": 20,
+        "sample_products": []
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-list-products",
+    "domain": "基础资料",
+    "utterance": "浏览商品目录第2页，每页10种，不是按名称搜索。",
+    "expected_tool": "listProducts",
+    "expected_params": {
+      "page": 2,
+      "page_size": 10
+    },
+    "tags": [
+      "metadata_only"
+    ],
+    "mock_results": {
+      "listProducts": {
+        "ok": true,
+        "page": 2,
+        "page_size": 10,
+        "total": 20,
+        "has_more": false,
+        "products": []
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-search-products",
+    "domain": "基础资料",
+    "utterance": "找一下土豆和白菜这两种商品的候选资料。",
+    "expected_tool": "searchProducts",
+    "expected_params": {
+      "keywords": [
+        "土豆",
+        "白菜"
+      ]
+    },
+    "tags": [
+      "metadata_only"
+    ],
+    "mock_results": {
+      "searchProducts": {
+        "ok": true,
+        "results": []
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-references",
+    "domain": "基础资料",
+    "utterance": "查找名称包含兴旺的供应商。",
+    "expected_tool": "searchBillingReferences",
+    "expected_params": {
+      "reference_type": "supplier",
+      "keyword": "兴旺"
+    },
+    "tags": [
+      "metadata_only"
+    ],
+    "mock_results": {
+      "searchBillingReferences": {
+        "ok": true,
+        "reference_type": "supplier",
+        "keyword": "兴旺",
+        "options": [],
+        "page": 1,
+        "page_size": 5,
+        "total": 0,
+        "has_more": false
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-sales-list",
+    "domain": "销售",
+    "utterance": "列出2026年9月1日至10日未收款的销售单，不要销售统计。",
+    "expected_tool": "listSalesOrders",
+    "expected_params": {
+      "start_date": "2026-09-01",
+      "end_date": "2026-09-10",
+      "payment_status": 0
+    },
+    "tags": [
+      "metadata_only"
+    ],
+    "mock_results": {
+      "listSalesOrders": {
+        "ok": true,
+        "orders": [],
+        "page": 1,
+        "page_size": 20,
+        "total": 0,
+        "has_more": false
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-purchase-list",
+    "domain": "采购",
+    "utterance": "列出2026年9月1日至10日未付款的采购单，不要采购统计。",
+    "expected_tool": "listPurchaseOrders",
+    "expected_params": {
+      "start_date": "2026-09-01",
+      "end_date": "2026-09-10",
+      "payment_status": 0
+    },
+    "tags": [
+      "metadata_only"
+    ],
+    "mock_results": {
+      "listPurchaseOrders": {
+        "ok": true,
+        "documents": [],
+        "page": 1,
+        "page_size": 20,
+        "total": 0,
+        "has_more": false
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-sales-returns",
+    "domain": "销售",
+    "utterance": "查看2026年9月1日至10日客户退货且还未退款的销售退货单列表。",
+    "expected_tool": "listSalesReturns",
+    "expected_params": {
+      "start_date": "2026-09-01",
+      "end_date": "2026-09-10",
+      "refund_status": 0
+    },
+    "tags": [
+      "metadata_only"
+    ],
+    "mock_results": {
+      "listSalesReturns": {
+        "ok": true,
+        "documents": [],
+        "page": 1,
+        "page_size": 20,
+        "total": 0,
+        "has_more": false
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-purchase-returns",
+    "domain": "采购",
+    "utterance": "查看2026年9月1日至10日退给供应商的采购退货单列表。",
+    "expected_tool": "listPurchaseReturns",
+    "expected_params": {
+      "start_date": "2026-09-01",
+      "end_date": "2026-09-10"
+    },
+    "tags": [
+      "metadata_only"
+    ],
+    "mock_results": {
+      "listPurchaseReturns": {
+        "ok": true,
+        "documents": [],
+        "page": 1,
+        "page_size": 20,
+        "total": 0,
+        "has_more": false
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-receipt-list",
+    "domain": "资金",
+    "utterance": "列出2026年9月1日至10日已生效的独立收款单，不是销售单。",
+    "expected_tool": "listReceiptOrders",
+    "expected_params": {
+      "start_date": "2026-09-01",
+      "end_date": "2026-09-10",
+      "status": 2
+    },
+    "tags": [
+      "metadata_only"
+    ],
+    "mock_results": {
+      "listReceiptOrders": {
+        "ok": true,
+        "documents": [],
+        "page": 1,
+        "page_size": 20,
+        "total": 0,
+        "has_more": false
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-payment-list",
+    "domain": "资金",
+    "utterance": "列出2026年9月1日至10日已生效的独立付款单，不是采购单。",
+    "expected_tool": "listPaymentOrders",
+    "expected_params": {
+      "start_date": "2026-09-01",
+      "end_date": "2026-09-10",
+      "status": 2
+    },
+    "tags": [
+      "metadata_only"
+    ],
+    "mock_results": {
+      "listPaymentOrders": {
+        "ok": true,
+        "documents": [],
+        "page": 1,
+        "page_size": 20,
+        "total": 0,
+        "has_more": false
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-stock",
+    "domain": "库存",
+    "utterance": "土豆当前还有多少库存？按商品查询，不要历史流水。",
+    "expected_tool": "queryStock",
+    "expected_params": {
+      "keyword": "土豆"
+    },
+    "tags": [
+      "metadata_only"
+    ],
+    "mock_results": {
+      "queryStock": {
+        "ok": true,
+        "data": []
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-stock-product",
+    "domain": "库存",
+    "utterance": "刚才找到的土豆在各个仓库分别还有多少？",
+    "expected_tool": "getStockByProduct",
+    "expected_params": {
+      "product_id": "P-DEMO-1"
+    },
+    "tags": [
+      "metadata_only"
+    ],
+    "history": [
+      {
+        "role": "user",
+        "content": "查找土豆。"
+      },
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "h1",
+            "type": "function",
+            "function": {
+              "name": "searchProducts",
+              "arguments": "{\"keywords\":[\"土豆\"]}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "h1",
+        "content": "{\"ok\":true,\"results\":[{\"query\":\"土豆\",\"status\":\"matched\",\"product\":{\"product_id\":\"P-DEMO-1\",\"name\":\"土豆\",\"unit\":\"斤\"},\"recommendations\":[]}]}"
+      },
+      {
+        "role": "assistant",
+        "content": "已找到土豆，单位为斤。"
+      }
+    ],
+    "mock_results": {
+      "getStockByProduct": {
+        "ok": true,
+        "data": {
+          "productName": "土豆",
+          "warehouseStocks": []
+        }
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-stock-summary",
+    "domain": "库存",
+    "utterance": "看一下所有仓库整体库存概况，有多少种商品、多少缺货，不按单个商品筛选。",
+    "expected_tool": "getStockSummary",
+    "tags": [
+      "metadata_only"
+    ],
+    "mock_results": {
+      "getStockSummary": {
+        "ok": true,
+        "data": {
+          "skuCount": 20,
+          "zeroStockCount": 2
+        }
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-stock-logs",
+    "domain": "库存",
+    "utterance": "查土豆在2026年9月1日至10日逐笔入出库的流水，不是当前结存。",
+    "expected_tool": "queryStockLogs",
+    "expected_params": {
+      "keyword": "土豆",
+      "start_date": "2026-09-01",
+      "end_date": "2026-09-10"
+    },
+    "tags": [
+      "metadata_only"
+    ],
+    "mock_results": {
+      "queryStockLogs": {
+        "ok": true,
+        "data": []
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-stock-alerts",
+    "domain": "库存",
+    "utterance": "有哪些商品触发库存预警？先列预警清单，不要采购建议。",
+    "expected_tool": "listStockAlerts",
+    "tags": [
+      "metadata_only"
+    ],
+    "mock_results": {
+      "listStockAlerts": {
+        "ok": true,
+        "data": []
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-purchase-suggestions",
+    "domain": "库存",
+    "utterance": "根据库存给我待采购的补货建议和建议数量，不是查询已经采购了多少。",
+    "expected_tool": "getPurchaseSuggestions",
+    "tags": [
+      "metadata_only"
+    ],
+    "mock_results": {
+      "getPurchaseSuggestions": {
+        "ok": true,
+        "data": []
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-stock-types",
+    "domain": "库存",
+    "utterance": "先查系统支持哪些其他出库类型，我准备登记报损，现在不要开单。",
+    "expected_tool": "listStockDocTypes",
+    "expected_params": {
+      "kind": "outbound"
+    },
+    "tags": [
+      "metadata_only"
+    ],
+    "mock_results": {
+      "listStockDocTypes": {
+        "ok": true,
+        "kind": "outbound",
+        "types": [
+          {
+            "id": "TYPE-DEMO-1",
+            "name": "报损"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-receivables",
+    "domain": "资金",
+    "utterance": "按客户汇总目前客户欠我们多少钱，不要销售额。",
+    "expected_tool": "listReceivables",
+    "expected_params": {
+      "view": "summary"
+    },
+    "tags": [
+      "metadata_only"
+    ],
+    "mock_results": {
+      "listReceivables": {
+        "ok": true,
+        "data": []
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-payables",
+    "domain": "资金",
+    "utterance": "按供应商汇总目前我们还欠多少钱，不要采购金额。",
+    "expected_tool": "listPayables",
+    "expected_params": {
+      "view": "summary"
+    },
+    "tags": [
+      "metadata_only"
+    ],
+    "mock_results": {
+      "listPayables": {
+        "ok": true,
+        "data": []
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-financial-status",
+    "domain": "报表",
+    "utterance": "看看2026年9月10日企业资产和负债整体情况。",
+    "expected_tool": "getFinancialStatus",
+    "expected_params": {
+      "biz_date": "2026-09-10"
+    },
+    "tags": [
+      "metadata_only"
+    ],
+    "mock_results": {
+      "getFinancialStatus": {
+        "ok": true,
+        "data": {
+          "totalAssets": 1000,
+          "totalLiabilities": 200
+        }
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-sales-report",
+    "domain": "报表",
+    "utterance": "统计2026年9月1日至10日哪些商品卖得最好，按销量排行，不是按利润。",
+    "expected_tool": "querySalesReport",
+    "expected_params": {
+      "view": "ranking_product",
+      "start_date": "2026-09-01",
+      "end_date": "2026-09-10"
+    },
+    "forbidden_tools": [
+      "listSalesOrders"
+    ],
+    "tags": [
+      "metadata_only"
+    ],
+    "mock_results": {
+      "querySalesReport": {
+        "ok": true,
+        "data": []
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-purchase-report",
+    "domain": "报表",
+    "utterance": "统计2026年9月1日至10日整体采购情况，不是列采购单或补货建议。",
+    "expected_tool": "queryPurchaseReport",
+    "expected_params": {
+      "view": "statistics",
+      "start_date": "2026-09-01",
+      "end_date": "2026-09-10"
+    },
+    "forbidden_tools": [
+      "listPurchaseOrders"
+    ],
+    "tags": [
+      "metadata_only"
+    ],
+    "mock_results": {
+      "queryPurchaseReport": {
+        "ok": true,
+        "data": []
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-profit-report",
+    "domain": "报表",
+    "utterance": "2026年9月1日至10日整体赚了多少利润？不是销售额或收款额。",
+    "expected_tool": "queryProfitReport",
+    "expected_params": {
+      "view": "summary",
+      "start_date": "2026-09-01",
+      "end_date": "2026-09-10"
+    },
+    "tags": [
+      "metadata_only"
+    ],
+    "mock_results": {
+      "queryProfitReport": {
+        "ok": true,
+        "data": {
+          "profitAmount": 100
+        }
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-settlement-report",
+    "domain": "报表",
+    "utterance": "各结算账户2026年9月1日至10日分别收了多少、付了多少，余额如何？",
+    "expected_tool": "querySettlementReport",
+    "expected_params": {
+      "start_date": "2026-09-01",
+      "end_date": "2026-09-10"
+    },
+    "tags": [
+      "metadata_only"
+    ],
+    "mock_results": {
+      "querySettlementReport": {
+        "ok": true,
+        "data": []
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-reconciliation",
+    "domain": "报表",
+    "utterance": "查看各客户往来对账汇总，不指定日期，也不只是欠款金额。",
+    "expected_tool": "queryReconciliation",
+    "expected_params": {
+      "view": "summary"
+    },
+    "tags": [
+      "metadata_only"
+    ],
+    "mock_results": {
+      "queryReconciliation": {
+        "ok": true,
+        "data": []
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-sales-detail",
+    "domain": "销售",
+    "utterance": "查看这张销售单的商品和收款明细，不做修改。",
+    "expected_tool": "getSalesOrder",
+    "expected_params": {
+      "order_id": "XS20260901001"
+    },
+    "tags": [
+      "metadata_only"
+    ],
+    "history": [
+      {
+        "role": "user",
+        "content": "我要看销售单XS20260901001。"
+      }
+    ],
+    "mock_results": {
+      "getSalesOrder": {
+        "ok": true,
+        "order": {
+          "id": "SO-DEMO-1",
+          "orderNo": "XS20260901001",
+          "status": 2,
+          "items": []
+        }
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-purchase-detail",
+    "domain": "采购",
+    "utterance": "查看这张采购单的商品和付款明细，不是退货单。",
+    "expected_tool": "getPurchaseOrder",
+    "expected_params": {
+      "order_id": "CG20260901001"
+    },
+    "tags": [
+      "metadata_only"
+    ],
+    "history": [
+      {
+        "role": "user",
+        "content": "我要看采购单CG20260901001。"
+      }
+    ],
+    "mock_results": {
+      "getPurchaseOrder": {
+        "ok": true,
+        "document": {
+          "id": "PO-DEMO-1",
+          "orderNo": "CG20260901001",
+          "status": 2,
+          "items": []
+        }
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-sales-return-detail",
+    "domain": "销售",
+    "utterance": "查看这张客户退货单的具体明细，不是原销售单。",
+    "expected_tool": "getSalesReturn",
+    "expected_params": {
+      "return_id": "XT20260901001"
+    },
+    "tags": [
+      "metadata_only"
+    ],
+    "history": [
+      {
+        "role": "user",
+        "content": "客户退货单号是XT20260901001。"
+      }
+    ],
+    "mock_results": {
+      "getSalesReturn": {
+        "ok": true,
+        "document": {
+          "id": "SR-DEMO-1",
+          "returnNo": "XT20260901001",
+          "status": 2,
+          "items": []
+        }
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-purchase-return-detail",
+    "domain": "采购",
+    "utterance": "查看这张退给供应商的退货单详情，不是原采购单。",
+    "expected_tool": "getPurchaseReturn",
+    "expected_params": {
+      "return_id": "CT20260901001"
+    },
+    "tags": [
+      "metadata_only"
+    ],
+    "history": [
+      {
+        "role": "user",
+        "content": "采购退货单号是CT20260901001。"
+      }
+    ],
+    "mock_results": {
+      "getPurchaseReturn": {
+        "ok": true,
+        "document": {
+          "id": "PR-DEMO-1",
+          "returnNo": "CT20260901001",
+          "status": 2,
+          "items": []
+        }
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-receipt-detail",
+    "domain": "资金",
+    "utterance": "查看这张独立收款单及核销明细，不是销售单。",
+    "expected_tool": "getReceiptOrder",
+    "expected_params": {
+      "order_id": "SK20260901001"
+    },
+    "tags": [
+      "metadata_only"
+    ],
+    "history": [
+      {
+        "role": "user",
+        "content": "收款单号是SK20260901001。"
+      }
+    ],
+    "mock_results": {
+      "getReceiptOrder": {
+        "ok": true,
+        "document": {
+          "id": "RO-DEMO-1",
+          "orderNo": "SK20260901001",
+          "status": 2,
+          "writeoffDetails": []
+        }
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-payment-detail",
+    "domain": "资金",
+    "utterance": "查看这张独立付款单及核销明细，不是采购单。",
+    "expected_tool": "getPaymentOrder",
+    "expected_params": {
+      "order_id": "FK20260901001"
+    },
+    "tags": [
+      "metadata_only"
+    ],
+    "history": [
+      {
+        "role": "user",
+        "content": "付款单号是FK20260901001。"
+      }
+    ],
+    "mock_results": {
+      "getPaymentOrder": {
+        "ok": true,
+        "document": {
+          "id": "PA-DEMO-1",
+          "orderNo": "FK20260901001",
+          "status": 2,
+          "writeoffDetails": []
+        }
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-sales-preview",
+    "domain": "销售",
+    "utterance": "给阳光超市销售土豆2斤，一号仓出库，张三经手，日期2026-09-10。先给我看预览，暂不提交。",
+    "expected_tool": "previewSalesOrder",
+    "expected_params": {
+      "order_text": "土豆2斤",
+      "customer": "阳光超市",
+      "warehouse": "一号仓",
+      "handler": "张三",
+      "order_date": "2026-09-10"
+    },
+    "forbidden_tools": [
+      "submitSalesOrder"
+    ],
+    "tags": [
+      "metadata_only",
+      "write_flow"
+    ],
+    "mock_results": {
+      "previewSalesOrder": {
+        "ok": true,
+        "ready_to_submit": true,
+        "required_actions": [
+          "confirm_submit"
+        ],
+        "preview_id": "PV-DEMO-SO",
+        "preview": {
+          "customer": "阳光超市",
+          "items": [
+            {
+              "product_name": "土豆",
+              "quantity": 2,
+              "unit": "斤",
+              "unit_price": 3,
+              "line_amount": 6
+            }
+          ],
+          "total_amount": 6
+        }
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-purchase-preview",
+    "domain": "采购",
+    "utterance": "向兴旺供应商采购土豆2斤，入一号仓，张三经手，日期2026-09-10。先看采购预览，先别提交。",
+    "expected_tool": "previewPurchaseOrder",
+    "expected_params": {
+      "order_text": "土豆2斤",
+      "supplier": "兴旺供应商",
+      "warehouse": "一号仓",
+      "handler": "张三",
+      "order_date": "2026-09-10"
+    },
+    "forbidden_tools": [
+      "submitPurchaseOrder"
+    ],
+    "tags": [
+      "metadata_only",
+      "write_flow"
+    ],
+    "mock_results": {
+      "previewPurchaseOrder": {
+        "ok": true,
+        "ready_to_submit": true,
+        "required_actions": [
+          "confirm_submit"
+        ],
+        "preview_id": "PV-DEMO-PO",
+        "preview": {
+          "supplier": "兴旺供应商",
+          "items": [
+            {
+              "product_name": "土豆",
+              "quantity": 2,
+              "unit": "斤",
+              "unit_price": 2,
+              "line_amount": 4
+            }
+          ],
+          "total_amount": 4
+        }
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-sales-return-preview",
+    "domain": "销售",
+    "utterance": "销售单XS20260901001的全部剩余可退商品，客户要退回，不退款也不折让，先预览退货。",
+    "expected_tool": "previewSalesReturn",
+    "expected_params": {
+      "order_id": "XS20260901001"
+    },
+    "forbidden_tools": [
+      "submitSalesReturn",
+      "voidSalesOrder"
+    ],
+    "tags": [
+      "metadata_only",
+      "write_flow"
+    ],
+    "mock_results": {
+      "previewSalesReturn": {
+        "ok": true,
+        "ready_to_submit": true,
+        "required_actions": [
+          "confirm_submit"
+        ],
+        "preview_id": "PV-DEMO-SR",
+        "preview": {
+          "source_order_no": "XS20260901001",
+          "total_amount": 6
+        }
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-purchase-return-preview",
+    "domain": "采购",
+    "utterance": "采购单CG20260901001的全部剩余可退商品退给供应商，不收退款也不优惠，先预览退货。",
+    "expected_tool": "previewPurchaseReturn",
+    "expected_params": {
+      "order_id": "CG20260901001"
+    },
+    "forbidden_tools": [
+      "submitPurchaseReturn",
+      "voidPurchaseOrder"
+    ],
+    "tags": [
+      "metadata_only",
+      "write_flow"
+    ],
+    "mock_results": {
+      "previewPurchaseReturn": {
+        "ok": true,
+        "ready_to_submit": true,
+        "required_actions": [
+          "confirm_submit"
+        ],
+        "preview_id": "PV-DEMO-PR",
+        "preview": {
+          "source_order_no": "CG20260901001",
+          "total_amount": 4
+        }
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-sales-receipt-preview",
+    "domain": "资金",
+    "utterance": "刚才核实的销售单再收100元进现金账户，不新建独立收款单，先预览。",
+    "expected_tool": "previewSalesReceipt",
+    "expected_params": {
+      "order_id": "XS20260901001",
+      "receipt_amount": 100,
+      "receipt_account": "现金"
+    },
+    "forbidden_tools": [
+      "submitSalesReceipt",
+      "previewReceiptOrder"
+    ],
+    "tags": [
+      "metadata_only",
+      "write_flow"
+    ],
+    "history": [
+      {
+        "role": "user",
+        "content": "请核实销售单XS20260901001。"
+      },
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "h1",
+            "type": "function",
+            "function": {
+              "name": "getSalesOrder",
+              "arguments": "{\"order_id\":\"XS20260901001\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "h1",
+        "content": "{\"ok\":true,\"order\":{\"id\":\"SO-DEMO-1\",\"orderNo\":\"XS20260901001\",\"customerName\":\"阳光超市\",\"status\":2,\"unreceivedAmount\":200}}"
+      }
+    ],
+    "mock_results": {
+      "previewSalesReceipt": {
+        "ok": true,
+        "ready_to_submit": true,
+        "required_actions": [
+          "confirm_submit"
+        ],
+        "preview_id": "PV-DEMO-SC",
+        "preview": {
+          "receipt_amount": 100
+        }
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-purchase-payment-preview",
+    "domain": "资金",
+    "utterance": "刚才核实的采购单再付100元从现金账户出，不新建独立付款单，先预览。",
+    "expected_tool": "previewPurchasePayment",
+    "expected_params": {
+      "order_id": "CG20260901001",
+      "payment_amount": 100,
+      "payment_account": "现金"
+    },
+    "forbidden_tools": [
+      "submitPurchasePayment",
+      "previewPaymentOrder"
+    ],
+    "tags": [
+      "metadata_only",
+      "write_flow"
+    ],
+    "history": [
+      {
+        "role": "user",
+        "content": "请核实采购单CG20260901001。"
+      },
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "h1",
+            "type": "function",
+            "function": {
+              "name": "getPurchaseOrder",
+              "arguments": "{\"order_id\":\"CG20260901001\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "h1",
+        "content": "{\"ok\":true,\"document\":{\"id\":\"PO-DEMO-1\",\"orderNo\":\"CG20260901001\",\"supplierName\":\"兴旺供应商\",\"status\":2,\"unpaidAmount\":200}}"
+      }
+    ],
+    "mock_results": {
+      "previewPurchasePayment": {
+        "ok": true,
+        "ready_to_submit": true,
+        "required_actions": [
+          "confirm_submit"
+        ],
+        "preview_id": "PV-DEMO-PC",
+        "preview": {
+          "payment_amount": 100
+        }
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-transfer-preview",
+    "domain": "库存",
+    "utterance": "土豆2斤从一号仓调到二号仓，张三经手，2026-09-10调拨，先给我看预览。",
+    "expected_tool": "previewStockTransfer",
+    "expected_params": {
+      "order_text": "土豆2斤",
+      "from_warehouse": "一号仓",
+      "to_warehouse": "二号仓",
+      "handler": "张三",
+      "transfer_date": "2026-09-10"
+    },
+    "forbidden_tools": [
+      "submitStockTransfer",
+      "previewOtherStockDoc"
+    ],
+    "tags": [
+      "metadata_only",
+      "write_flow"
+    ],
+    "mock_results": {
+      "previewStockTransfer": {
+        "ok": true,
+        "ready_to_submit": true,
+        "required_actions": [
+          "confirm_submit"
+        ],
+        "preview_id": "PV-DEMO-ST",
+        "preview": {
+          "from_warehouse": "一号仓",
+          "to_warehouse": "二号仓",
+          "total_quantity": 2
+        }
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-other-stock-preview",
+    "domain": "库存",
+    "utterance": "按刚才查到的报损类型，一号仓土豆2斤坏了，张三经手，2026-09-10登记其他出库，先预览，不是调拨。",
+    "expected_tool": "previewOtherStockDoc",
+    "expected_params": {
+      "kind": "outbound",
+      "order_text": "土豆2斤",
+      "warehouse": "一号仓",
+      "handler": "张三",
+      "doc_type": "报损",
+      "doc_date": "2026-09-10"
+    },
+    "forbidden_tools": [
+      "submitOtherStockDoc",
+      "previewStockTransfer"
+    ],
+    "tags": [
+      "metadata_only",
+      "write_flow"
+    ],
+    "history": [
+      {
+        "role": "user",
+        "content": "查一下其他出库类型。"
+      },
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "h1",
+            "type": "function",
+            "function": {
+              "name": "listStockDocTypes",
+              "arguments": "{\"kind\":\"outbound\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "h1",
+        "content": "{\"ok\":true,\"kind\":\"outbound\",\"types\":[{\"id\":\"TYPE-DEMO-1\",\"name\":\"报损\"}]}"
+      }
+    ],
+    "mock_results": {
+      "previewOtherStockDoc": {
+        "ok": true,
+        "ready_to_submit": true,
+        "required_actions": [
+          "confirm_submit"
+        ],
+        "preview_id": "PV-DEMO-OS",
+        "preview": {
+          "warehouse": "一号仓",
+          "doc_type": "报损",
+          "total_quantity": 2
+        }
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-receipt-preview",
+    "domain": "资金",
+    "utterance": "新增独立收款单，阳光超市交来100元，现金账户，张三经手，2026-09-10，暂不核销，用刚才候选中的其他收款类型，先预览。",
+    "expected_tool": "previewReceiptOrder",
+    "expected_params": {
+      "receipt_amount": 100,
+      "account": "现金",
+      "handler": "张三",
+      "customer": "阳光超市",
+      "order_date": "2026-09-10",
+      "fund_type": "其他收款"
+    },
+    "forbidden_tools": [
+      "submitReceiptOrder",
+      "previewSalesReceipt"
+    ],
+    "tags": [
+      "metadata_only",
+      "write_flow"
+    ],
+    "history": [
+      {
+        "role": "user",
+        "content": "准备独立收款100元到现金账户，张三经手。"
+      },
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "h1",
+            "type": "function",
+            "function": {
+              "name": "previewReceiptOrder",
+              "arguments": "{\"receipt_amount\":100,\"account\":\"现金\",\"handler\":\"张三\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "h1",
+        "content": "{\"ok\":true,\"ready_to_submit\":false,\"required_actions\":[],\"preview_id\":null,\"reference_resolutions\":{\"fund_type\":{\"status\":\"ambiguous\",\"candidates\":[{\"id\":\"FT-DEMO-R\",\"name\":\"其他收款\",\"is_system\":false}]}}}"
+      }
+    ],
+    "mock_results": {
+      "previewReceiptOrder": {
+        "ok": true,
+        "ready_to_submit": true,
+        "required_actions": [
+          "confirm_submit"
+        ],
+        "preview_id": "PV-DEMO-RO",
+        "preview": {
+          "receipt_amount": 100,
+          "customer": "阳光超市"
+        }
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-payment-preview",
+    "domain": "资金",
+    "utterance": "新增独立付款单，付兴旺供应商100元，现金账户，张三经手，2026-09-10，暂不核销，用刚才候选中的其他付款类型，先预览。",
+    "expected_tool": "previewPaymentOrder",
+    "expected_params": {
+      "payment_amount": 100,
+      "account": "现金",
+      "handler": "张三",
+      "supplier": "兴旺供应商",
+      "order_date": "2026-09-10",
+      "fund_type": "其他付款"
+    },
+    "forbidden_tools": [
+      "submitPaymentOrder",
+      "previewPurchasePayment"
+    ],
+    "tags": [
+      "metadata_only",
+      "write_flow"
+    ],
+    "history": [
+      {
+        "role": "user",
+        "content": "准备独立付款100元从现金账户出，张三经手。"
+      },
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "h1",
+            "type": "function",
+            "function": {
+              "name": "previewPaymentOrder",
+              "arguments": "{\"payment_amount\":100,\"account\":\"现金\",\"handler\":\"张三\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "h1",
+        "content": "{\"ok\":true,\"ready_to_submit\":false,\"required_actions\":[],\"preview_id\":null,\"reference_resolutions\":{\"fund_type\":{\"status\":\"ambiguous\",\"candidates\":[{\"id\":\"FT-DEMO-P\",\"name\":\"其他付款\",\"is_system\":false}]}}}"
+      }
+    ],
+    "mock_results": {
+      "previewPaymentOrder": {
+        "ok": true,
+        "ready_to_submit": true,
+        "required_actions": [
+          "confirm_submit"
+        ],
+        "preview_id": "PV-DEMO-PA",
+        "preview": {
+          "payment_amount": 100,
+          "supplier": "兴旺供应商"
+        }
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-sales-submit",
+    "domain": "销售",
+    "utterance": "确认上述销售预览无误，现在提交。",
+    "expected_tool": "submitSalesOrder",
+    "expected_params": {
+      "preview_id": "PV-DEMO-SO",
+      "confirmed_by_user": true
+    },
+    "tags": [
+      "metadata_only",
+      "write_flow"
+    ],
+    "history": [
+      {
+        "role": "user",
+        "content": "阳光超市销售土豆2斤，一号仓，张三，2026-09-10，预览看看。"
+      },
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "h1",
+            "type": "function",
+            "function": {
+              "name": "previewSalesOrder",
+              "arguments": "{\"order_text\":\"土豆2斤\",\"customer\":\"阳光超市\",\"warehouse\":\"一号仓\",\"handler\":\"张三\",\"order_date\":\"2026-09-10\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "h1",
+        "content": "{\"ok\":true,\"ready_to_submit\":true,\"required_actions\":[\"confirm_submit\"],\"preview_id\":\"PV-DEMO-SO\",\"preview\":{\"total_amount\":6}}"
+      },
+      {
+        "role": "assistant",
+        "content": "销售预览：阳光超市，一号仓，张三，2026-09-10；土豆2斤，单价3元，共6元。是否确认提交？"
+      }
+    ],
+    "mock_results": {
+      "submitSalesOrder": {
+        "ok": true,
+        "submitted": true,
+        "order_no": "XS20260910001",
+        "idempotent_replay": false
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-purchase-submit",
+    "domain": "采购",
+    "utterance": "确认上述采购预览无误，现在提交。",
+    "expected_tool": "submitPurchaseOrder",
+    "expected_params": {
+      "preview_id": "PV-DEMO-PO",
+      "confirmed_by_user": true
+    },
+    "tags": [
+      "metadata_only",
+      "write_flow"
+    ],
+    "history": [
+      {
+        "role": "user",
+        "content": "兴旺供应商采购土豆2斤，一号仓，张三，2026-09-10，预览看看。"
+      },
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "h1",
+            "type": "function",
+            "function": {
+              "name": "previewPurchaseOrder",
+              "arguments": "{\"order_text\":\"土豆2斤\",\"supplier\":\"兴旺供应商\",\"warehouse\":\"一号仓\",\"handler\":\"张三\",\"order_date\":\"2026-09-10\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "h1",
+        "content": "{\"ok\":true,\"ready_to_submit\":true,\"required_actions\":[\"confirm_submit\"],\"preview_id\":\"PV-DEMO-PO\",\"preview\":{\"total_amount\":4}}"
+      },
+      {
+        "role": "assistant",
+        "content": "采购预览：兴旺供应商，一号仓，张三，2026-09-10；土豆2斤，单价2元，共4元。是否确认提交？"
+      }
+    ],
+    "mock_results": {
+      "submitPurchaseOrder": {
+        "ok": true,
+        "submitted": true,
+        "document_id": "PO-DEMO-2",
+        "document_no": "CG20260910001",
+        "idempotent_replay": false
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-sales-return-submit",
+    "domain": "销售",
+    "utterance": "确认按上述客户退货预览提交。",
+    "expected_tool": "submitSalesReturn",
+    "expected_params": {
+      "preview_id": "PV-DEMO-SR",
+      "confirmed_by_user": true
+    },
+    "tags": [
+      "metadata_only",
+      "write_flow"
+    ],
+    "history": [
+      {
+        "role": "user",
+        "content": "销售单XS20260901001剩余商品全部退货，不退款，先预览。"
+      },
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "h1",
+            "type": "function",
+            "function": {
+              "name": "previewSalesReturn",
+              "arguments": "{\"order_id\":\"XS20260901001\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "h1",
+        "content": "{\"ok\":true,\"ready_to_submit\":true,\"required_actions\":[\"confirm_submit\"],\"preview_id\":\"PV-DEMO-SR\",\"preview\":{\"source_order_no\":\"XS20260901001\",\"total_amount\":6}}"
+      },
+      {
+        "role": "assistant",
+        "content": "阳光超市销售单XS20260901001退土豆2斤，单价3元，合计6元，入一号仓，张三经手，2026-09-10，不退款。确认提交？"
+      }
+    ],
+    "mock_results": {
+      "submitSalesReturn": {
+        "ok": true,
+        "submitted": true,
+        "document_id": "SR-DEMO-2",
+        "document_no": "XT20260910001",
+        "idempotent_replay": false
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-purchase-return-submit",
+    "domain": "采购",
+    "utterance": "确认按上述退给供应商的预览提交。",
+    "expected_tool": "submitPurchaseReturn",
+    "expected_params": {
+      "preview_id": "PV-DEMO-PR",
+      "confirmed_by_user": true
+    },
+    "tags": [
+      "metadata_only",
+      "write_flow"
+    ],
+    "history": [
+      {
+        "role": "user",
+        "content": "采购单CG20260901001剩余商品全部退货，不收退款，先预览。"
+      },
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "h1",
+            "type": "function",
+            "function": {
+              "name": "previewPurchaseReturn",
+              "arguments": "{\"order_id\":\"CG20260901001\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "h1",
+        "content": "{\"ok\":true,\"ready_to_submit\":true,\"required_actions\":[\"confirm_submit\"],\"preview_id\":\"PV-DEMO-PR\",\"preview\":{\"source_order_no\":\"CG20260901001\",\"total_amount\":4}}"
+      },
+      {
+        "role": "assistant",
+        "content": "采购单CG20260901001向兴旺供应商退土豆2斤，单价2元，合计4元，从一号仓出库，张三，2026-09-10，不收退款。确认提交？"
+      }
+    ],
+    "mock_results": {
+      "submitPurchaseReturn": {
+        "ok": true,
+        "submitted": true,
+        "document_id": "PR-DEMO-2",
+        "document_no": "CT20260910001",
+        "idempotent_replay": false
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-sales-receipt-submit",
+    "domain": "资金",
+    "utterance": "确认上述这张销售单继续收款100元，现在提交。",
+    "expected_tool": "submitSalesReceipt",
+    "expected_params": {
+      "preview_id": "PV-DEMO-SC",
+      "confirmed_by_user": true
+    },
+    "tags": [
+      "metadata_only",
+      "write_flow"
+    ],
+    "history": [
+      {
+        "role": "user",
+        "content": "销售单XS20260901001再收100元进现金，先预览。"
+      },
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "h1",
+            "type": "function",
+            "function": {
+              "name": "previewSalesReceipt",
+              "arguments": "{\"order_id\":\"XS20260901001\",\"receipt_amount\":100,\"receipt_account\":\"现金\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "h1",
+        "content": "{\"ok\":true,\"ready_to_submit\":true,\"required_actions\":[\"confirm_submit\"],\"preview_id\":\"PV-DEMO-SC\",\"preview\":{\"receipt_amount\":100,\"discount_amount\":0}}"
+      },
+      {
+        "role": "assistant",
+        "content": "销售单XS20260901001，阳光超市，未收200元，本次收100元到现金账户，不免账。确认提交？"
+      }
+    ],
+    "mock_results": {
+      "submitSalesReceipt": {
+        "ok": true,
+        "submitted": true,
+        "document_id": "SO-DEMO-1",
+        "document_no": "XS20260901001",
+        "idempotent_replay": false
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-purchase-payment-submit",
+    "domain": "资金",
+    "utterance": "确认上述这张采购单继续付款100元，现在提交。",
+    "expected_tool": "submitPurchasePayment",
+    "expected_params": {
+      "preview_id": "PV-DEMO-PC",
+      "confirmed_by_user": true
+    },
+    "tags": [
+      "metadata_only",
+      "write_flow"
+    ],
+    "history": [
+      {
+        "role": "user",
+        "content": "采购单CG20260901001再付100元从现金出，先预览。"
+      },
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "h1",
+            "type": "function",
+            "function": {
+              "name": "previewPurchasePayment",
+              "arguments": "{\"order_id\":\"CG20260901001\",\"payment_amount\":100,\"payment_account\":\"现金\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "h1",
+        "content": "{\"ok\":true,\"ready_to_submit\":true,\"required_actions\":[\"confirm_submit\"],\"preview_id\":\"PV-DEMO-PC\",\"preview\":{\"payment_amount\":100,\"discount_amount\":0}}"
+      },
+      {
+        "role": "assistant",
+        "content": "采购单CG20260901001，兴旺供应商，未付200元，本次从现金付100元，不免账。确认提交？"
+      }
+    ],
+    "mock_results": {
+      "submitPurchasePayment": {
+        "ok": true,
+        "submitted": true,
+        "document_id": "PO-DEMO-1",
+        "document_no": "CG20260901001",
+        "idempotent_replay": false
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-transfer-submit",
+    "domain": "库存",
+    "utterance": "确认上述仓库间调拨内容无误，提交。",
+    "expected_tool": "submitStockTransfer",
+    "expected_params": {
+      "preview_id": "PV-DEMO-ST",
+      "confirmed_by_user": true
+    },
+    "tags": [
+      "metadata_only",
+      "write_flow"
+    ],
+    "history": [
+      {
+        "role": "user",
+        "content": "土豆2斤从一号仓到二号仓，张三，2026-09-10，先预览。"
+      },
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "h1",
+            "type": "function",
+            "function": {
+              "name": "previewStockTransfer",
+              "arguments": "{\"order_text\":\"土豆2斤\",\"from_warehouse\":\"一号仓\",\"to_warehouse\":\"二号仓\",\"handler\":\"张三\",\"transfer_date\":\"2026-09-10\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "h1",
+        "content": "{\"ok\":true,\"ready_to_submit\":true,\"required_actions\":[\"confirm_submit\"],\"preview_id\":\"PV-DEMO-ST\",\"preview\":{\"total_quantity\":2}}"
+      },
+      {
+        "role": "assistant",
+        "content": "土豆2斤，一号仓调出、二号仓调入，张三，2026-09-10。确认调拨？"
+      }
+    ],
+    "mock_results": {
+      "submitStockTransfer": {
+        "ok": true,
+        "submitted": true,
+        "document_id": "ST-DEMO-2",
+        "document_no": "DB20260910001",
+        "idempotent_replay": false
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-other-stock-submit",
+    "domain": "库存",
+    "utterance": "确认上述报损出库内容无误，提交。",
+    "expected_tool": "submitOtherStockDoc",
+    "expected_params": {
+      "preview_id": "PV-DEMO-OS",
+      "confirmed_by_user": true
+    },
+    "tags": [
+      "metadata_only",
+      "write_flow"
+    ],
+    "history": [
+      {
+        "role": "user",
+        "content": "一号仓土豆2斤报损，张三，2026-09-10，先预览。"
+      },
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "h1",
+            "type": "function",
+            "function": {
+              "name": "previewOtherStockDoc",
+              "arguments": "{\"kind\":\"outbound\",\"order_text\":\"土豆2斤\",\"warehouse\":\"一号仓\",\"handler\":\"张三\",\"doc_type\":\"报损\",\"doc_date\":\"2026-09-10\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "h1",
+        "content": "{\"ok\":true,\"ready_to_submit\":true,\"required_actions\":[\"confirm_submit\"],\"preview_id\":\"PV-DEMO-OS\",\"preview\":{\"total_quantity\":2}}"
+      },
+      {
+        "role": "assistant",
+        "content": "其他出库报损：一号仓土豆2斤，张三经手，2026-09-10。确认提交？"
+      }
+    ],
+    "mock_results": {
+      "submitOtherStockDoc": {
+        "ok": true,
+        "submitted": true,
+        "document_id": "OS-DEMO-2",
+        "document_no": "CK20260910001",
+        "idempotent_replay": false
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-receipt-submit",
+    "domain": "资金",
+    "utterance": "确认上述独立收款单，提交。",
+    "expected_tool": "submitReceiptOrder",
+    "expected_params": {
+      "preview_id": "PV-DEMO-RO",
+      "confirmed_by_user": true
+    },
+    "tags": [
+      "metadata_only",
+      "write_flow"
+    ],
+    "history": [
+      {
+        "role": "user",
+        "content": "独立收款，阳光超市100元，现金，张三，其他收款，先预览。"
+      },
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "h1",
+            "type": "function",
+            "function": {
+              "name": "previewReceiptOrder",
+              "arguments": "{\"receipt_amount\":100,\"account\":\"现金\",\"handler\":\"张三\",\"customer\":\"阳光超市\",\"fund_type\":\"其他收款\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "h1",
+        "content": "{\"ok\":true,\"ready_to_submit\":true,\"required_actions\":[\"confirm_submit\"],\"preview_id\":\"PV-DEMO-RO\",\"preview\":{\"receipt_amount\":100}}"
+      },
+      {
+        "role": "assistant",
+        "content": "独立收款：阳光超市100元到现金，张三，2026-09-10，其他收款，无优惠、不核销。确认提交？"
+      }
+    ],
+    "mock_results": {
+      "submitReceiptOrder": {
+        "ok": true,
+        "submitted": true,
+        "document_id": "RO-DEMO-2",
+        "document_no": "SK20260910001",
+        "idempotent_replay": false
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-payment-submit",
+    "domain": "资金",
+    "utterance": "确认上述独立付款单，提交。",
+    "expected_tool": "submitPaymentOrder",
+    "expected_params": {
+      "preview_id": "PV-DEMO-PA",
+      "confirmed_by_user": true
+    },
+    "tags": [
+      "metadata_only",
+      "write_flow"
+    ],
+    "history": [
+      {
+        "role": "user",
+        "content": "独立付款，兴旺供应商100元，现金，张三，其他付款，先预览。"
+      },
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "h1",
+            "type": "function",
+            "function": {
+              "name": "previewPaymentOrder",
+              "arguments": "{\"payment_amount\":100,\"account\":\"现金\",\"handler\":\"张三\",\"supplier\":\"兴旺供应商\",\"fund_type\":\"其他付款\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "h1",
+        "content": "{\"ok\":true,\"ready_to_submit\":true,\"required_actions\":[\"confirm_submit\"],\"preview_id\":\"PV-DEMO-PA\",\"preview\":{\"payment_amount\":100}}"
+      },
+      {
+        "role": "assistant",
+        "content": "独立付款：从现金付兴旺供应商100元，张三，2026-09-10，其他付款，无优惠、不核销。确认提交？"
+      }
+    ],
+    "mock_results": {
+      "submitPaymentOrder": {
+        "ok": true,
+        "submitted": true,
+        "document_id": "PA-DEMO-2",
+        "document_no": "FK20260910001",
+        "idempotent_replay": false
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-sales-update",
+    "domain": "销售",
+    "utterance": "确认只按你说的把备注改为下午送达，其他保持不变，执行修改。",
+    "expected_tool": "updateSalesOrder",
+    "expected_params": {
+      "order_id": "XS20260901001",
+      "remark": "下午送达",
+      "confirmed_by_user": true
+    },
+    "tags": [
+      "metadata_only",
+      "write_flow"
+    ],
+    "history": [
+      {
+        "role": "user",
+        "content": "销售单XS20260901001只改备注为下午送达。"
+      },
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "h1",
+            "type": "function",
+            "function": {
+              "name": "getSalesOrder",
+              "arguments": "{\"order_id\":\"XS20260901001\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "h1",
+        "content": "{\"ok\":true,\"order\":{\"orderNo\":\"XS20260901001\",\"status\":2,\"customerName\":\"阳光超市\",\"remark\":\"上午送达\",\"items\":[{\"productName\":\"土豆\",\"quantity\":2,\"unit\":\"斤\",\"unitPrice\":3}]}}"
+      },
+      {
+        "role": "assistant",
+        "content": "已核实阳光超市销售单XS20260901001，土豆2斤，单价3元，已生效；备注由上午送达改为下午送达，其他不变。确认修改？"
+      }
+    ],
+    "mock_results": {
+      "updateSalesOrder": {
+        "ok": true,
+        "modified": true,
+        "order_no": "XS20260901001"
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-purchase-update",
+    "domain": "采购",
+    "utterance": "确认只按你说的把备注改为下午到货，其他保持不变，执行修改。",
+    "expected_tool": "updatePurchaseOrder",
+    "expected_params": {
+      "order_id": "CG20260901001",
+      "remark": "下午到货",
+      "confirmed_by_user": true
+    },
+    "tags": [
+      "metadata_only",
+      "write_flow"
+    ],
+    "history": [
+      {
+        "role": "user",
+        "content": "采购单CG20260901001只改备注为下午到货。"
+      },
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "h1",
+            "type": "function",
+            "function": {
+              "name": "getPurchaseOrder",
+              "arguments": "{\"order_id\":\"CG20260901001\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "h1",
+        "content": "{\"ok\":true,\"document\":{\"orderNo\":\"CG20260901001\",\"status\":2,\"supplierName\":\"兴旺供应商\",\"remark\":\"上午到货\",\"items\":[{\"productName\":\"土豆\",\"quantity\":2,\"unit\":\"斤\",\"unitPrice\":2}]}}"
+      },
+      {
+        "role": "assistant",
+        "content": "已核实兴旺供应商采购单CG20260901001，土豆2斤，单价2元，已生效；备注由上午到货改为下午到货，其他不变。确认修改？"
+      }
+    ],
+    "mock_results": {
+      "updatePurchaseOrder": {
+        "ok": true,
+        "modified": true,
+        "document_no": "CG20260901001"
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-sales-void",
+    "domain": "销售",
+    "utterance": "确认作废这张销售单，已了解不可恢复，请执行。",
+    "expected_tool": "voidSalesOrder",
+    "expected_params": {
+      "order_id": "XS20260901001",
+      "confirmed_by_user": true
+    },
+    "tags": [
+      "metadata_only",
+      "write_flow"
+    ],
+    "history": [
+      {
+        "role": "user",
+        "content": "作废销售单XS20260901001。"
+      },
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "h1",
+            "type": "function",
+            "function": {
+              "name": "getSalesOrder",
+              "arguments": "{\"order_id\":\"XS20260901001\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "h1",
+        "content": "{\"ok\":true,\"order\":{\"orderNo\":\"XS20260901001\",\"customerName\":\"阳光超市\",\"status\":2,\"items\":[{\"productName\":\"土豆\",\"quantity\":2,\"unit\":\"斤\",\"unitPrice\":3}]}}"
+      },
+      {
+        "role": "assistant",
+        "content": "销售单XS20260901001，阳光超市，土豆2斤、单价3元，已生效。作废不可恢复，确认？"
+      }
+    ],
+    "mock_results": {
+      "voidSalesOrder": {
+        "ok": true,
+        "voided": true,
+        "order_no": "XS20260901001"
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-purchase-void",
+    "domain": "采购",
+    "utterance": "确认作废这张采购单，已了解不可恢复，请执行。",
+    "expected_tool": "voidPurchaseOrder",
+    "expected_params": {
+      "order_id": "CG20260901001",
+      "confirmed_by_user": true
+    },
+    "tags": [
+      "metadata_only",
+      "write_flow"
+    ],
+    "history": [
+      {
+        "role": "user",
+        "content": "作废采购单CG20260901001。"
+      },
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "h1",
+            "type": "function",
+            "function": {
+              "name": "getPurchaseOrder",
+              "arguments": "{\"order_id\":\"CG20260901001\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "h1",
+        "content": "{\"ok\":true,\"document\":{\"orderNo\":\"CG20260901001\",\"supplierName\":\"兴旺供应商\",\"status\":2,\"items\":[{\"productName\":\"土豆\",\"quantity\":2,\"unit\":\"斤\",\"unitPrice\":2}]}}"
+      },
+      {
+        "role": "assistant",
+        "content": "采购单CG20260901001，兴旺供应商，土豆2斤、单价2元，已生效。作废不可恢复，确认？"
+      }
+    ],
+    "mock_results": {
+      "voidPurchaseOrder": {
+        "ok": true,
+        "voided": true,
+        "document_no": "CG20260901001"
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-sales-return-void",
+    "domain": "销售",
+    "utterance": "确认作废这张客户退货单，已了解不可恢复，请执行。",
+    "expected_tool": "voidSalesReturn",
+    "expected_params": {
+      "return_id": "XT20260901001",
+      "confirmed_by_user": true
+    },
+    "tags": [
+      "metadata_only",
+      "write_flow"
+    ],
+    "history": [
+      {
+        "role": "user",
+        "content": "作废销售退货单XT20260901001。"
+      },
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "h1",
+            "type": "function",
+            "function": {
+              "name": "getSalesReturn",
+              "arguments": "{\"return_id\":\"XT20260901001\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "h1",
+        "content": "{\"ok\":true,\"document\":{\"returnNo\":\"XT20260901001\",\"customerName\":\"阳光超市\",\"status\":2,\"items\":[{\"productName\":\"土豆\",\"quantity\":2,\"unit\":\"斤\",\"unitPrice\":3}]}}"
+      },
+      {
+        "role": "assistant",
+        "content": "销售退货单XT20260901001，阳光超市，退土豆2斤、单价3元，已生效。作废不可恢复，确认？"
+      }
+    ],
+    "mock_results": {
+      "voidSalesReturn": {
+        "ok": true,
+        "voided": true,
+        "document_no": "XT20260901001"
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-purchase-return-void",
+    "domain": "采购",
+    "utterance": "确认作废这张退给供应商的退货单，已了解不可恢复，请执行。",
+    "expected_tool": "voidPurchaseReturn",
+    "expected_params": {
+      "return_id": "CT20260901001",
+      "confirmed_by_user": true
+    },
+    "tags": [
+      "metadata_only",
+      "write_flow"
+    ],
+    "history": [
+      {
+        "role": "user",
+        "content": "作废采购退货单CT20260901001。"
+      },
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "h1",
+            "type": "function",
+            "function": {
+              "name": "getPurchaseReturn",
+              "arguments": "{\"return_id\":\"CT20260901001\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "h1",
+        "content": "{\"ok\":true,\"document\":{\"returnNo\":\"CT20260901001\",\"supplierName\":\"兴旺供应商\",\"status\":2,\"items\":[{\"productName\":\"土豆\",\"quantity\":2,\"unit\":\"斤\",\"unitPrice\":2}]}}"
+      },
+      {
+        "role": "assistant",
+        "content": "采购退货单CT20260901001，兴旺供应商，退土豆2斤、单价2元，已生效。作废不可恢复，确认？"
+      }
+    ],
+    "mock_results": {
+      "voidPurchaseReturn": {
+        "ok": true,
+        "voided": true,
+        "document_no": "CT20260901001"
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-receipt-void",
+    "domain": "资金",
+    "utterance": "确认作废这张独立收款单，已了解不可恢复，请执行。",
+    "expected_tool": "voidReceiptOrder",
+    "expected_params": {
+      "order_id": "SK20260901001",
+      "confirmed_by_user": true
+    },
+    "tags": [
+      "metadata_only",
+      "write_flow"
+    ],
+    "history": [
+      {
+        "role": "user",
+        "content": "作废收款单SK20260901001。"
+      },
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "h1",
+            "type": "function",
+            "function": {
+              "name": "getReceiptOrder",
+              "arguments": "{\"order_id\":\"SK20260901001\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "h1",
+        "content": "{\"ok\":true,\"document\":{\"orderNo\":\"SK20260901001\",\"customerName\":\"阳光超市\",\"status\":2,\"receiptAmount\":100,\"accountName\":\"现金\",\"writeoffDetails\":[]}}"
+      },
+      {
+        "role": "assistant",
+        "content": "独立收款单SK20260901001，阳光超市收款100元到现金，无核销，已生效。作废不可恢复，确认？"
+      }
+    ],
+    "mock_results": {
+      "voidReceiptOrder": {
+        "ok": true,
+        "voided": true,
+        "document_no": "SK20260901001"
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-payment-void",
+    "domain": "资金",
+    "utterance": "确认作废这张独立付款单，已了解不可恢复，请执行。",
+    "expected_tool": "voidPaymentOrder",
+    "expected_params": {
+      "order_id": "FK20260901001",
+      "confirmed_by_user": true
+    },
+    "tags": [
+      "metadata_only",
+      "write_flow"
+    ],
+    "history": [
+      {
+        "role": "user",
+        "content": "作废付款单FK20260901001。"
+      },
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "h1",
+            "type": "function",
+            "function": {
+              "name": "getPaymentOrder",
+              "arguments": "{\"order_id\":\"FK20260901001\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "h1",
+        "content": "{\"ok\":true,\"document\":{\"orderNo\":\"FK20260901001\",\"supplierName\":\"兴旺供应商\",\"status\":2,\"paymentAmount\":100,\"accountName\":\"现金\",\"writeoffDetails\":[]}}"
+      },
+      {
+        "role": "assistant",
+        "content": "独立付款单FK20260901001，现金付兴旺供应商100元，无核销，已生效。作废不可恢复，确认？"
+      }
+    ],
+    "mock_results": {
+      "voidPaymentOrder": {
+        "ok": true,
+        "voided": true,
+        "document_no": "FK20260901001"
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-stock-chain",
+    "domain": "库存",
+    "utterance": "查土豆在各仓库分别有多少库存；还不知道它的内部标识，请先找商品候选。",
+    "expected_tool": "getStockByProduct",
+    "expected_calls": [
+      {
+        "tool": "searchProducts",
+        "params": {
+          "keywords": [
+            "土豆"
+          ]
+        }
+      },
+      {
+        "tool": "getStockByProduct",
+        "params": {
+          "product_id": "P-DEMO-CHAIN"
+        }
+      }
+    ],
+    "tags": [
+      "metadata_only",
+      "multi_step"
+    ],
+    "mock_results": {
+      "searchProducts": {
+        "ok": true,
+        "results": [
+          {
+            "query": "土豆",
+            "status": "matched",
+            "product": {
+              "product_id": "P-DEMO-CHAIN",
+              "name": "土豆",
+              "unit": "斤"
+            },
+            "recommendations": []
+          }
+        ]
+      },
+      "getStockByProduct": {
+        "ok": true,
+        "data": {
+          "productName": "土豆",
+          "warehouseStocks": [
+            {
+              "warehouseName": "一号仓",
+              "stockQuantity": 10
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-profit-vs-sales",
+    "domain": "报表",
+    "utterance": "2026年9月1日至10日哪些商品贡献利润最多？看商品利润，不是销售数量。",
+    "expected_tool": "queryProfitReport",
+    "expected_params": {
+      "view": "by_product",
+      "start_date": "2026-09-01",
+      "end_date": "2026-09-10"
+    },
+    "tags": [
+      "metadata_only"
+    ],
+    "mock_results": {
+      "queryProfitReport": {
+        "ok": true,
+        "data": []
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-sales-detail-total",
+    "domain": "报表",
+    "utterance": "给我2026年9月1日至10日商品销售明细的汇总合计，不是再翻一页明细。",
+    "expected_tool": "querySalesReport",
+    "expected_params": {
+      "view": "details_summary",
+      "start_date": "2026-09-01",
+      "end_date": "2026-09-10"
+    },
+    "tags": [
+      "metadata_only"
+    ],
+    "mock_results": {
+      "querySalesReport": {
+        "ok": true,
+        "data": {
+          "totalAmount": 600
+        }
+      }
+    }
+  },
+  {
+    "scenario_id": "meta-reconciliation-statement",
+    "domain": "报表",
+    "utterance": "和阳光超市逐笔核对2026年9月1日至10日的往来对账单，不要各客户汇总。",
+    "expected_tool": "queryReconciliation",
+    "expected_params": {
+      "view": "statement",
+      "customer_id": "阳光超市",
+      "start_date": "2026-09-01",
+      "end_date": "2026-09-10"
+    },
+    "tags": [
+      "metadata_only"
+    ],
+    "mock_results": {
+      "queryReconciliation": {
+        "ok": true,
+        "data": []
+      }
+    }
+  }
+]

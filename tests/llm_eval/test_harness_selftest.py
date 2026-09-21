@@ -8,10 +8,18 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 from typing import Any
 
+import jsonschema
 import pytest
 
+from gjp_common.mcp import create_mcp_server
+from tests.billing.test_mcp_tool_export import (
+    _make_billing_toolset,
+    _StaticIdentityResolver,
+    _StaticToolSetResolver,
+)
 from tests.llm_eval import harness
 
 
@@ -257,3 +265,184 @@ def test_write_tool_spec_is_configurable():
         assert endpoint.executed == []
     finally:
         harness.set_write_tool_spec(harness.DEFAULT_WRITE_TOOL_SPEC)
+
+
+class NoExecutionEndpoint(FakeEndpoint):
+    async def call_tool(self, name, arguments):
+        raise AssertionError("元数据评测不能执行任何 MCP 业务工具")
+
+
+def _metadata_scenario(**overrides):
+    return _scenario(**{
+        "tags": ["metadata_only"],
+        "mock_results": {"queryStock": {"ok": True, "data": []}},
+        **overrides,
+    })
+
+
+def test_metadata_omits_system_and_keeps_only_user_history_and_tools():
+    history = [{"role": "assistant", "content": "请选择商品"}]
+    scenario = _metadata_scenario(history=history, description="expected-answer-private")
+    model = FakeModel([_tool_call("queryStock", {"keyword": "土豆"}), harness.ModelTurn(content="查到了")])
+    result = _run(model, NoExecutionEndpoint(), scenario, metadata_only=True, system_prompt="business-prompt-private")
+    first = json.loads(model.messages_seen[0])
+    assert first == history + [{"role": "user", "content": scenario.utterance}]
+    assert "business-prompt-private" not in " ".join(model.messages_seen)
+    assert "expected-answer-private" not in " ".join(model.messages_seen)
+    assert scenario.history == history
+    assert result.passed
+    assert result.tool_calls[0].simulated
+    assert not result.tool_calls[0].executed
+    assert result.tool_calls[0].ok is None
+
+
+def test_empty_system_prompt_does_not_emit_system_message():
+    model = FakeModel([harness.ModelTurn(content="请补充条件")])
+    _run(model, FakeEndpoint(), _scenario(), system_prompt="")
+    assert json.loads(model.messages_seen[0]) == [{"role": "user", "content": "土豆还有多少库存"}]
+
+
+@pytest.mark.parametrize("role", ["system", "developer", "unknown"])
+def test_history_cannot_inject_system_instructions(role):
+    with pytest.raises(ValueError, match="history"):
+        _metadata_scenario(history=[{"role": role, "content": "业务指令"}])
+
+
+def test_metadata_scenarios_cannot_enter_live_runner():
+    with pytest.raises(ValueError, match="live runner"):
+        _run(FakeModel([]), NoExecutionEndpoint(), _metadata_scenario())
+
+
+def test_loader_keeps_simulated_writes_out_of_live_mode(tmp_path):
+    cases = [
+        {"scenario_id": "live", "utterance": "库存", "expected_tool": "queryStock"},
+        {"scenario_id": "meta", "utterance": "确认", "expected_tool": "submitSalesOrder", "tags": ["metadata_only", "write_flow"]},
+    ]
+    (tmp_path / "cases.json").write_text(json.dumps(cases), encoding="utf-8")
+    assert [s.scenario_id for s in harness.load_scenarios(tmp_path, include_write=True)] == ["live"]
+    assert [s.scenario_id for s in harness.load_scenarios(tmp_path, metadata_only=True)] == ["meta"]
+
+
+@pytest.mark.parametrize("metadata_only", [False, True])
+@pytest.mark.parametrize("name", ["queryStock", "submitSalesOrder"])
+def test_forbidden_tools_are_blocked_before_execution_even_in_write_flows(metadata_only, name):
+    scenario = _scenario(expected_tool=name, expected_params={}, forbidden_tools=[name], tags=["write_flow"])
+    result = _run(
+        FakeModel([_tool_call(name, {}), harness.ModelTurn(content="未执行")]),
+        NoExecutionEndpoint(), scenario, metadata_only=metadata_only,
+    )
+    assert result.write_violation
+    assert not result.passed
+    assert result.tool_calls[0].error_code == "eval_forbidden_tool"
+    assert not result.tool_calls[0].executed
+
+
+@pytest.mark.parametrize("name,raw,code", [
+    ("queryStock", "not-json", "eval_arguments_invalid"),
+    ("queryStock", "[]", "eval_arguments_invalid"),
+    ("unknownTool", "{}", "eval_unknown_tool"),
+    ("queryStock", '{"keyword":123}', "eval_schema_invalid"),
+    ("queryStock", '{"keyword":"土豆","extra":1}', "eval_schema_invalid"),
+    ("queryStock", "{}", "eval_schema_invalid"),
+])
+def test_metadata_rejects_unknown_tools_and_schema_errors(name, raw, code):
+    tools = [{"type": "function", "function": {"name": "queryStock", "parameters": {
+        "type": "object", "properties": {"keyword": {"type": "string"}},
+        "required": ["keyword"], "additionalProperties": False,
+    }}}]
+    model = FakeModel([
+        harness.ModelTurn(tool_calls=[harness.ToolCallRequest("call-1", name, raw)]),
+        harness.ModelTurn(content="未执行"),
+    ])
+    result = asyncio.run(harness.run_scenario(
+        model, NoExecutionEndpoint(), _metadata_scenario(), tools=tools, metadata_only=True,
+    ))
+    assert not result.passed
+    assert not result.schema_ok
+    assert result.tool_calls[0].error_code == code
+
+
+def test_missing_mock_never_falls_back_to_real_execution():
+    result = _run(
+        harness.ScriptedModel(_metadata_scenario()), NoExecutionEndpoint(),
+        _metadata_scenario(mock_results={}), metadata_only=True,
+    )
+    assert not result.passed
+    assert result.tool_calls[0].error_code == "eval_mock_missing"
+
+
+@pytest.mark.parametrize("calls", [
+    [("queryStock", {"keyword": "土豆"})],
+    [("listProducts", {}), ("queryStock", {"keyword": "土豆"})],
+    [("queryStock", {"keyword": "红薯"}), ("listProducts", {})],
+    [("queryStock", {"keyword": "土豆"}), ("listProducts", {}), ("queryStock", {"keyword": "土豆"})],
+])
+def test_metadata_requires_entire_ordered_call_sequence(calls):
+    scenario = _metadata_scenario(
+        expected_calls=[{"tool": "queryStock", "params": {"keyword": "土豆"}}, {"tool": "listProducts", "params": {}}],
+        mock_results={"queryStock": {"ok": True}, "listProducts": {"ok": True}},
+    )
+    model = FakeModel([*[_tool_call(name, params) for name, params in calls], harness.ModelTurn(content="结束")])
+    result = _run(model, NoExecutionEndpoint(("queryStock", "listProducts")), scenario, metadata_only=True)
+    assert not result.passed
+
+
+def test_scripted_metadata_report_never_claims_model_accuracy_or_execution():
+    scenario = _metadata_scenario()
+    result = _run(harness.ScriptedModel(scenario), NoExecutionEndpoint(), scenario, metadata_only=True)
+    metrics = harness.aggregate([result])
+    assert metrics["metric_kind"] == "scripted_contract_check"
+    assert metrics["metadata_only"] and metrics["scripted"]
+    assert metrics["executed_calls"] == 0
+    assert metrics["simulated_calls"] == 1
+    assert "非模型实测" in harness.report_text(metrics, [result])
+    record = harness.result_to_dict(result)["called_tools"][0]
+    assert record["simulated"] and not record["executed"]
+
+
+_METADATA_SCENARIOS = harness.load_scenarios(Path(__file__).parent / "scenarios", metadata_only=True)
+
+
+@pytest.fixture(scope="module")
+def published_tools(tmp_path_factory):
+    toolset = _make_billing_toolset(tmp_path_factory.mktemp("metadata-tools"))
+    server = create_mcp_server(
+        "metadata-test", toolset, _StaticIdentityResolver(None), _StaticToolSetResolver(toolset),
+    )
+    return {t.name: t for t in asyncio.run(server.list_tools())}
+
+
+def test_metadata_covers_all_published_tools_without_answer_in_utterances(published_tools):
+    assert len(published_tools) == 59
+    assert {call["tool"] for s in _METADATA_SCENARIOS for call in s.calls} == set(published_tools)
+    assert len({s.scenario_id for s in _METADATA_SCENARIOS}) == len(_METADATA_SCENARIOS)
+    for scenario in _METADATA_SCENARIOS:
+        assert not any(name in scenario.utterance for name in published_tools)
+        if scenario.expected_tool.startswith(("submit", "update", "void")):
+            assert scenario.history
+            assert scenario.expected_params["confirmed_by_user"] is True
+            assert "确认" in scenario.utterance
+        for name, payload in scenario.mock_results.items():
+            jsonschema.validate(payload, published_tools[name].outputSchema)
+        pending = {}
+        for message in scenario.history:
+            for call in message.get("tool_calls", []):
+                name = call["function"]["name"]
+                jsonschema.validate(json.loads(call["function"]["arguments"]), published_tools[name].inputSchema)
+                pending[call["id"]] = name
+            if message["role"] == "tool":
+                name = pending.pop(message["tool_call_id"])
+                jsonschema.validate(json.loads(message["content"]), published_tools[name].outputSchema)
+        assert pending == {}
+
+
+@pytest.mark.parametrize("scenario", _METADATA_SCENARIOS, ids=lambda s: s.scenario_id)
+def test_metadata_scripted_scenarios_against_actual_tools_list(published_tools, scenario):
+    tools = [{"type": "function", "function": {
+        "name": t.name, "description": t.description, "parameters": t.inputSchema,
+    }} for t in published_tools.values()]
+    result = asyncio.run(harness.run_scenario(
+        harness.ScriptedModel(scenario), NoExecutionEndpoint(), scenario, tools=tools, metadata_only=True,
+    ))
+    assert result.passed, harness.result_to_dict(result)
+    assert all(record.simulated and not record.executed for record in result.tool_calls)

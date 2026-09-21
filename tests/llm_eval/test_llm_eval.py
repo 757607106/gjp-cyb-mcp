@@ -1,8 +1,11 @@
 """LLM 工具识别评测（真实模型，默认整体跳过）。
 
-同时设置以下环境变量后启用（服务为本地拉起的真实子进程，上游为真实 ERP）：
+必须显式设置 ERP_BILLING_EVAL_ENABLED=1 才启用 live 评测；
+或设置 ERP_BILLING_EVAL_METADATA_ONLY=1 启用仅元数据识别（不需要 ERP Key，
+不发送业务 Prompt、不执行任何 ERP 工具，本地 ERP 地址固定不可达）。
+两者均需模型配置；缺省单元测试不会因本地 env 文件含凭据而调用模型。
 
-    ERP_BILLING_EVAL_API_KEY=<X-API-Key，真实 ERP Token>
+    ERP_BILLING_EVAL_API_KEY=<X-API-Key，真实 ERP Token，仅 live 需要>
     ERP_BILLING_EVAL_LLM_BASE_URL=<OpenAI 兼容基地址>
     ERP_BILLING_EVAL_LLM_API_KEY=<模型 Key>
     ERP_BILLING_EVAL_LLM_MODEL=<模型名，如 qwen-plus>
@@ -31,19 +34,21 @@ import pytest
 from tests.llm_eval import harness
 
 _EVAL_DIR = Path(__file__).resolve().parent
-# 评测凭据可固化在 config/local.env（已 gitignore），环境变量始终优先
-harness.load_env_defaults(
-    _EVAL_DIR.parents[2] / "config" / "local.env", prefix="ERP_BILLING_EVAL_"
-)
+PROJECT_ROOT = _EVAL_DIR.parents[1]
+# opt-in 必须来自进程环境，不能由本地凭据文件意外开启。
+_METADATA_ONLY = os.environ.get("ERP_BILLING_EVAL_METADATA_ONLY", "") == "1"
+_ENABLED = _METADATA_ONLY or os.environ.get("ERP_BILLING_EVAL_ENABLED", "") == "1"
+if _ENABLED:
+    harness.load_env_defaults(PROJECT_ROOT / "config" / "local.env", prefix="ERP_BILLING_EVAL_")
 
-_API_KEY = os.environ.get("ERP_BILLING_EVAL_API_KEY", "").strip()
+_API_KEY = "eval-metadata-key" if _METADATA_ONLY else os.environ.get("ERP_BILLING_EVAL_API_KEY", "").strip()
 _LLM_BASE_URL = os.environ.get("ERP_BILLING_EVAL_LLM_BASE_URL", "").strip()
 _LLM_API_KEY = os.environ.get("ERP_BILLING_EVAL_LLM_API_KEY", "").strip()
 _LLM_MODEL = os.environ.get("ERP_BILLING_EVAL_LLM_MODEL", "").strip()
 
 pytestmark = pytest.mark.skipif(
-    not (_API_KEY and _LLM_BASE_URL and _LLM_API_KEY and _LLM_MODEL),
-    reason="需要 ERP_BILLING_EVAL_API_KEY 与 ERP_BILLING_EVAL_LLM_* 环境变量",
+    not (_ENABLED and _API_KEY and _LLM_BASE_URL and _LLM_API_KEY and _LLM_MODEL),
+    reason="需显式设置 ERP_BILLING_EVAL_ENABLED=1 或 ERP_BILLING_EVAL_METADATA_ONLY=1，并提供对应凭据",
 )
 
 _RESULTS: list[harness.ScenarioResult] = []
@@ -52,6 +57,7 @@ _RESULTS: list[harness.ScenarioResult] = []
 def _scenarios():
     return harness.load_scenarios(
         _EVAL_DIR / "scenarios",
+        metadata_only=_METADATA_ONLY,
         tag_filter=(
             os.environ.get("ERP_BILLING_EVAL_TAGS", "").split(",")
             if os.environ.get("ERP_BILLING_EVAL_TAGS", "").strip()
@@ -68,14 +74,16 @@ def mcp_url():
         yield deployed.rstrip("/")
         return
     service = harness.SpawnedService(
-        project_root=_EVAL_DIR.parents[2],
-        erp_base_url=os.environ.get(
+        project_root=PROJECT_ROOT,
+        erp_base_url=harness.SCRIPTED_ERP_BASE_URL if _METADATA_ONLY else os.environ.get(
             "ERP_BILLING_EVAL_ERP_BASE_URL", "https://test-ai.yuncyb.com/aicyberp-api"
         ).strip(),
     )
     url = service.start()
-    yield url
-    service.stop()
+    try:
+        yield url
+    finally:
+        service.stop()
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -120,6 +128,7 @@ def test_llm_tool_recognition(scenario, mcp_url):
                 scenario,
                 tools=tools,
                 max_rounds=int(os.environ.get("ERP_BILLING_EVAL_MAX_ROUNDS", "5")),
+                metadata_only=_METADATA_ONLY,
             )
 
     result = asyncio.run(_run())
@@ -139,4 +148,5 @@ def test_llm_tool_recognition(scenario, mcp_url):
             ],
         )
     )
-    assert not result.write_violation, "只读场景误触发写工具"
+    assert not result.write_violation, "场景误触发禁止的工具"
+    assert result.passed, "参数 Schema、调用顺序或合成响应检查未通过"

@@ -1,17 +1,23 @@
 """单位确认、局部修改与上游错误的完整工具边界回归。"""
 
 import asyncio
+import json
 from copy import deepcopy
 from types import SimpleNamespace
 
 import httpx
 import jsonschema
 import pytest
+from mcp.server.lowlevel.server import request_ctx
+from mcp.types import CallToolRequest, CallToolRequestParams
 
 from erp_billing.adapters import BusinessAuthenticatedJsonClient, ErpAuthenticatedHttpAdapter
+from erp_billing.presentation import present_billing_result
 from gjp_common.context import InvocationContext
 from gjp_common.errors import DomainError
+from gjp_common.mcp import create_mcp_server
 from tests.billing.test_erp_billing import CompleteSalesOrderApi, _billing_toolset, _session
+from tests.billing.test_mcp_tool_export import _StaticIdentityResolver, _StaticToolSetResolver
 from tests.billing.test_sales_order_id_resolution import _FakeHttp
 
 PREVIEW = dict(order_text="土豆2kg", customer="C001", warehouse="一号仓",
@@ -33,6 +39,132 @@ def toolset(tmp_path, api=None):
         _session(tmp_path, [{"id": "P001", "name": "土豆", "unit": "斤", "salesPrice": 3.5}]),
         api or CompleteSalesOrderApi(),
     )
+
+
+def _protocol_server(tools):
+    context = InvocationContext(
+        tenant_id="tenant-test", subject_id="user-test", account_id="billing-test",
+        session_id="session-test", scopes=frozenset({"billing:read", "billing:write"}),
+    )
+    return create_mcp_server(
+        "erp-billing", tools, _StaticIdentityResolver(context), _StaticToolSetResolver(tools),
+        result_presenter=present_billing_result,
+    )
+
+
+async def _call_billing_protocol(server, name, **arguments):
+    """必须经过 lowlevel handler，不能绕过 presenter 或官方 outputSchema 校验。"""
+    token = request_ctx.set(SimpleNamespace(request=SimpleNamespace(headers={})))
+    try:
+        response = await server._mcp_server.request_handlers[CallToolRequest](
+            CallToolRequest(params=CallToolRequestParams(name=name, arguments=arguments)),
+        )
+    finally:
+        request_ctx.reset(token)
+    result = response.root
+    assert result.isError is False, result.content
+    assert isinstance(result.structuredContent, dict)
+    assert len(result.content) == 1
+    assert result.content[0].type == "text"
+    return result
+
+
+def _assert_business_text(result, *private_values):
+    text = result.content[0].text
+    # 不只隐藏 ID：执行动作、匹配状态、提交控制、诊断信息也不得展示。
+    forbidden = (
+        "preview_id", "product_id", "line_id", "orderItemId", "productId",
+        "confirmed_products", "confirmed_units", "confirmed_by_user",
+        "required_actions", "confirm_units", "confirm_submit", "idempotent_replay",
+        "raw", "details", "trace", "catalog", "unknown", "page_size",
+        '"matched"', '"final"', "提交状态", "保存类型",
+        *private_values,
+    )
+    assert not [value for value in forbidden if value in text], text
+    return text
+
+
+def test_protocol_filtered_preview_confirmation_submit_and_replay(tmp_path):
+    """客户端只使用过滤后的执行字段，仍可完成候选选择、单位确认和幂等提交。"""
+    api = CompleteSalesOrderApi()
+    server = _protocol_server(toolset(tmp_path, api))
+
+    async def scenario():
+        search = await _call_billing_protocol(server, "searchProducts", keywords=["土豆"])
+        product = search.structuredContent["results"][0]["product"]
+        references = await _call_billing_protocol(
+            server, "searchBillingReferences", reference_type="customer", keyword=PREVIEW["customer"],
+        )
+        customer = references.structuredContent["options"][0]
+        first = await _call_billing_protocol(server, "previewSalesOrder", **PREVIEW)
+        pending = first.structuredContent
+        assert pending["ready_to_submit"] is False
+        assert pending["preview_id"] is None
+        assert pending["preview"] is None
+        assert pending["required_actions"] == ["confirm_units"]
+        warning, = pending["unit_warnings"]
+        candidate, = pending["confirmed_products"]
+        assert candidate["line_id"] == warning["line_id"]
+        assert candidate["product_id"] == warning["product_id"] == product["product_id"]
+        assert pending["reference_resolutions"]["customer"]["selected"]["id"] == customer["id"]
+
+        # 模拟用户明确选择候选并确认“按斤开 4 斤”；身份字段必须从协议结果取值。
+        confirmation = {
+            "line_id": warning["line_id"], "product_id": candidate["product_id"],
+            "unit": warning["erp_unit"], "quantity": CONFIRMATION["quantity"],
+        }
+        assert confirmation == CONFIRMATION
+        ready = await _call_billing_protocol(
+            server, "previewSalesOrder", **{**PREVIEW, "customer": customer["id"]},
+            confirmed_products=[{key: candidate[key] for key in ("line_id", "product_id")}],
+            confirmed_units=[confirmation],
+        )
+        prepared = ready.structuredContent
+        assert prepared["ready_to_submit"] is True
+        assert prepared["unit_warnings"] == []
+        assert prepared["required_actions"] == ["confirm_submit"]
+        assert prepared["preview"]["items"][0]["quantity"] == 4
+        assert prepared["preview"]["total_amount"] == 14
+        preview_id = prepared["preview_id"]
+        assert isinstance(preview_id, str) and preview_id
+        assert api.created_payloads == []
+
+        rejected = await _call_billing_protocol(server, "submitSalesOrder", preview_id=preview_id)
+        assert rejected.structuredContent["ok"] is False
+        assert rejected.structuredContent["error"]["code"] == "erp_document_confirmation_required"
+        assert api.created_payloads == []
+        submitted = await _call_billing_protocol(
+            server, "submitSalesOrder", preview_id=preview_id, confirmed_by_user=True,
+        )
+        replay = await _call_billing_protocol(
+            server, "submitSalesOrder", preview_id=preview_id, confirmed_by_user=True,
+        )
+        assert submitted.structuredContent["submitted"] is True
+        assert submitted.structuredContent["idempotent_replay"] is False
+        assert replay.structuredContent == {**submitted.structuredContent, "idempotent_replay": True}
+        assert len(api.created_payloads) == 1
+        assert api.created_payloads[0]["customerId"] == customer["id"]
+        assert api.created_payloads[0]["items"] == [
+            {"productId": product["product_id"], "quantity": 4, "unit": "斤", "unitPrice": 3.5},
+        ]
+
+        visible = json.loads(ready.content[0].text.split("\n", 1)[1])["单据预览"]
+        assert visible["明细"][0]["名称"] == "土豆"
+        assert visible["明细"][0]["数量"] == 4
+        assert visible["明细"][0]["单位"] == "斤"
+        assert visible["明细"][0]["单价"] == 3.5
+        assert visible["明细"][0]["金额"] == 14
+        assert prepared["preview"]["items"][0]["line_amount"] == 14
+        assert visible["合计金额"] == 14
+        assert submitted.structuredContent["order_no"] in submitted.content[0].text
+        # 先验证写入闭环和业务展示，再检查控制值不能因中文标签包装而泄漏。
+        for result in (search, references, first, ready, rejected, submitted, replay):
+            _assert_business_text(
+                result, preview_id, candidate["line_id"], product["product_id"],
+                customer["id"], "WH-1", "STAFF-1", "erp_document_confirmation_required",
+            )
+
+    asyncio.run(scenario())
 
 
 def test_unit_confirmation_closes_preview_and_submit(tmp_path):
@@ -81,6 +213,69 @@ def update_tools(tmp_path, current=None):
     http = _FakeHttp()
     http.get_responses["/sales/orders/123"] = {"code": "A00000", "data": deepcopy(current or ORDER)}
     return toolset(tmp_path, ErpAuthenticatedHttpAdapter(http)), http
+
+
+@pytest.mark.parametrize("item_id_key", ["id", "orderItemId"])
+def test_protocol_filtered_sales_detail_can_update_existing_line(tmp_path, item_id_key):
+    """详情保留原始 camelCase 身份字段，客户端可据此修改已生效单据的既有行。"""
+    diagnostics = {
+        "raw": {"productName": "raw-private"}, "details": {"message": "details-private"},
+        "traceId": "trace-private", "catalog": {"name": "catalog-private"},
+        "unknownField": "unknown-private",
+    }
+    current = deepcopy(ORDER)
+    current.update(status=2, orderNo="XS20260804001", totalAmount="48.00", **diagnostics)
+    current["items"][0].pop("id")
+    current["items"][0].update({
+        item_id_key: "7894561230001", "productName": "土豆", "amount": "48.00", **diagnostics,
+    })
+    tools, http = update_tools(tmp_path, current)
+    server = _protocol_server(tools)
+
+    async def scenario():
+        detail = await _call_billing_protocol(server, "getSalesOrder", order_id="123")
+        order = detail.structuredContent["order"]
+        item, = order["items"]
+        assert order["id"] == "123"
+        assert item[item_id_key] == "7894561230001"
+        assert item["productId"] == "P001"
+        assert "product_id" not in item
+        assert "order_item_id" not in item
+        assert item["amount"] == "48.00"  # structured 不做展示层的数值转换
+        assert order["totalAmount"] == "48.00"
+        for record in (order, item):
+            assert diagnostics.keys().isdisjoint(record)
+        assert http.put_calls == []
+
+        updated = await _call_billing_protocol(
+            server, "updateSalesOrder", order_id=order["id"], confirmed_by_user=True,
+            items=[{
+                "order_item_id": item[item_id_key], "product_id": item["productId"],
+                "quantity": 3, "unit": item["unit"], "unit_price": item["unitPrice"],
+                "unit_id": item["unitId"], "conversion_rate": item["conversionRate"],
+            }],
+        )
+        assert updated.structuredContent["modified"] is True
+        assert len(http.put_calls) == 1
+        path, body = http.put_calls[0]
+        assert path == "/sales/orders/123"
+        assert body["id"] == 123
+        assert body["items"][0]["orderItemId"] == item[item_id_key]
+        assert body["items"][0]["productId"] == item["productId"]
+        assert body["items"][0]["quantity"] == 3
+        assert body["items"][0]["unitId"] == item["unitId"]
+        assert body["items"][0]["conversionRate"] == item["conversionRate"]
+        assert "unitId" not in detail.content[0].text
+        assert http.get_responses["/sales/orders/123"]["data"] == current
+        for result in (detail, updated):
+            _assert_business_text(result, order["id"], item[item_id_key], item["productId"])
+        visible = json.loads(detail.content[0].text.split("\n", 1)[1])["单据"]
+        assert visible["明细"][0]["商品名称"] == "土豆"
+        assert visible["明细"][0]["数量"] == 2
+        assert visible["明细"][0]["金额"] == 48
+        assert visible["合计金额"] == 48
+
+    asyncio.run(scenario())
 
 
 def test_remark_only_update_preserves_latest_order_and_multiunit(tmp_path):
