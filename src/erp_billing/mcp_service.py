@@ -12,6 +12,7 @@ from gjp_common.mcp import (
     create_mcp_server,
 )
 from .prompt import ERP_BILLING_MCP_INSTRUCTIONS
+from .presentation import render_billing_result
 from .toolset import BillingToolSet
 
 
@@ -31,6 +32,7 @@ def create_billing_mcp_service(
         identity_resolver,
         toolset_resolver,
         instructions=ERP_BILLING_MCP_INSTRUCTIONS,
+        result_presenter=render_billing_result,
     )
     return create_mcp_http_app(
         server,

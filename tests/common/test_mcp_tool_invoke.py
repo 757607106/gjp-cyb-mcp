@@ -175,6 +175,28 @@ def test_protocol_call_passes_through_guard() -> None:
     assert _CALLS == ["typed"]
 
 
+def test_protocol_call_can_present_business_content_without_changing_structured_result() -> None:
+    """展示投影只替换文本通道，Agent 现有结构化调用链保持不变。"""
+    toolset = SessionToolSet(
+        [SessionFunctionTool(_sample_tool)],
+        contexts=InvocationContextStore(default=_context()),
+    )
+    server = create_mcp_server(
+        "test-service",
+        toolset,
+        _RecordingIdentity(),
+        _StaticToolSet(toolset),
+        result_presenter=lambda _name, _result: "业务展示：仅保留业务信息",
+    )
+
+    result = _call_protocol(server, "sampleTool", {"limit": 5})
+
+    assert result.structuredContent == {"ok": True, "limit": 5}
+    assert [block.text for block in result.content] == [
+        "业务展示：仅保留业务信息",
+    ]
+
+
 def test_protocol_schema_violation_is_protocol_error() -> None:
     """枚举等 Schema 约束违规得到 isError=True，文案与官方校验一致。"""
     _CALLS.clear()

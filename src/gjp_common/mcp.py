@@ -20,7 +20,7 @@ from typing import Any, Protocol
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.lowlevel.server import request_ctx
-from mcp.types import ToolAnnotations
+from mcp.types import TextContent, ToolAnnotations
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -94,6 +94,7 @@ def create_mcp_server(
     identity_resolver: McpIdentityResolver,
     toolset_resolver: McpToolSetResolver,
     instructions: str = "",
+    result_presenter: Callable[[str, dict[str, Any]], str] | None = None,
 ) -> FastMCP:
     """创建产品 MCP Server；身份、会话和业务 API 鉴权均由对接层注入。
 
@@ -116,7 +117,7 @@ def create_mcp_server(
             identity_resolver=identity_resolver,
             toolset_resolver=toolset_resolver,
         )
-    _install_arguments_guard(server, exported_tools)
+    _install_arguments_guard(server, exported_tools, result_presenter)
     logger.info("MCP 工具列表 tools=%d", len(exported_tools))
     return server
 
@@ -167,6 +168,7 @@ def _register_session_tool(
 def _install_arguments_guard(
     server: FastMCP,
     tools: Sequence[SessionFunctionTool],
+    result_presenter: Callable[[str, dict[str, Any]], str] | None = None,
 ) -> None:
     """重注册 lowlevel call_tool 回调，恢复参数契约校验。
 
@@ -188,14 +190,62 @@ def _install_arguments_guard(
             unknown = sorted(set(arguments) - set(schema.get("properties", {})))
             if unknown:
                 logger.info("MCP 参数不匹配 tool=%s unknown=%s", name, unknown)
-                return {
+                invalid_result = {
                     "ok": False,
                     "error": {
                         "code": "tool_arguments_invalid",
                         "message": "工具参数不匹配：未知参数 %s" % "、".join(unknown),
                     },
                 }
-        return await fastmcp_call_tool(name, arguments)
+                return _present_tool_result(
+                    name,
+                    invalid_result,
+                    result_presenter,
+                )
+        result = await fastmcp_call_tool(name, arguments)
+        return _present_tool_result(name, result, result_presenter)
+
+
+def _present_tool_result(
+    tool_name: str,
+    result: Any,
+    presenter: Callable[[str, dict[str, Any]], str] | None,
+) -> Any:
+    """替换 MCP 文本展示通道，同时保留原结构化结果。
+
+    FastMCP v1 在 ``convert_result=True`` 时返回
+    ``(unstructured_content, structured_content)``。这里仅替换前者，
+    让现有 Agent 继续读取原结构化结果，用户界面或纯文本客户端读取到
+    的则是业务展示投影。
+    """
+    if presenter is None:
+        return result
+
+    if isinstance(result, tuple) and len(result) == 2:
+        unstructured, structured = result
+        if isinstance(structured, dict):
+            return (
+                [
+                    TextContent(
+                        type="text",
+                        text=presenter(tool_name, structured),
+                    ),
+                ],
+                structured,
+            )
+        return result
+
+    if isinstance(result, dict):
+        return (
+            [
+                TextContent(
+                    type="text",
+                    text=presenter(tool_name, result),
+                ),
+            ],
+            result,
+        )
+    return result
 
 
 async def _dispatch_tool(
