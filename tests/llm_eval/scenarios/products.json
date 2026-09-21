@@ -1,0 +1,29 @@
+[
+  {
+    "scenario_id": "products-001",
+    "domain": "商品",
+    "description": "浏览商品目录",
+    "utterance": "我们现在都在卖哪些商品？",
+    "expected_tool": "listProducts",
+    "expected_params": {},
+    "tags": ["read_only"]
+  },
+  {
+    "scenario_id": "products-002",
+    "domain": "商品",
+    "description": "按关键词搜索商品",
+    "utterance": "帮我找一下有没有可乐卖",
+    "expected_tool": "searchProducts",
+    "expected_params": {"keywords": ["可乐"]},
+    "tags": ["read_only"]
+  },
+  {
+    "scenario_id": "products-003",
+    "domain": "商品",
+    "description": "只读查询不应触发目录同步写语义之外的业务变更",
+    "utterance": "商品目录给我同步一份最新的",
+    "expected_tool": "syncProducts",
+    "expected_params": {},
+    "tags": ["read_only"]
+  }
+]

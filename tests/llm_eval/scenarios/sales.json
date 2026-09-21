@@ -1,0 +1,38 @@
+[
+  {
+    "scenario_id": "sales-001",
+    "domain": "销售",
+    "description": "浏览销售单列表",
+    "utterance": "最近都有哪些销售单？",
+    "expected_tool": "listSalesOrders",
+    "expected_params": {},
+    "tags": ["read_only"]
+  },
+  {
+    "scenario_id": "sales-002",
+    "domain": "销售",
+    "description": "商品销量排行",
+    "utterance": "查一下销量排行前几的商品",
+    "expected_tool": "querySalesReport",
+    "expected_params": {"view": "ranking_product"},
+    "tags": ["read_only"]
+  },
+  {
+    "scenario_id": "sales-003",
+    "domain": "销售",
+    "description": "客户销量排行",
+    "utterance": "这个月每个客户的销量排行给我看看",
+    "expected_tool": "querySalesReport",
+    "expected_params": {"view": "ranking_customer"},
+    "tags": ["read_only"]
+  },
+  {
+    "scenario_id": "sales-004",
+    "domain": "销售",
+    "description": "销售明细查询",
+    "utterance": "上个月的销售明细一笔笔列出来",
+    "expected_tool": "querySalesReport",
+    "expected_params": {"view": "details"},
+    "tags": ["read_only"]
+  }
+]

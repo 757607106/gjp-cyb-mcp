@@ -1,0 +1,47 @@
+[
+  {
+    "scenario_id": "inventory-001",
+    "domain": "库存",
+    "description": "按商品关键词查库存",
+    "utterance": "土豆现在还有多少库存？",
+    "expected_tool": "queryStock",
+    "expected_params": {"keyword": "土豆"},
+    "tags": ["read_only"]
+  },
+  {
+    "scenario_id": "inventory-002",
+    "domain": "库存",
+    "description": "库存汇总概览",
+    "utterance": "现在库存总量和总值大概是多少？",
+    "expected_tool": "getStockSummary",
+    "expected_params": {},
+    "tags": ["read_only"]
+  },
+  {
+    "scenario_id": "inventory-003",
+    "domain": "库存",
+    "description": "库存变动流水",
+    "utterance": "土豆最近的库存进出记录帮我查一下",
+    "expected_tool": "queryStockLogs",
+    "expected_params": {"keyword": "土豆"},
+    "tags": ["read_only"]
+  },
+  {
+    "scenario_id": "inventory-004",
+    "domain": "库存",
+    "description": "采购建议清单",
+    "utterance": "给我一份库存不足商品的采购建议清单",
+    "expected_tool": "getPurchaseSuggestions",
+    "expected_params": {},
+    "tags": ["read_only"]
+  },
+  {
+    "scenario_id": "inventory-005",
+    "domain": "库存",
+    "description": "库存不足预警",
+    "utterance": "有哪些商品库存不足的预警？",
+    "expected_tool": "listStockAlerts",
+    "expected_params": {"alert_type": 1},
+    "tags": ["read_only"]
+  }
+]

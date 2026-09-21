@@ -18,9 +18,13 @@ __pycache__/
 
 # 环境配置
 .env
+config/local.env
 
 # 构建产物
 dist/
 
 # 本地运行状态
 .runtime/
+
+# LLM 评测报告
+tests/llm_eval/reports/

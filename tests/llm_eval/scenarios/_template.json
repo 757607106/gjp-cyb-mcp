@@ -1,0 +1,25 @@
+[
+  {
+    "scenario_id": "template-001",
+    "domain": "示例业务域",
+    "description": "通用场景模板：复制本文件并按实际 MCP Server 的工具名与参数改写；本文件以 _ 开头不会被加载。",
+    "utterance": "用户话术，尽量来自真实对话，可包含口语化、省略、指代。",
+    "expected_tool": "expectedToolNameInCamelCase",
+    "expected_params": {
+      "view": "summary",
+      "keyword": "示例关键词"
+    },
+    "forbidden_tools": [],
+    "tags": ["read_only"]
+  },
+  {
+    "scenario_id": "template-002-write",
+    "domain": "示例业务域",
+    "description": "写操作场景模板：需要多轮确认驱动（preview→confirm），当前单轮 harness 尚未支持；默认被 include_write=False 过滤，不会被加载。",
+    "utterance": "帮我开一张销售单，卖给张三 2 斤土豆。",
+    "expected_tool": "previewSalesOrder",
+    "expected_params": {},
+    "forbidden_tools": [],
+    "tags": ["write_flow"]
+  }
+]

@@ -1,0 +1,29 @@
+[
+  {
+    "scenario_id": "reports-001",
+    "domain": "报表分析",
+    "description": "利润汇总",
+    "utterance": "这个月利润怎么样，赚了多少钱？",
+    "expected_tool": "queryProfitReport",
+    "expected_params": {"view": "summary"},
+    "tags": ["read_only"]
+  },
+  {
+    "scenario_id": "reports-002",
+    "domain": "报表分析",
+    "description": "结算统计",
+    "utterance": "每个结算账户这个月收了多少款？",
+    "expected_tool": "querySettlementReport",
+    "expected_params": {},
+    "tags": ["read_only"]
+  },
+  {
+    "scenario_id": "reports-003",
+    "domain": "报表分析",
+    "description": "客户对账汇总",
+    "utterance": "跟张三的对账情况拉给我看看",
+    "expected_tool": "queryReconciliation",
+    "expected_params": {"view": "summary"},
+    "tags": ["read_only"]
+  }
+]

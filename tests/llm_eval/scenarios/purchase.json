@@ -1,0 +1,29 @@
+[
+  {
+    "scenario_id": "purchase-001",
+    "domain": "采购",
+    "description": "浏览采购单列表",
+    "utterance": "最近的采购单都有哪些？",
+    "expected_tool": "listPurchaseOrders",
+    "expected_params": {},
+    "tags": ["read_only"]
+  },
+  {
+    "scenario_id": "purchase-002",
+    "domain": "采购",
+    "description": "采购统计",
+    "utterance": "上个月的采购情况统计一下",
+    "expected_tool": "queryPurchaseReport",
+    "expected_params": {"view": "statistics"},
+    "tags": ["read_only"]
+  },
+  {
+    "scenario_id": "purchase-003",
+    "domain": "采购",
+    "description": "采购明细查询",
+    "utterance": "这几天的采购明细给我看看",
+    "expected_tool": "queryPurchaseReport",
+    "expected_params": {"view": "details"},
+    "tags": ["read_only"]
+  }
+]

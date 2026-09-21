@@ -1,0 +1,29 @@
+[
+  {
+    "scenario_id": "financial-001",
+    "domain": "资金往来",
+    "description": "应收汇总",
+    "utterance": "哪些客户还欠我们钱？各欠多少？",
+    "expected_tool": "listReceivables",
+    "expected_params": {"view": "summary"},
+    "tags": ["read_only"]
+  },
+  {
+    "scenario_id": "financial-002",
+    "domain": "资金往来",
+    "description": "应付汇总",
+    "utterance": "我们还欠哪些供应商的货款？",
+    "expected_tool": "listPayables",
+    "expected_params": {"view": "summary"},
+    "tags": ["read_only"]
+  },
+  {
+    "scenario_id": "financial-003",
+    "domain": "资金往来",
+    "description": "财务状况概览",
+    "utterance": "公司现在的财务状况怎么样？",
+    "expected_tool": "getFinancialStatus",
+    "expected_params": {},
+    "tags": ["read_only"]
+  }
+]
