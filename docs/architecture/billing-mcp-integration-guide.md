@@ -1,4 +1,4 @@
-# 销售开单 MCP 与 AI 平台对接
+# ERP 业务 MCP 与 AI 平台对接
 
 ## 服务信息
 
@@ -7,7 +7,7 @@
 | MCP Server | `erp-billing` |
 | Streamable HTTP | `POST /mcp` |
 | SSE | `GET /sse` |
-| 工具数 | 10 |
+| 工具数 | 59（销售、采购、库存、资金往来、报表五域） |
 | 读取权限 | `billing:read` |
 | 写单权限 | `billing:write` |
 
@@ -56,12 +56,15 @@ sequenceDiagram
 
 ## 工具契约
 
+完整 59 个工具清单见 `AGENTS.md`「业务场景覆盖」与
+[工具、API 与商品匹配](ai-billing-tools-api-matching.md)。销售单核心工具：
+
 | 工具 | 说明 |
 |---|---|
 | `syncProducts` | 主动刷新隔离会话商品目录 |
 | `listProducts` | 分页浏览当前会话商品目录 |
 | `searchProducts` | 独立查商品；模糊结果只推荐 |
-| `searchBillingReferences` | `reference_type` 为 customer/warehouse/handler |
+| `searchBillingReferences` | `reference_type` 为 customer/warehouse/handler/supplier/settlement_account |
 | `previewSalesOrder` | 校验完整销售单并生成不可变预览 |
 | `submitSalesOrder` | 明确确认后真实写单 |
 | `getSalesOrder` | 查询销售单详情 |
@@ -69,9 +72,10 @@ sequenceDiagram
 | `voidSalesOrder` | 明确确认后作废单据 |
 | `updateSalesOrder` | 先查询详情，明确确认后修改单据 |
 
-业务必填项：客户、出库仓库、经手人、录单日期和商品明细。备注可选。接口技术字段
-`id=0` 由工具内部生成；模型只传 `draft`、`pre_receipt`、`final`，工具再映射 ERP
-的 `saveType=0/1/2`。
+采购单、退货单、调拨单、其他出入库单与收款单/付款单均为同一 preview →
+submit 模式；除销售单暴露 `save_type`（`draft`/`pre_receipt`/`final`）外，
+其余单据统一 `saveType=2` 保存过账。销售单业务必填项：客户、出库仓库、
+经手人、录单日期和商品明细；接口技术字段 `id=0` 由工具内部生成。
 
 ## 提示词配置
 
@@ -130,22 +134,27 @@ Agent 根据返回值处理：
 只有用户看到当前预览后明确确认，才可传 `confirmed_by_user=true`。任何内容修改都
 必须重新准备并使用新的 `preview_id`。
 
-## AgentScope 2.0.7 客户端
+## MCP Python SDK 客户端
 
 ```python
-from agentscope.mcp import HttpMCPConfig, MCPClient
-from agentscope.tool import Toolkit
+from mcp import ClientSession
+from mcp.client.streamable_http import streamablehttp_client
 
-client = MCPClient(
-    name="erp-billing",
-    is_stateful=False,
-    mcp_config=HttpMCPConfig(
-        url="https://<billing-host>/mcp",
-        headers={"Authorization": "Bearer " + mcp_bearer},
-    ),
-)
-toolkit = Toolkit(mcps=[client])
+async with streamablehttp_client(
+    "https://<billing-host>/mcp",
+    headers={"Authorization": "Bearer " + mcp_bearer},
+) as (read, write, _):
+    async with ClientSession(read, write) as session:
+        await session.initialize()
+        tools = await session.list_tools()
+        result = await session.call_tool(
+            "previewSalesOrder",
+            {"order_text": "土豆2斤", "customer": "客户甲"},
+        )
 ```
+
+任意 MCP 客户端（AI 平台、SaaS 后端、WorkBuddy）均可接入；鉴权只依赖
+`Authorization: Bearer <ERP JWT / OAuth2>` 请求头。
 
 ## 生产凭据提供者
 

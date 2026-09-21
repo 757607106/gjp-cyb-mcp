@@ -1,21 +1,23 @@
-# GJP ERP AI 开单架构图
+# GJP ERP AI 业务架构图
 
-最后更新：2026-08-04
+最后更新：2026-09-20
 
 ## 1. 系统边界
 
 ```mermaid
 flowchart LR
-    subgraph Business["业务方 SaaS"]
+    subgraph Business["业务方"]
         Page["对话页"]
         Media["ASR / 文本确认"]
         Backend["业务后端"]
         Agent["AI Agent 平台"]
         Page --> Media --> Agent
         Backend --> Binding["短期 Bearer 会话绑定"]
+        WorkBuddy["WorkBuddy"]
     end
 
-    subgraph Billing["ERP 开单部署单元"]
+    subgraph Billing["ERP 业务部署单元"]
+        App["erp_billing.app / workbuddy_app"]
         MCP["erp-billing /mcp"]
         Identity["McpIdentityResolver"]
         Resolver["McpToolSetResolver"]
@@ -25,12 +27,14 @@ flowchart LR
         Port["BillingApiPort"]
     end
 
-    Agent --> MCP
-    Binding --> MCP
+    Agent --> App
+    Binding --> App
+    WorkBuddy --> App
+    App --> MCP
     MCP --> Identity --> Resolver --> Tools
     Tools --> Catalog --> Matcher
     FixedUrl["固定 ERP_BILLING_BASE_URL"] --> Port
-    Tools --> Port --> ERP["ERP 商品 / 基础资料 / 销售单 API"]
+    Tools --> Port --> ERP["ERP 商品 / 基础资料 / 各业务域单据与报表 API"]
 ```
 
 业务方把语音转换为用户确认后的当前订单完整文本。多模态模型（VL）可直接
@@ -56,10 +60,10 @@ flowchart TB
 | 层 | 职责 |
 |---|---|
 | `erp_billing.mcp_service` | 创建只发布 `BillingToolSet` 的 MCP 应用 |
-| `gjp_common.mcp` | 复用 AgentScope Tool Schema，按调用绑定身份和 ToolSet |
+| `gjp_common.mcp` | 基于 MCP Python SDK 组装服务，按调用绑定身份和 ToolSet |
 | `gjp_common.context` | 保存无凭据的租户、账号、会话和 scopes |
 | `gjp_common.connections` | 校验固定 ERP 地址，并按会话解析 Bearer |
-| `erp_billing` | 资料查询、商品匹配、销售单预览和写入 |
+| `erp_billing` | 资料查询、商品匹配、各业务域单据预览和写入 |
 
 ## 3. MCP 单次调用
 
@@ -92,7 +96,7 @@ sequenceDiagram
 固定 Base URL、Bearer 和 Cookie 不进入工具参数、工具结果或模型上下文；
 `InvocationContext` 只保存从 Bearer 解析出的无凭据身份字段。
 
-## 4. 开单链路
+## 4. 写单链路（以销售单为例）
 
 ```mermaid
 flowchart TB
@@ -109,10 +113,11 @@ flowchart TB
     UserConfirm -->|是| Submit["submitSalesOrder"] --> SalesApi["POST /sales/orders"]
 ```
 
-完整工具集还包含 `listProducts`、`searchBillingReferences`、`getSalesOrder`、
-`listSalesOrders`、`voidSalesOrder` 与 `updateSalesOrder`。服务不生成草稿文件；只有
-写工具在满足 `billing:write` 和明确确认后写入 ERP，新增单据还必须使用当前预览和
-幂等键。
+采购单、调拨单与其他出入库单复用同一商品匹配与两段式提交链路；退货单走
+快捷退货预填（quick-return 回读源单），收款单/付款单解析结算账户与往来单位。
+全部 59 个工具覆盖销售、采购、库存、资金往来与报表五个业务域，清单见
+`AGENTS.md`「业务场景覆盖」；只有写工具在满足 `billing:write` 和明确确认后
+写入 ERP，新增单据还必须使用当前预览和幂等键。
 
 ## 5. 隔离规则
 

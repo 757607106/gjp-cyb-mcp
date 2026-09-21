@@ -1,4 +1,4 @@
-"""完整销售单流程的 AgentScope 工具集。"""
+"""销售、采购、退货、库存、资金与报表的开单工具集。"""
 
 from __future__ import annotations
 
@@ -7,31 +7,93 @@ import math
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from datetime import date
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from decimal import Decimal
 from typing import Any
 
 from gjp_common.context import InvocationContext, InvocationContextStore
 from gjp_common.errors import DomainError
 from gjp_common.tools import SessionFunctionTool
-from gjp_common.toolset import AgentScopeToolSet
+from gjp_common.toolset import SessionToolSet
 from .catalog import normalize_name
+from .document_tools import DocumentTools, build_document_tools
 from .models import BillingDraft
 from .ports import BillingApiPort, BillingReferenceSnapshot
+from .query_tools import QueryTools, build_query_tools
 from .session import ErpBillingSession
+from .validation import line_amount, non_negative_amount, normalized_unit
 
 
 BILLING_MCP_TOOL_NAMES = frozenset(
     {
+        # 商品目录与基础资料
         "sync_products",
         "list_products",
         "search_products",
         "search_billing_references",
+        # 销售单
         "preview_sales_order",
         "submit_sales_order",
         "get_sales_order",
         "list_sales_orders",
         "void_sales_order",
         "update_sales_order",
+        # 采购单
+        "preview_purchase_order",
+        "submit_purchase_order",
+        "get_purchase_order",
+        "list_purchase_orders",
+        "void_purchase_order",
+        "update_purchase_order",
+        # 采购退货单
+        "preview_purchase_return",
+        "submit_purchase_return",
+        "get_purchase_return",
+        "list_purchase_returns",
+        "void_purchase_return",
+        # 销售退货单
+        "preview_sales_return",
+        "submit_sales_return",
+        "get_sales_return",
+        "list_sales_returns",
+        "void_sales_return",
+        # 销售单继续收款 / 采购单继续付款
+        "preview_sales_receipt",
+        "submit_sales_receipt",
+        "preview_purchase_payment",
+        "submit_purchase_payment",
+        # 库存调拨与其他出入库
+        "preview_stock_transfer",
+        "submit_stock_transfer",
+        "preview_other_stock_doc",
+        "submit_other_stock_doc",
+        # 收款单与付款单
+        "preview_receipt_order",
+        "submit_receipt_order",
+        "get_receipt_order",
+        "list_receipt_orders",
+        "void_receipt_order",
+        "preview_payment_order",
+        "submit_payment_order",
+        "get_payment_order",
+        "list_payment_orders",
+        "void_payment_order",
+        # 库存与往来查询
+        "query_stock",
+        "get_stock_by_product",
+        "get_stock_summary",
+        "query_stock_logs",
+        "list_stock_alerts",
+        "get_purchase_suggestions",
+        "list_stock_doc_types",
+        "list_receivables",
+        "list_payables",
+        "get_financial_status",
+        # 报表分析
+        "query_sales_report",
+        "query_purchase_report",
+        "query_profit_report",
+        "query_settlement_report",
+        "query_reconciliation",
     },
 )
 
@@ -52,7 +114,25 @@ _REQUIRED_FIELDS = (
     ("order_date", "录单日期", "请问录单日期是哪一天？"),
     ("order_text", "商品明细", "请提供商品、数量和单位。"),
 )
-_MONEY_QUANTUM = Decimal("0.01")
+_REFERENCE_LABELS = {
+    "customer": "客户",
+    "warehouse": "仓库",
+    "handler": "经手人",
+    "supplier": "供应商",
+    "settlement_account": "结算账户",
+}
+# 单据类型 → (详情端口方法, 结果属性, 业务单号字段)
+_DOCUMENT_NUMBER_LOOKUPS = {
+    "sales_order": ("get_sales_order_detail", "order", "orderNo"),
+    "purchase_order": ("get_purchase_order_detail", "document", "orderNo"),
+    "purchase_return": ("get_purchase_return_detail", "document", "returnNo"),
+    "sales_return": ("get_sales_return_detail", "document", "returnNo"),
+}
+# 收款单/付款单详情端口带方向参数，单独走资金单据回查
+_FINANCIAL_ORDER_DETAIL_KINDS = {
+    "receipt_order": "receipt",
+    "payment_order": "payment",
+}
 
 
 _ERROR_OUTPUT_OBJECT = {
@@ -281,7 +361,7 @@ _SEARCH_BILLING_REFERENCES_INPUT_SCHEMA = {
     "properties": {
         "reference_type": {
             "type": "string",
-            "enum": ["customer", "warehouse", "handler"],
+            "enum": ["customer", "warehouse", "handler", "supplier", "settlement_account"],
         },
         "keyword": {"type": "string"},
         "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 5},
@@ -407,8 +487,12 @@ _UPDATE_SALES_ORDER_INPUT_SCHEMA = {
 }
 
 
-class BillingToolSet(AgentScopeToolSet):
-    """开单 ToolSet：检索基础资料、生成预览并在确认后写入销售单。"""
+class BillingToolSet(QueryTools, DocumentTools, SessionToolSet):
+    """开单 ToolSet：销售单工具与采购、退货、库存、资金、报表工具的宿主。
+
+    查询与单据工具以混入类实现，共用本类的 session、API 端口、
+    基础资料解析与两段式提交流程。
+    """
 
     def __init__(
         self,
@@ -480,9 +564,10 @@ class BillingToolSet(AgentScopeToolSet):
                     output_schema=_UPDATE_SALES_ORDER_OUTPUT_SCHEMA,
                     input_schema_override=_UPDATE_SALES_ORDER_INPUT_SCHEMA,
                 ),
+                *build_document_tools(self),
+                *build_query_tools(self),
             ],
             contexts=contexts,
-            agent_tool_names=BILLING_MCP_TOOL_NAMES,
             mcp_tool_names=BILLING_MCP_TOOL_NAMES,
         )
 
@@ -601,10 +686,11 @@ class BillingToolSet(AgentScopeToolSet):
         limit: int = 5,
         page: int = 1,
     ) -> dict[str, Any]:
-        """查询销售单的客户、出库仓库或经手人候选。
+        """查询开单基础资料候选：客户、仓库、经手人、供应商或结算账户。
 
         Args:
-            reference_type: 基础资料类型：customer、warehouse 或 handler。
+            reference_type: 基础资料类型：customer、warehouse、handler、
+                supplier 或 settlement_account。
             keyword: 名称或编号关键词；留空时返回第一页可用项。
             limit: 每页最多返回的候选数，范围 1 到 20，默认 5。
             page: 页码，从 1 开始；候选过多时翻页查看。
@@ -774,7 +860,9 @@ class BillingToolSet(AgentScopeToolSet):
                     save_type=save_type,
                     partial=partial,
                 )
-                preview_id = self.session.store_prepared_sales_order(payload, preview)
+                preview_id = self.session.store_prepared_document(
+                    "sales_order", payload, preview,
+                )
 
             required_actions = self._required_actions(
                 missing=missing,
@@ -813,72 +901,28 @@ class BillingToolSet(AgentScopeToolSet):
             idempotency_key: 可省略，默认使用 preview_id；显式指定时重试必须复用。
             confirmed_by_user: 仅在用户明确确认该预览后传 true。
         """
-        async with self.session.submission_lock:
-            try:
-                context = self._contexts.get()
-                context.require_scope("billing:write")
-                if confirmed_by_user is not True:
-                    raise DomainError(
-                        "erp_sales_order_confirmation_required",
-                        "必须先向用户展示销售单预览并取得明确确认",
-                    )
-                key = preview_id.strip() if idempotency_key is None else idempotency_key.strip()
-                if not key or len(key) > 128:
-                    raise DomainError(
-                        "erp_sales_order_idempotency_key_invalid",
-                        "idempotency_key 不能为空且最多 128 个字符",
-                    )
-                cached = self.session.submission_result(key)
-                if cached is not None:
-                    if cached["preview_id"] != preview_id.strip():
-                        raise DomainError(
-                            "erp_sales_order_idempotency_key_conflict",
-                            "该 idempotency_key 已用于另一份销售单预览",
-                        )
-                    return self.ok_response(
-                        **self._public_submission_result(cached),
-                        idempotent_replay=True,
-                    )
 
-                payload, preview = self.session.require_prepared_sales_order(preview_id)
-                try:
-                    result = await self._api.create_sales_order(context, payload)
-                except asyncio.CancelledError:
-                    self.session.mark_submission_uncertain(preview_id)
-                    raise
-                except DomainError as exc:
-                    if exc.code in {
-                        "business_upstream_unavailable",
-                        "erp_live_response_invalid",
-                        "business_write_result_unknown",
-                    }:
-                        self.session.mark_submission_uncertain(preview_id)
-                        raise DomainError(
-                            "erp_sales_order_result_unknown",
-                            "销售单提交结果未知，请先查询 ERP 核对，勿直接重复开单",
-                            details=exc.details,
-                        ) from exc
-                    raise
-                cached_result = {
-                    "submitted": True,
-                    "order_no": result.order_id,
-                    "preview_id": preview_id.strip(),
-                    "save_type": preview["save_type"],
-                }
-                self.session.remember_submission(key, cached_result)
-                # 预览一次性消费：成功后立即失效，换新幂等键重放同一预览会被
-                # 拒绝，防止上下文丢失后模型用新 key 重复提交同一份预览。
-                self.session.consume_prepared_sales_order(preview_id)
-                # 已确认落库后立即记账，详情回查失败/取消也不能造成重复创建。
-                order_no = await self._lookup_order_no(result.order_id)
-                cached_result["order_no"] = order_no or result.order_id
-                self.session.remember_submission(key, cached_result)
-                return self.ok_response(
-                    **self._public_submission_result(cached_result),
-                    idempotent_replay=False,
-                )
-            except DomainError as exc:
-                return self.error_response(exc)
+        async def create(context: InvocationContext, payload: dict[str, Any]) -> str:
+            result = await self._api.create_sales_order(context, payload)
+            return result.order_id
+
+        result = await self._submit_prepared_document(
+            kind="sales_order",
+            doc_label="销售单",
+            preview_id=preview_id,
+            idempotency_key=idempotency_key,
+            confirmed_by_user=confirmed_by_user,
+            create=create,
+            extra_summary_keys=("save_type",),
+        )
+        if not result.get("ok"):
+            return result
+        return self.ok_response(
+            submitted=result["submitted"],
+            order_no=result["document_no"],
+            save_type=result.get("save_type"),
+            idempotent_replay=result["idempotent_replay"],
+        )
 
     async def get_sales_order(self, order_id: str) -> dict[str, Any]:
         """查询销售单详情，含商品明细、收款记录和状态。
@@ -982,7 +1026,7 @@ class BillingToolSet(AgentScopeToolSet):
             context.require_scope("billing:write")
             if confirmed_by_user is not True:
                 raise DomainError(
-                    "erp_sales_order_confirmation_required",
+                    "erp_document_confirmation_required",
                     "必须先向用户展示销售单详情并取得明确确认",
                 )
             target_id = order_id.strip()
@@ -1043,7 +1087,7 @@ class BillingToolSet(AgentScopeToolSet):
             context.require_scope("billing:write")
             if confirmed_by_user is not True:
                 raise DomainError(
-                    "erp_sales_order_confirmation_required",
+                    "erp_document_confirmation_required",
                     "必须先向用户展示修改内容并取得明确确认",
                 )
             target_id = order_id.strip()
@@ -1087,11 +1131,11 @@ class BillingToolSet(AgentScopeToolSet):
                     "warehouse", clean_warehouse, "出库仓库",
                 )
             if discount_amount is not None:
-                payload["discountAmount"] = _non_negative_amount(discount_amount, "优惠金额")
+                payload["discountAmount"] = non_negative_amount(discount_amount, "优惠金额")
             if discount_account_id.strip():
                 payload["discountAccountId"] = discount_account_id.strip()
             if receipt_amount is not None:
-                payload["receiptAmount"] = _non_negative_amount(receipt_amount, "收款金额")
+                payload["receiptAmount"] = non_negative_amount(receipt_amount, "收款金额")
             if receipt_account_id.strip():
                 payload["receiptAccountId"] = receipt_account_id.strip()
             if len(payload) == 1:
@@ -1117,6 +1161,7 @@ class BillingToolSet(AgentScopeToolSet):
             "is_default": bool(
                 option.get("is_default") or option.get("isDefault"),
             ),
+            "is_system": bool(option.get("is_system") or option.get("isSystem")),
         }
 
     @staticmethod
@@ -1151,19 +1196,180 @@ class BillingToolSet(AgentScopeToolSet):
             if key != "preview_id"
         }
 
-    async def _lookup_order_no(self, order_id: str) -> str:
-        """创建成功后回查详情，取用户可读的业务单号 orderNo。
+    async def _lookup_document_no(self, kind: str, document_id: str) -> str:
+        """创建成功后回查详情，取用户可读的业务单号。
 
         回查是尽力而为的增值信息：任何失败都不影响已创建的单据，
         调用方降级使用内部 ID。
         """
+        spec = _DOCUMENT_NUMBER_LOOKUPS.get(kind)
+        financial_kind = _FINANCIAL_ORDER_DETAIL_KINDS.get(kind)
+        if spec is None and financial_kind is None:
+            return ""
         try:
             context = self._contexts.get()
             context.require_scope("billing:read")
-            detail = await self._api.get_sales_order_detail(context, order_id)
+            if financial_kind is not None:
+                result = await self._api.get_financial_order_detail(
+                    context, financial_kind, document_id,
+                )
+                return str(result.document.get("orderNo") or "").strip()
+            result = await getattr(self._api, spec[0])(context, document_id)
         except DomainError:
             return ""
-        return str(detail.order.get("orderNo") or "").strip()
+        data = getattr(result, spec[1])
+        return str(data.get(spec[2]) or "").strip()
+
+    async def _lookup_order_no(self, order_id: str) -> str:
+        return await self._lookup_document_no("sales_order", order_id)
+
+    async def _submit_prepared_document(
+        self,
+        *,
+        kind: str,
+        doc_label: str,
+        preview_id: str,
+        idempotency_key: str | None,
+        confirmed_by_user: bool,
+        create: Callable[[InvocationContext, dict[str, Any]], Awaitable[str]],
+        extra_summary_keys: tuple[str, ...] = (),
+    ) -> dict[str, Any]:
+        """两段式提交通用流程：幂等重放、结果未知保护与预览一次性消费。
+
+        create 收到调用上下文与不可变 payload，返回单据内部 ID；
+        extra_summary_keys 指定的预览摘要字段会进入响应与幂等缓存，
+        供 submit_sales_order 之类工具透传业务字段。
+        """
+        async with self.session.submission_lock:
+            try:
+                context = self._contexts.get()
+                context.require_scope("billing:write")
+                if confirmed_by_user is not True:
+                    raise DomainError(
+                        "erp_document_confirmation_required",
+                        "必须先向用户展示%s预览并取得明确确认" % doc_label,
+                    )
+                token = (preview_id or "").strip()
+                key = token if idempotency_key is None else (idempotency_key or "").strip()
+                if not token or not key or len(key) > 128:
+                    raise DomainError(
+                        "erp_document_idempotency_key_invalid",
+                        "preview_id 与 idempotency_key 不能为空且最多 128 个字符",
+                    )
+                cached = self.session.submission_result(key)
+                if cached is not None:
+                    if cached["preview_id"] != token:
+                        raise DomainError(
+                            "erp_document_idempotency_key_conflict",
+                            "该 idempotency_key 已用于另一份预览",
+                        )
+                    return self.ok_response(
+                        **self._public_submission_result(cached),
+                        idempotent_replay=True,
+                    )
+
+                payload, preview = self.session.require_prepared_document(kind, token)
+                try:
+                    document_id = await create(context, payload)
+                except asyncio.CancelledError:
+                    self.session.mark_submission_uncertain(token)
+                    raise
+                except DomainError as exc:
+                    if exc.code in {
+                        "business_upstream_unavailable",
+                        "erp_live_response_invalid",
+                        "business_write_result_unknown",
+                    }:
+                        self.session.mark_submission_uncertain(token)
+                        raise DomainError(
+                            "erp_document_result_unknown",
+                            "%s提交结果未知，请先查询 ERP 核对，勿直接重复提交" % doc_label,
+                            details=exc.details,
+                        ) from exc
+                    raise
+                cached_result = {
+                    "submitted": True,
+                    "document_id": document_id,
+                    "document_no": document_id,
+                    "preview_id": token,
+                }
+                for field in extra_summary_keys:
+                    if field in preview:
+                        cached_result[field] = preview[field]
+                # 已确认落库后立即记账：单号回查失败或取消也不能造成重复创建。
+                self.session.remember_submission(key, cached_result)
+                # 预览一次性消费：成功后立即失效，换新幂等键重放同一预览会被
+                # 拒绝，防止上下文丢失后模型用新 key 重复提交同一份预览。
+                self.session.consume_prepared_document(token)
+                document_no = await self._lookup_document_no(kind, document_id)
+                if document_no and document_no != document_id:
+                    cached_result["document_no"] = document_no
+                    self.session.remember_submission(key, cached_result)
+                return self.ok_response(
+                    **self._public_submission_result(cached_result),
+                    idempotent_replay=False,
+                )
+            except DomainError as exc:
+                return self.error_response(exc)
+
+    async def _optional_reference_id(self, reference_type: str, value: str) -> str:
+        """把可选的基础资料参数解析为内部 ID；空值返回空字符串。
+
+        查询过滤条件用：名称未唯一命中时直接报错，避免把错误标识
+        发给 ERP 导致静默过滤出空结果。
+        """
+        token = (value or "").strip()
+        if not token:
+            return ""
+        if token.isdigit() or self.session.reference_by_id(reference_type, token) is not None:
+            return token
+        resolution = await self._resolve_reference(reference_type, token)
+        if resolution["status"] == "matched" and resolution["selected"] is not None:
+            return str(resolution["selected"]["id"])
+        raise DomainError(
+            "erp_reference_unmatched",
+            "未找到与“%s”唯一匹配的%s，请提供更准确的名称或候选 ID"
+            % (token, _REFERENCE_LABELS.get(reference_type, "基础资料")),
+        )
+
+    @staticmethod
+    def _with_page(payload: dict[str, Any], page: int, page_size: int) -> dict[str, Any]:
+        """注入分页参数：页码从 1 起，页大小收敛到 1-100。"""
+        payload["pageNum"] = max(1, int(page or 1))
+        payload["pageSize"] = max(1, min(int(page_size or 20), 100))
+        return payload
+
+    def _paged_data_response(self, data: Any) -> dict[str, Any]:
+        """归一化分页查询结果：IPage 结构提取行与页元数据，其余原样透传。"""
+        if isinstance(data, dict) and isinstance(data.get("list"), list):
+            rows = data["list"]
+            page_num = self._coerce_positive_int(data.get("pageNum"), 1)
+            page_size = self._coerce_positive_int(data.get("pageSize"), len(rows))
+            total = self._coerce_non_negative_int(data.get("total"), len(rows))
+            return self.ok_response(
+                data=rows,
+                page=page_num,
+                page_size=page_size,
+                total=total,
+                has_more=page_num * page_size < total,
+            )
+        return self.ok_response(data=data)
+
+    @staticmethod
+    def _coerce_positive_int(value: Any, default: int) -> int:
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            return default
+        return number if number > 0 else default
+
+    @staticmethod
+    def _coerce_non_negative_int(value: Any, default: int) -> int:
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            return default
+        return number if number >= 0 else default
 
     async def _search_reference(
         self,
@@ -1177,9 +1383,14 @@ class BillingToolSet(AgentScopeToolSet):
             "customer": "search_customers",
             "warehouse": "search_warehouses",
             "handler": "search_staff",
+            "supplier": "search_suppliers",
+            "settlement_account": "search_settlement_accounts",
         }
         if reference_type not in methods:
-            raise DomainError("erp_reference_type_invalid", "reference_type 必须是 customer、warehouse 或 handler")
+            raise DomainError(
+                "erp_reference_type_invalid",
+                "reference_type 必须是 customer、warehouse、handler、supplier 或 settlement_account",
+            )
         snapshot = await getattr(self._api, methods[reference_type])(context, keyword, limit, page)
         self.session.remember_references(reference_type, snapshot.options)
         return snapshot
@@ -1436,11 +1647,11 @@ class BillingToolSet(AgentScopeToolSet):
                     value = raw.get(camel_key)
                 if value not in (None, ""):
                     if camel_key == "conversionRate":
-                        value = _non_negative_amount(value, "换算率")
+                        value = non_negative_amount(value, "换算率")
                         if value <= 0:
                             raise DomainError("erp_sales_order_item_invalid", "换算率必须大于 0")
                     if camel_key == "unitPrice":
-                        value = _non_negative_amount(value, "单价")
+                        value = non_negative_amount(value, "单价")
                     item[camel_key] = value
             result.append(item)
         return result
@@ -1469,7 +1680,7 @@ class BillingToolSet(AgentScopeToolSet):
                     or entry.get("product_id") != line.product.product_id
                     or not line.product.unit
                     or not isinstance(entry.get("unit"), str)
-                    or _normalized_unit(entry["unit"]) != _normalized_unit(line.product.unit)):
+                    or normalized_unit(entry["unit"]) != normalized_unit(line.product.unit)):
                 raise DomainError("erp_unit_confirmation_invalid", "请使用该行已匹配商品的 ERP 单位确认")
             quantity = entry.get("quantity")
             if (isinstance(quantity, bool) or not isinstance(quantity, (int, float))
@@ -1487,8 +1698,8 @@ class BillingToolSet(AgentScopeToolSet):
         for line in draft.lines:
             if line.status != "matched" or line.product is None:
                 continue
-            requested_unit = _normalized_unit(line.order_line.unit)
-            product_unit = _normalized_unit(line.product.unit)
+            requested_unit = normalized_unit(line.order_line.unit)
+            product_unit = normalized_unit(line.product.unit)
             if requested_unit and product_unit and requested_unit != product_unit:
                 warnings.append(
                     {
@@ -1558,7 +1769,7 @@ class BillingToolSet(AgentScopeToolSet):
             if not math.isfinite(line.order_line.quantity) or line.order_line.quantity < 0.0001:
                 raise DomainError("erp_sales_order_item_invalid", "商品数量必须为不小于 0.0001 的有限数")
             if line.product.price is not None:
-                _non_negative_amount(line.product.price, "单价")
+                non_negative_amount(line.product.price, "单价")
             item: dict[str, Any] = {
                 "productId": line.product.product_id,
                 "quantity": line.order_line.quantity,
@@ -1576,15 +1787,15 @@ class BillingToolSet(AgentScopeToolSet):
                 "unit": line.product.unit or line.order_line.unit,
                 "unit_price": line.product.price,
             }
-            line_amount = _line_amount(
+            line_total = line_amount(
                 line.order_line.quantity,
                 line.product.price,
             )
-            if line_amount is None:
+            if line_total is None:
                 has_complete_amount = False
             else:
-                preview_item["line_amount"] = float(line_amount)
-                total_amount += line_amount
+                preview_item["line_amount"] = float(line_total)
+                total_amount += line_total
             preview_items.append(preview_item)
         payload = {
             "id": 0,
@@ -1610,40 +1821,3 @@ class BillingToolSet(AgentScopeToolSet):
         if preview_items and has_complete_amount:
             preview["total_amount"] = float(total_amount)
         return payload, preview
-
-
-def _normalized_unit(value: str) -> str:
-    normalized = normalize_name(value)
-    return {
-        "公斤": "kg",
-        "千克": "kg",
-        "kg": "kg",
-        "毫升": "ml",
-        "ml": "ml",
-        "升": "l",
-        "l": "l",
-    }.get(normalized, normalized)
-
-
-def _line_amount(quantity: float, unit_price: float | None) -> Decimal | None:
-    """按实际提交单价计算两位小数的预览行金额。"""
-    if unit_price is None:
-        return None
-    amount = Decimal(str(quantity)) * Decimal(str(unit_price))
-    if not amount.is_finite():
-        return None
-    try:
-        return amount.quantize(_MONEY_QUANTUM, rounding=ROUND_HALF_UP)
-    except InvalidOperation as exc:
-        raise DomainError("erp_sales_order_item_invalid", "商品数量或金额超出可处理范围") from exc
-
-
-def _non_negative_amount(value: Any, label: str) -> float:
-    """统一校验 API 金额下界，保留正常金额数值。"""
-    try:
-        number = float(value)
-    except (TypeError, ValueError, OverflowError) as exc:
-        raise DomainError("erp_sales_order_item_invalid", label + "必须是有效金额") from exc
-    if not math.isfinite(number) or number < 0:
-        raise DomainError("erp_sales_order_item_invalid", label + "必须为非负有限数")
-    return number

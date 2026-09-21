@@ -1,5 +1,8 @@
 # MCP 可靠性优化与 AgentScope 2.0.7 升级
 
+> 历史记录：本文档成稿时框架为 AgentScope 2.0.7；此后基础设施已迁移至
+> MCP Python SDK（见 `AGENTS.md` 技术栈），可靠性结论与重试边界仍然适用。
+
 本次在现有工具接口和业务流程基础上修复可靠性缺口，框架精确锁定稳定版 `agentscope==2.0.7`，同步更新 uv.lock。仅使用正式稳定版本，不采用 dev 或其他预发布版本。
 
 参考：[AgentScope 2.0.7](https://docs.agentscope.io/versions/2.0.7/zh)、[ERP API](https://test-ai.yuncyb.com/aicyberp-api/v3/api-docs)。此前的 mcp-review-2026-09-10.md 记录优化前状态，本文件记录落地范围。

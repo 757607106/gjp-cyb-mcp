@@ -49,6 +49,37 @@ class BillingSalesOrderPageResult:
     orders: tuple[dict[str, Any], ...]
 
 
+@dataclass(frozen=True)
+class BillingDocumentResult:
+    """ERP 新增或修改各类业务单据的最小返回结果。"""
+
+    document_id: str
+
+
+@dataclass(frozen=True)
+class BillingDocumentDetailResult:
+    """ERP 业务单据详情或预填数据查询结果。"""
+
+    document: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class BillingDocumentPageResult:
+    """ERP 业务单据分页查询结果。"""
+
+    total: int
+    page_num: int
+    page_size: int
+    rows: tuple[dict[str, Any], ...]
+
+
+@dataclass(frozen=True)
+class BillingDataResult:
+    """ERP 库存、预警、报表等通用数据查询结果。"""
+
+    data: Any
+
+
 class AuthenticatedJsonClient(Protocol):
     """由对接产品实现的已鉴权 JSON 请求执行器。"""
 
@@ -160,6 +191,357 @@ class BillingApiPort(Protocol):
         payload: dict[str, Any],
     ) -> BillingSalesOrderResult:
         """接受显式修改字段；适配器负责保留未传字段并映射 ERP 完整 PUT。"""
+        ...
+
+    async def search_suppliers(
+        self,
+        context: InvocationContext,
+        keyword: str,
+        limit: int = 5,
+        page: int = 1,
+    ) -> BillingReferenceSnapshot:
+        ...
+
+    async def search_settlement_accounts(
+        self,
+        context: InvocationContext,
+        keyword: str,
+        limit: int = 5,
+        page: int = 1,
+        account_type: int | None = None,
+    ) -> BillingReferenceSnapshot:
+        ...
+
+    async def search_fund_types(
+        self,
+        context: InvocationContext,
+        direction: int,
+    ) -> BillingReferenceSnapshot:
+        """按资金方向查询款项类型；direction 1=收款性质，2=付款性质。"""
+        ...
+
+    async def create_purchase_order(
+        self,
+        context: InvocationContext,
+        payload: dict[str, Any],
+    ) -> BillingDocumentResult:
+        ...
+
+    async def get_purchase_order_detail(
+        self,
+        context: InvocationContext,
+        order_id: str,
+    ) -> BillingDocumentDetailResult:
+        ...
+
+    async def search_purchase_orders(
+        self,
+        context: InvocationContext,
+        *,
+        page_num: int = 1,
+        page_size: int = 20,
+        start_date: str = "",
+        end_date: str = "",
+        status: int | None = None,
+        payment_status: int | None = None,
+        return_status: int | None = None,
+        order_no: str = "",
+        supplier_id: str = "",
+    ) -> BillingDocumentPageResult:
+        ...
+
+    async def void_purchase_order(
+        self,
+        context: InvocationContext,
+        order_id: str,
+    ) -> None:
+        ...
+
+    async def update_purchase_order(
+        self,
+        context: InvocationContext,
+        order_id: str,
+        payload: dict[str, Any],
+    ) -> BillingDocumentResult:
+        ...
+
+    async def pay_purchase_order(
+        self,
+        context: InvocationContext,
+        order_id: str,
+        payload: dict[str, Any],
+    ) -> None:
+        ...
+
+    async def get_purchase_order_quick_return(
+        self,
+        context: InvocationContext,
+        order_id: str,
+    ) -> BillingDocumentDetailResult:
+        ...
+
+    async def create_purchase_return(
+        self,
+        context: InvocationContext,
+        payload: dict[str, Any],
+    ) -> BillingDocumentResult:
+        ...
+
+    async def get_purchase_return_detail(
+        self,
+        context: InvocationContext,
+        order_id: str,
+    ) -> BillingDocumentDetailResult:
+        ...
+
+    async def search_purchase_returns(
+        self,
+        context: InvocationContext,
+        *,
+        page_num: int = 1,
+        page_size: int = 20,
+        start_date: str = "",
+        end_date: str = "",
+        status: int | None = None,
+        return_no: str = "",
+        supplier_id: str = "",
+    ) -> BillingDocumentPageResult:
+        ...
+
+    async def void_purchase_return(
+        self,
+        context: InvocationContext,
+        order_id: str,
+    ) -> None:
+        ...
+
+    async def get_sales_order_quick_return(
+        self,
+        context: InvocationContext,
+        order_id: str,
+    ) -> BillingDocumentDetailResult:
+        ...
+
+    async def create_sales_return(
+        self,
+        context: InvocationContext,
+        payload: dict[str, Any],
+    ) -> BillingDocumentResult:
+        ...
+
+    async def get_sales_return_detail(
+        self,
+        context: InvocationContext,
+        order_id: str,
+    ) -> BillingDocumentDetailResult:
+        ...
+
+    async def search_sales_returns(
+        self,
+        context: InvocationContext,
+        *,
+        page_num: int = 1,
+        page_size: int = 20,
+        start_date: str = "",
+        end_date: str = "",
+        status: int | None = None,
+        refund_status: int | None = None,
+        return_no: str = "",
+        customer_id: str = "",
+    ) -> BillingDocumentPageResult:
+        ...
+
+    async def void_sales_return(
+        self,
+        context: InvocationContext,
+        order_id: str,
+    ) -> None:
+        ...
+
+    async def query_stock_page(
+        self,
+        context: InvocationContext,
+        payload: dict[str, Any],
+    ) -> BillingDataResult:
+        ...
+
+    async def get_stock_by_product(
+        self,
+        context: InvocationContext,
+        product_id: str,
+    ) -> BillingDataResult:
+        ...
+
+    async def get_stock_summary(
+        self,
+        context: InvocationContext,
+        params: dict[str, Any],
+    ) -> BillingDataResult:
+        ...
+
+    async def query_stock_logs(
+        self,
+        context: InvocationContext,
+        payload: dict[str, Any],
+    ) -> BillingDataResult:
+        ...
+
+    async def list_stock_alerts(
+        self,
+        context: InvocationContext,
+        payload: dict[str, Any],
+    ) -> BillingDataResult:
+        ...
+
+    async def get_purchase_suggestions(
+        self,
+        context: InvocationContext,
+    ) -> BillingDataResult:
+        ...
+
+    async def list_stock_doc_types(
+        self,
+        context: InvocationContext,
+        kind: str,
+    ) -> BillingDataResult:
+        ...
+
+    async def create_stock_transfer(
+        self,
+        context: InvocationContext,
+        payload: dict[str, Any],
+    ) -> BillingDocumentResult:
+        ...
+
+    async def get_stock_transfer_detail(
+        self,
+        context: InvocationContext,
+        order_id: str,
+    ) -> BillingDocumentDetailResult:
+        ...
+
+    async def create_other_stock_doc(
+        self,
+        context: InvocationContext,
+        kind: str,
+        payload: dict[str, Any],
+    ) -> BillingDocumentResult:
+        ...
+
+    async def get_other_stock_doc_detail(
+        self,
+        context: InvocationContext,
+        kind: str,
+        order_id: str,
+    ) -> BillingDocumentDetailResult:
+        ...
+
+    async def receive_sales_order(
+        self,
+        context: InvocationContext,
+        order_id: str,
+        payload: dict[str, Any],
+    ) -> None:
+        ...
+
+    async def create_receipt_order(
+        self,
+        context: InvocationContext,
+        payload: dict[str, Any],
+    ) -> BillingDocumentResult:
+        ...
+
+    async def create_payment_order(
+        self,
+        context: InvocationContext,
+        payload: dict[str, Any],
+    ) -> BillingDocumentResult:
+        ...
+
+    async def get_financial_order_detail(
+        self,
+        context: InvocationContext,
+        kind: str,
+        order_id: str,
+    ) -> BillingDocumentDetailResult:
+        ...
+
+    async def list_financial_orders(
+        self,
+        context: InvocationContext,
+        kind: str,
+        params: dict[str, Any],
+    ) -> BillingDocumentPageResult:
+        ...
+
+    async def void_financial_order(
+        self,
+        context: InvocationContext,
+        kind: str,
+        order_id: str,
+    ) -> None:
+        ...
+
+    async def list_receivables(
+        self,
+        context: InvocationContext,
+        view: str,
+        params: dict[str, Any],
+    ) -> BillingDataResult:
+        ...
+
+    async def list_payables(
+        self,
+        context: InvocationContext,
+        view: str,
+        params: dict[str, Any],
+    ) -> BillingDataResult:
+        ...
+
+    async def query_sales_report(
+        self,
+        context: InvocationContext,
+        view: str,
+        params: dict[str, Any],
+    ) -> BillingDataResult:
+        ...
+
+    async def query_purchase_report(
+        self,
+        context: InvocationContext,
+        view: str,
+        params: dict[str, Any],
+    ) -> BillingDataResult:
+        ...
+
+    async def query_profit_report(
+        self,
+        context: InvocationContext,
+        view: str,
+        params: dict[str, Any],
+    ) -> BillingDataResult:
+        ...
+
+    async def get_financial_status(
+        self,
+        context: InvocationContext,
+        biz_date: str = "",
+    ) -> BillingDataResult:
+        ...
+
+    async def query_settlement_report(
+        self,
+        context: InvocationContext,
+        params: dict[str, Any],
+    ) -> BillingDataResult:
+        ...
+
+    async def query_reconciliation(
+        self,
+        context: InvocationContext,
+        view: str,
+        params: dict[str, Any],
+    ) -> BillingDataResult:
         ...
 
 

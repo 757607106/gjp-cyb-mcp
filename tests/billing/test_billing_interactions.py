@@ -209,7 +209,7 @@ def test_same_name_references_can_select_second_id_without_keyword_lookup(tmp_pa
         )
         assert preview["ready_to_submit"]
         assert preview["reference_resolutions"]["customer"]["selected"]["id"] == "C-2"
-        payload, _ = tools.session.require_prepared_sales_order(preview["preview_id"])
+        payload, _ = tools.session.require_prepared_document("sales_order", preview["preview_id"])
         assert payload["customerId"] == "C-2"
         assert await tools._resolve_update_reference("customer", "C-2", "客户") == "C-2"
     asyncio.run(scenario())

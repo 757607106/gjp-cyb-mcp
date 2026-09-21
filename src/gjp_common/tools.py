@@ -1,23 +1,25 @@
-"""通用工具基类：AgentScope 工具包装器。
+"""通用工具基类：基于函数签名与 JSON Schema 的会话工具。
 
-本文件只包含所有业务 Agent 共用的工具基础设施，不包含任何业务特定逻辑。
-业务特定的工具入参 schema 放在各自业务模块的 tools.py 中。
+不依赖任何 Agent 框架；MCP 发布层（gjp_common.mcp）直接消费此类，
+同一份函数签名生成输入 Schema，同一份函数体服务运行时调用。
 """
+
+from __future__ import annotations
 
 import inspect
 from collections.abc import Callable
 from typing import Any
 
-from agentscope.permission import PermissionBehavior, PermissionDecision
-from agentscope.tool import FunctionTool
+from mcp.server.fastmcp.utilities.func_metadata import func_metadata
 
 
-class SessionFunctionTool(FunctionTool):
-    """领域工具基类：确认由对接平台和业务工具契约承接。
+class SessionFunctionTool:
+    """领域工具：函数 + 可覆盖的输入/输出 JSON Schema 与读写注解。
 
-    工具可能写入真实 ERP；平台负责用户确认，工具校验业务确认参数。
-    此处不叠加 AgentScope 通用审批，ALLOW 不代表服务端证明了用户确认。
-    output_schema 仅供 MCP 发布工具输出契约，不进入 AgentScope 运行时。
+    output_schema 仅供 MCP 发布工具输出契约；input_schema 缺省从函数
+    签名与 docstring 生成，需要枚举和范围约束时用
+    input_schema_override 整体替换。确认由对接平台和业务工具契约承接：
+    工具可能写入真实 ERP，平台负责用户确认，工具校验业务确认参数。
     """
 
     def __init__(
@@ -26,18 +28,27 @@ class SessionFunctionTool(FunctionTool):
         *,
         output_schema: dict[str, Any] | None = None,
         input_schema_override: dict[str, Any] | None = None,
-        **kwargs: Any,
+        is_read_only: bool = False,
+        is_concurrency_safe: bool = True,
+        name: str | None = None,
     ) -> None:
-        super().__init__(func, **kwargs)
+        self._func = func
+        self.name = name or func.__name__
+        self.description = inspect.getdoc(func) or ""
         self.output_schema = output_schema
-        if input_schema_override is not None:
-            self.input_schema = input_schema_override
-
-    async def check_permissions(self, *_args: Any, **_kwargs: Any) -> PermissionDecision:
-        return PermissionDecision(
-            behavior=PermissionBehavior.ALLOW,
-            message="Allowed within the local session.",
+        self.is_read_only = is_read_only
+        self.is_concurrency_safe = is_concurrency_safe
+        metadata = func_metadata(func)
+        self.input_schema = (
+            dict(input_schema_override)
+            if input_schema_override is not None
+            else metadata.arg_model.model_json_schema(by_alias=True)
         )
+
+    @property
+    def func(self) -> Callable:
+        """被包装的领域函数，供 MCP 发布层生成签名一致的薄壳。"""
+        return self._func
 
     def validate_arguments(self, **kwargs: Any) -> None:
         """校验参数能否绑定到被包装函数，绑定失败抛出 TypeError。
@@ -49,10 +60,10 @@ class SessionFunctionTool(FunctionTool):
         inspect.signature(self._func).bind(**kwargs)
 
     async def invoke_raw(self, **kwargs: Any) -> Any:
-        """直接执行被包装函数并返回原始结果，跳过 ToolChunk 序列化。
+        """直接执行被包装函数并返回原始结果。
 
-        MCP 层用此方法拿到原始 dict，避免 dict→JSON text→TextBlock→json.loads
-        的脆弱往返。AgentScope Agent 仍走标准 ``__call__`` 路径。
+        MCP 层用此方法拿到原始 dict，避免 dict→JSON text→ContentBlock→
+        json.loads 的脆弱往返。
         """
         if inspect.iscoroutinefunction(self._func):
             return await self._func(**kwargs)

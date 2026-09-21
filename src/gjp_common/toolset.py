@@ -1,4 +1,4 @@
-"""AgentScope 2.0.7 标准工具集合。"""
+"""会话工具集合：以 SessionFunctionTool 为唯一能力描述。"""
 
 from __future__ import annotations
 
@@ -6,20 +6,18 @@ from collections.abc import Iterable
 from contextlib import AbstractContextManager
 from typing import Any
 
-from agentscope.tool import ToolBase
-
 from .context import InvocationContext, InvocationContextStore
 from .errors import DomainError
+from .tools import SessionFunctionTool
 
 
-class AgentScopeToolSet:
-    """以 ToolBase 为唯一能力描述，Agent 和 MCP 共用同一份 schema。"""
+class SessionToolSet:
+    """工具集合与 MCP 发布白名单；调用前绑定当前调用上下文。"""
 
     def __init__(
         self,
-        tools: Iterable[ToolBase],
+        tools: Iterable[SessionFunctionTool],
         contexts: InvocationContextStore,
-        agent_tool_names: Iterable[str] | None = None,
         mcp_tool_names: Iterable[str] | None = None,
     ) -> None:
         self._tools = tuple(tools)
@@ -28,41 +26,26 @@ class AgentScopeToolSet:
         if len(names) != len(set(names)):
             raise ValueError("工具名称不能重复")
         self._by_name = {tool.name: tool for tool in self._tools}
-        self._agent_tool_names = (
-            frozenset(agent_tool_names)
-            if agent_tool_names is not None
-            else frozenset(names)
-        )
         self._mcp_tool_names = (
             frozenset(mcp_tool_names)
             if mcp_tool_names is not None
             else frozenset(names)
         )
-        unknown = (self._agent_tool_names | self._mcp_tool_names).difference(names)
+        unknown = self._mcp_tool_names.difference(names)
         if unknown:
             raise ValueError("工具白名单包含未知工具：%s" % "、".join(sorted(unknown)))
 
-    def tools(self) -> list[ToolBase]:
-        """供生产 AgentScope Agent 绑定，不包含宿主文件工具。"""
-        return [
-            tool
-            for tool in self._tools
-            if tool.name in self._agent_tool_names
-        ]
-
-    def local_tools(self) -> list[ToolBase]:
-        """完整工具集，包含未对 MCP 发布的宿主工具。"""
+    def tools(self) -> list[SessionFunctionTool]:
+        """全部工具，按注册顺序返回。"""
         return list(self._tools)
 
-    def executable_tools(self) -> list[ToolBase]:
-        """MCP 只导出白名单工具，HITL 与主机文件工具留给 Agent 宿主。"""
+    def executable_tools(self) -> list[SessionFunctionTool]:
+        """MCP 只导出白名单工具。"""
         return [
-            tool
-            for tool in self._tools
-            if not tool.is_external_tool and tool.name in self._mcp_tool_names
+            tool for tool in self._tools if tool.name in self._mcp_tool_names
         ]
 
-    def get(self, name: str) -> ToolBase:
+    def get(self, name: str) -> SessionFunctionTool:
         try:
             return self._by_name[name]
         except KeyError as exc:

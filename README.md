@@ -1,12 +1,13 @@
-# GJP ERP AI 销售开单 MCP
+# GJP ERP AI 业务 MCP
 
-基于 AgentScope 2.0.7 的完整销售单 MCP 服务，服务名为 `erp-billing`。
+基于 MCP Python SDK 的 ERP 业务 MCP 服务，服务名为 `erp-billing`，覆盖管家婆
+云创业版销售、采购、库存、资金往来与报表的对话式业务场景，共 59 个工具。
 
 ```text
-AI 平台 / SaaS 对话页
+AI 平台 / SaaS 对话页 / WorkBuddy
   │ Authorization: Bearer <ERP JWT / OAuth2 token>
   ▼
-ERP 开单 MCP
+ERP 业务 MCP（erp_billing.app / erp_billing.workbuddy_app）
   ├─ McpIdentityResolver：解析身份与 billing scopes
   ├─ McpToolSetResolver：按 tenant/account/session 隔离会话
   ├─ BillingToolSet：资料追问、商品匹配、预览和提交
@@ -25,52 +26,31 @@ ERP JWT / OAuth2 Bearer，服务端只从 payload 解析无凭据身份，并在
 按当前请求注入原 Bearer；账号、密码、验证码、Cookie 和 Token 都不进入模型可见
 工具参数。
 
-## 销售单流程
+## 业务场景
 
-业务必填项：
+五个业务域，按场景组织工具，不镜像 ERP 全部接口：
 
-- 客户
-- 出库仓库
-- 经手人
-- 录单日期（`YYYY-MM-DD`）
-- 商品明细
-
-备注可选，最多 200 字。接口必填的 `id=0` 与 `saveType` 由工具内部管理：草稿
-`0`、预收 `1`、正式 `2`。
-
-MCP 发布十个工具：
-
-| 工具 | 作用 |
+| 业务域 | 场景 |
 |---|---|
-| `syncProducts` | 同步当前账号可见商品到隔离会话内存 |
-| `listProducts` | 分页浏览商品目录 |
-| `searchProducts` | 按关键词定位真实 ERP 商品 |
-| `searchBillingReferences` | 查询客户、仓库或经手人候选 |
-| `previewSalesOrder` | 返回有序待办、商品匹配和不可变销售单预览 |
-| `submitSalesOrder` | 用户确认后以 `billing:write` 写入真实 ERP |
-| `getSalesOrder` | 查询销售单详情 |
-| `listSalesOrders` | 分页查询销售单列表 |
-| `voidSalesOrder` | 用户确认后作废销售单 |
-| `updateSalesOrder` | 用户确认后修改销售单 |
+| 销售 | 销售单开单、修改、作废、查询；销售退货（含快捷退货）；继续收款 |
+| 采购 | 采购单开单、修改、作废、查询；采购退货；继续付款 |
+| 库存 | 库存查询、库存流水、库存调拨、其他出入库（报损报溢）、预警与采购建议 |
+| 资金往来 | 收款单、付款单（含核销）、应收/应付汇总与明细 |
+| 报表分析 | 销售/采购/利润报表、财务状况、结算统计、客户对账（只读） |
 
-实际调用接口：
+基础资料（商品、客户、供应商、仓库、职员、结算账户）只开放只读查询。全部
+工具清单与对应 ERP 接口域见 [AGENTS.md](AGENTS.md) 与
+[工具、API 与商品匹配](docs/architecture/ai-billing-tools-api-matching.md)。
 
-```text
-GET  /product/page
-GET  /customer/page
-GET  /warehouse/page
-GET  /staff/page
-POST /sales/orders
-GET  /sales/orders/page
-GET  /sales/orders/{id}
-PUT  /sales/orders/{id}
-PUT  /sales/orders/{id}/void
-```
+## 写操作两段式确认
 
-只有 `previewSalesOrder` 返回 `ready_to_submit=true` 且
-`required_actions=["confirm_submit"]`，用户明确确认当前预览，并且调用身份具有
-`billing:write` 时，才允许提交。`submitSalesOrder` 还要求唯一
+所有写单据沿用 preview → submit：预览生成不可变 payload 并返回
+`preview_id`，只有预览返回 `ready_to_submit=true` 且
+`required_actions=["confirm_submit"]`、用户明确确认当前预览、并且调用身份
+具有 `billing:write` 时才允许提交。`submit` 系列工具要求唯一
 `idempotency_key`；当前实现提供会话内防重，生产多副本应接入共享幂等存储。
+除销售单暴露 `save_type`（草稿 `0`、预收 `1`、正式 `2`）外，其余单据统一
+`saveType=2` 保存过账，不暴露草稿态。
 
 提示词只保留两个入口：`ERP_BILLING_MCP_INSTRUCTIONS` 由 MCP initialize 自动下发，
 `ERP_BILLING_SYSTEM_PROMPT` 供 AI 平台装配 Agent。两者职责不同，不需要对接方再
@@ -88,8 +68,9 @@ uv run ruff check src tests
 
 ```text
 src/
-├── erp_billing/  # 销售单领域、ToolSet、Port、Adapter、Prompt 和 MCP
+├── erp_billing/  # ERP 业务领域、ToolSet、Port、Adapter、Prompt 和 MCP 入口
 └── gjp_common/   # 身份、固定端点、凭据、MCP、配置和日志
+integrations/workbuddy/  # WorkBuddy 连接器元数据与 erp-billing Skill
 ```
 
 主要文档：

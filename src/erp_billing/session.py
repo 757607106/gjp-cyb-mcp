@@ -102,7 +102,8 @@ class ErpBillingSession:
         self._matcher = ProductMatcher(catalog, settings)
         self._matcher_catalog: ProductCatalog | None = catalog
         self._match_logger = match_logger
-        self._prepared_sales_orders: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
+        # 单据预览：preview_id 前缀标识单据类型，提交时校验类型匹配
+        self._prepared_documents: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
         self.submission_lock = asyncio.Lock()
         self._uncertain_previews: set[str] = set()
         self._reference_options: dict[tuple[str, str], dict[str, Any]] = {}
@@ -386,49 +387,56 @@ class ErpBillingSession:
     def reference_by_id(self, kind: str, identifier: str) -> dict[str, Any] | None:
         return deepcopy(self._reference_options.get((kind, identifier)))
 
-    def store_prepared_sales_order(
+    def store_prepared_document(
         self,
+        kind: str,
         payload: dict[str, Any],
         summary: dict[str, Any],
     ) -> str:
-        """保存不可变销售单预览，供明确确认后的提交工具引用。"""
-        preview_id = "sales-preview-" + uuid4().hex
-        self._prepared_sales_orders[preview_id] = (
+        """保存不可变单据预览，供明确确认后的提交工具引用。
+
+        preview_id 前缀携带单据类型，提交时校验类型匹配，防止把
+        销售单预览当采购单提交之类的串用。
+        """
+        preview_id = "%s-preview-%s" % (kind, uuid4().hex)
+        self._prepared_documents[preview_id] = (
             deepcopy(payload),
             deepcopy(summary),
         )
-        while len(self._prepared_sales_orders) > 20:
-            oldest = next(iter(self._prepared_sales_orders))
-            self._prepared_sales_orders.pop(oldest)
+        while len(self._prepared_documents) > 20:
+            oldest = next(iter(self._prepared_documents))
+            self._prepared_documents.pop(oldest)
             self._uncertain_previews.discard(oldest)
         return preview_id
 
-    def require_prepared_sales_order(
+    def require_prepared_document(
         self,
+        kind: str,
         preview_id: str,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        """返回销售单预览副本，阻止提交阶段篡改已确认内容。"""
-        if preview_id.strip() in self._uncertain_previews:
+        """返回单据预览副本，阻止提交阶段篡改已确认内容。"""
+        token = preview_id.strip()
+        if token in self._uncertain_previews:
             raise DomainError(
-                "erp_sales_order_result_unknown",
-                "该预览的提交结果尚未确认，请先查询 ERP 核对，勿直接重复开单",
+                "erp_document_result_unknown",
+                "该预览的提交结果尚未确认，请先查询 ERP 核对，勿直接重复提交",
             )
-        stored = self._prepared_sales_orders.get(preview_id.strip())
-        if stored is None:
+        stored = self._prepared_documents.get(token)
+        if stored is None or not token.startswith("%s-preview-" % kind):
             raise DomainError(
-                "erp_sales_order_preview_not_found",
-                "销售单预览不存在或已失效，请重新生成预览",
+                "erp_document_preview_not_found",
+                "预览不存在、已失效或类型不符，请重新生成预览",
             )
         return deepcopy(stored[0]), deepcopy(stored[1])
 
     def mark_submission_uncertain(self, preview_id: str) -> None:
         """阻止同预览在远端结果未知时重复写入。"""
-        if preview_id.strip() in self._prepared_sales_orders:
+        if preview_id.strip() in self._prepared_documents:
             self._uncertain_previews.add(preview_id.strip())
 
-    def consume_prepared_sales_order(self, preview_id: str) -> None:
+    def consume_prepared_document(self, preview_id: str) -> None:
         """提交成功后移除预览，同一预览不能以新幂等键再次提交。"""
-        self._prepared_sales_orders.pop(preview_id.strip(), None)
+        self._prepared_documents.pop(preview_id.strip(), None)
         self._uncertain_previews.discard(preview_id.strip())
 
     def submission_result(self, idempotency_key: str) -> dict[str, Any] | None:

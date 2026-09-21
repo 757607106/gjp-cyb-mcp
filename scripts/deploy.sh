@@ -1,6 +1,10 @@
 #!/bin/bash
 # ERP 开单 MCP 一键部署：拉取代码、同步依赖、重启并验证服务。
 #
+# 仅用于服务器部署：pull_code 会 git reset --hard 丢弃未提交改动，
+# 日志写 /var/log 且依赖 Linux ss 命令。本地启动等价命令见 AGENTS.md
+# 「本地启动服务」，不要在本地直接运行本脚本。
+#
 # 用法：
 #   ./scripts/deploy.sh                    # main
 #   BRANCH=test ./scripts/deploy.sh        # test

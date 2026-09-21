@@ -926,18 +926,7 @@ def test_billing_toolset_exposes_complete_sales_order_tools(tmp_path):
     )
     toolset = _billing_toolset(session)
 
-    assert {tool.name for tool in toolset.local_tools()} == {
-        "sync_products",
-        "list_products",
-        "search_products",
-        "search_billing_references",
-        "preview_sales_order",
-        "submit_sales_order",
-        "get_sales_order",
-        "list_sales_orders",
-        "void_sales_order",
-        "update_sales_order",
-    }
+    assert {tool.name for tool in toolset.tools()} == set(BILLING_MCP_TOOL_NAMES)
     assert toolset.get("sync_products").is_read_only is False
     assert toolset.get("list_products").is_read_only is True
     assert toolset.get("search_products").is_read_only is True
@@ -948,7 +937,7 @@ def test_billing_toolset_exposes_complete_sales_order_tools(tmp_path):
     assert toolset.get("list_sales_orders").is_read_only is True
     assert toolset.get("void_sales_order").is_read_only is False
     assert toolset.get("update_sales_order").is_read_only is False
-    for tool in toolset.local_tools():
+    for tool in toolset.tools():
         schema_text = json.dumps(tool.input_schema, ensure_ascii=False)
         assert "output_path" not in schema_text
         assert "catalog_path" not in schema_text
@@ -1369,7 +1358,7 @@ def test_complete_sales_order_preview_confirmation_submit_and_idempotency(tmp_pa
         "business-request-1",
         confirmed_by_user=False,
     ))
-    assert rejected["error"]["code"] == "erp_sales_order_confirmation_required"
+    assert rejected["error"]["code"] == "erp_document_confirmation_required"
     assert api.created_payloads == []
 
     submitted = asyncio.run(toolset.submit_sales_order(
@@ -1446,7 +1435,7 @@ def test_submit_consumes_preview_after_success(tmp_path):
         confirmed_by_user=True,
     ))
     assert resubmitted["ok"] is False
-    assert resubmitted["error"]["code"] == "erp_sales_order_preview_not_found"
+    assert resubmitted["error"]["code"] == "erp_document_preview_not_found"
     assert len(api.created_payloads) == 1
 
 
@@ -1512,7 +1501,7 @@ def test_reference_outputs_preserve_internal_ids(tmp_path):
     options = asyncio.run(toolset.search_billing_references("customer", "客户甲"))
 
     assert options["ok"] is True
-    assert options["options"] == [{"id": "CUS-1", "code": "C001", "name": "客户甲", "is_default": False}]
+    assert options["options"] == [{"id": "CUS-1", "code": "C001", "name": "客户甲", "is_default": False, "is_system": False}]
     assert options["page"] == 1
     assert options["page_size"] == 5
     assert options["total"] == 1
@@ -1533,7 +1522,7 @@ def test_reference_outputs_preserve_internal_ids(tmp_path):
     assert ambiguous["ready_to_submit"] is False
     for resolution in ambiguous["reference_resolutions"].values():
         assert resolution["status"] == "ambiguous"
-        assert _option_keys(resolution["candidates"]) == {"id", "code", "name", "is_default"}
+        assert _option_keys(resolution["candidates"]) == {"id", "code", "name", "is_default", "is_system"}
     assert ambiguous["required_actions"] == [
         "select_customer",
         "select_warehouse",
@@ -1632,7 +1621,7 @@ def test_search_billing_references_passes_page_to_api(tmp_path):
 
     assert result["ok"] is True
     assert api.reference_calls == [("客户", 5, 3)]
-    assert result["options"] == [{"id": "CUS-3", "code": "", "name": "客户3页", "is_default": False}]
+    assert result["options"] == [{"id": "CUS-3", "code": "", "name": "客户3页", "is_default": False, "is_system": False}]
     assert result["page"] == 3
     assert result["page_size"] == 5
     assert result["total"] == 5
@@ -2146,7 +2135,7 @@ def test_billing_tools_carry_output_schema(tmp_path):
         [{"ptypeid": "P001", "pfullname": "土豆", "unit": "斤"}],
     )
     toolset = _billing_toolset(session)
-    by_name = {tool.name: tool for tool in toolset.local_tools()}
+    by_name = {tool.name: tool for tool in toolset.tools()}
 
     assert set(by_name) == set(BILLING_MCP_TOOL_NAMES)
     for name in BILLING_MCP_TOOL_NAMES:
@@ -2210,7 +2199,7 @@ def test_tool_outputs_validate_against_output_schema(tmp_path):
             )
 
     toolset = _billing_toolset(session, BillingApi())
-    by_name = {tool.name: tool for tool in toolset.local_tools()}
+    by_name = {tool.name: tool for tool in toolset.tools()}
 
     synced = asyncio.run(toolset.sync_products())
     jsonschema.validate(synced, by_name["sync_products"].output_schema)
@@ -2390,7 +2379,7 @@ def test_void_sales_order_requires_confirmation(tmp_path):
     ))
 
     assert rejected["ok"] is False
-    assert rejected["error"]["code"] == "erp_sales_order_confirmation_required"
+    assert rejected["error"]["code"] == "erp_document_confirmation_required"
     assert not getattr(api, "voided_order_ids", [])
 
 
@@ -2501,7 +2490,7 @@ def test_update_sales_order_requires_confirmation(tmp_path):
     ))
 
     assert rejected["ok"] is False
-    assert rejected["error"]["code"] == "erp_sales_order_confirmation_required"
+    assert rejected["error"]["code"] == "erp_document_confirmation_required"
     assert not getattr(api, "updated_payloads", [])
 
 

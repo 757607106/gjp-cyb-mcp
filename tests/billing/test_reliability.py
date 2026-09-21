@@ -1,7 +1,6 @@
 """验证异常提交、目录生命周期与升级后的工具行为。"""
 
 import asyncio
-import json
 from types import SimpleNamespace
 
 import httpx
@@ -13,19 +12,16 @@ from erp_billing.catalog_state import TenantCatalogState
 from erp_billing.toolset import BillingToolSet
 from gjp_common.context import InvocationContext
 from gjp_common.errors import DomainError
-from gjp_common.mcp import _invoke_tool
-from gjp_common.tools import SessionFunctionTool
 from tests.billing.test_erp_billing import CompleteSalesOrderApi, _billing_toolset, _session
 
 
 def _prepared(tmp_path, api):
     session = _session(tmp_path, [{"id": "1", "name": "土豆", "unit": "斤", "salesPrice": 3.5}])
     toolset = _billing_toolset(session, api)
-    preview = session.store_prepared_sales_order(
-        {"items": [{"productId": "1", "quantity": 2}]},
-        {"save_type": "final"},
+    preview_id = session.store_prepared_document(
+        "sales_order", {"items": [{"productId": "1", "quantity": 2}]}, {"save_type": "final"},
     )
-    return toolset, preview
+    return toolset, preview_id
 
 
 @pytest.mark.parametrize("code", ["business_write_result_unknown", "erp_live_response_invalid"])
@@ -40,7 +36,7 @@ def test_uncertain_submission_cannot_be_replayed_with_either_key(tmp_path, code)
         tools, preview = _prepared(tmp_path, api)
         for key in ("same", "same", "different"):
             result = await tools.submit_sales_order(preview, key, True)
-            assert result["error"]["code"] == "erp_sales_order_result_unknown"
+            assert result["error"]["code"] == "erp_document_result_unknown"
         assert len(api.created_payloads) == 1
 
     asyncio.run(scenario())
@@ -75,7 +71,7 @@ def test_cancel_does_not_allow_duplicate_create(tmp_path, cancel_during_detail):
         if cancel_during_detail:
             assert replay["submitted"] and replay["idempotent_replay"]
         else:
-            assert replay["error"]["code"] == "erp_sales_order_result_unknown"
+            assert replay["error"]["code"] == "erp_document_result_unknown"
 
     asyncio.run(scenario())
 
@@ -166,31 +162,6 @@ def test_modify_rejects_invalid_quantity(quantity):
 def test_modify_rejects_invalid_price(price):
     with pytest.raises(DomainError):
         BillingToolSet._build_modify_items([{"product_id": "1", "quantity": 1, "unit_price": price}])
-
-
-def test_raw_scalar_result_executes_once():
-    calls = []
-
-    async def scalar():
-        """标量返回也只能执行一次。"""
-        calls.append(True)
-        return "done"
-
-    assert asyncio.run(_invoke_tool(SessionFunctionTool(scalar), {})) == {"ok": True, "result": "done"}
-    assert calls == [True]
-
-
-def test_agentscope_standard_call_preserves_business_result():
-    async def sample(value: int = 2):
-        """框架标准执行路径与 MCP 原始执行路径保持业务结果一致。"""
-        return {"ok": True, "value": value}
-
-    async def scenario():
-        tool = SessionFunctionTool(sample)
-        chunk = await tool(value=3)
-        assert json.loads(chunk.content[0].text) == await _invoke_tool(tool, {"value": 3})
-
-    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("method", ["GET", "POST", "PUT"])

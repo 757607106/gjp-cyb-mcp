@@ -363,3 +363,22 @@ def test_workbuddy_connector_assets_keep_auth_modes_separate():
     assert token_meta["source"] == "gjp-erp-billing-token"
     assert token_meta["auth_mode"] == "token"
     assert token_mcp["mcpServers"]["erp-billing"]["headers"] == {"X-API-Key": "${ERP_API_KEY}"}
+
+
+def test_workbuddy_skill_allowed_tools_match_published_whitelist():
+    """SKILL.md 的 allowed-tools 必须与服务端发布白名单保持一致。"""
+    from erp_billing.toolset import BILLING_MCP_TOOL_NAMES
+    from gjp_common.mcp import _snake_to_camel
+
+    skill = (
+        Path(__file__).resolve().parents[2]
+        / "integrations" / "workbuddy" / "gjp-erp-billing" / "skills" / "erp-billing" / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    for line in skill.splitlines():
+        if line.startswith("allowed-tools:"):
+            allowed = frozenset(part.strip() for part in line.split(":", 1)[1].split(","))
+            break
+    else:
+        raise AssertionError("SKILL.md 缺少 allowed-tools 声明")
+    expected = frozenset(_snake_to_camel(name) for name in BILLING_MCP_TOOL_NAMES)
+    assert allowed == expected

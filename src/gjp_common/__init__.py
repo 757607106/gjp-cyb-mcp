@@ -8,15 +8,15 @@ from .connections import (
 )
 from .context import InvocationContext, InvocationContextStore
 from .errors import DomainError
-from .toolset import AgentScopeToolSet
+from .toolset import SessionToolSet
 
 __all__ = [
-    "AgentScopeToolSet",
     "BusinessApiCredential",
     "BusinessApiCredentialProvider",
     "DomainError",
     "InvocationContext",
     "InvocationContextStore",
+    "SessionToolSet",
     "business_api_url",
     "normalize_business_api_base_url",
 ]

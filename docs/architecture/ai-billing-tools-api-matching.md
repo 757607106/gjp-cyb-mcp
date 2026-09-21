@@ -1,11 +1,16 @@
-# AI 开单工具、ERP API 与商品匹配
+# AI 业务工具、ERP API 与商品匹配
 
-最后更新：2026-08-04
+最后更新：2026-09-20
 
-本文描述 ERP 开单服务的最终生产边界。业务方前端负责把文字、语音和图片整理成
-当前订单的完整文本；开单 MCP 负责同步真实商品、解析客户/仓库/经手人、校验
-必填项、生成销售单预览，并在用户明确确认后写入真实 ERP。工具通过 MCP 返回
-结构化 JSON；服务不生成商品目录或草稿 JSON 文件。
+本文描述 ERP 业务 MCP 服务的最终生产边界。业务方前端负责把文字、语音和图片整理成
+当前订单的完整文本；MCP 负责同步真实商品、解析客户/仓库/经手人、校验必填项、
+生成单据预览，并在用户明确确认后写入真实 ERP。工具通过 MCP 返回结构化 JSON；
+服务不生成商品目录或草稿 JSON 文件。
+
+服务共发布 59 个工具，覆盖销售、采购、退货、库存与资金报表五个业务域（完整清单见
+`AGENTS.md`「业务场景覆盖」）。所有写操作复用同一套「预览 → 确认 → 提交」两段式
+契约；本文以销售单链路为主线展开，采购单、退货单、库存单据和收付款单的
+`previewXxx` / `submitXxx` 遵循相同模式，仅业务字段不同。
 
 ## 1. 总体链路
 
@@ -46,7 +51,7 @@ flowchart LR
 ```
 
 MCP 不接收音频、图片、附件、文件路径或媒体 URL，也不提供 ASR/OCR。使用
-多模态模型（VL）时，Agent 按 `ERP_BILLING_SYSTEM_PROMPT` 第八章规则直接
+多模态模型（VL）时，Agent 按 `ERP_BILLING_SYSTEM_PROMPT` 第十二章规则直接
 读图并组装 `order_text`，`source` 传 `image`；非 VL 模型仍由前端 OCR
 转文本后传入。无论哪种方式，`previewSalesOrder` 接收的都是文本。
 
@@ -70,32 +75,91 @@ ERP 地址由部署环境 `ERP_BILLING_BASE_URL` 固定；同一 ERP Bearer 由�
 根据 `InvocationContext` 注入当前请求。URL 和 Bearer 均不进入工具参数、模型
 上下文或工具结果。
 
-`BillingApiPort` 只保留完整销售单流程所需的固定接口：
+`BillingApiPort` 按业务域保留固定接口，全部以 `InvocationContext` 为第一参数：
 
 ```python
+# 商品目录与基础资料
 fetch_products(context, limit=None) -> BillingProductSnapshot
-search_customers(context, keyword, limit=10) -> BillingReferenceSnapshot
-search_warehouses(context, keyword, limit=10) -> BillingReferenceSnapshot
-search_staff(context, keyword, limit=10) -> BillingReferenceSnapshot
+search_customers / search_warehouses / search_staff
+search_suppliers / search_settlement_accounts
+
+# 销售单与销售退货
 create_sales_order(context, payload) -> BillingSalesOrderResult
 get_sales_order_detail(context, order_id) -> BillingSalesOrderDetailResult
 search_sales_orders(context, ...) -> BillingSalesOrderPageResult
 void_sales_order(context, order_id) -> None
 update_sales_order(context, order_id, payload) -> BillingSalesOrderResult
+receive_sales_order(context, payload)                    # 销售单继续收款
+get_sales_order_quick_return(context, order_id)          # 退货快捷预填
+create_sales_return / get_sales_return_detail
+search_sales_returns / void_sales_return
+
+# 采购单与采购退货
+create_purchase_order / get_purchase_order_detail / search_purchase_orders
+void_purchase_order / update_purchase_order
+pay_purchase_order(context, payload)                     # 采购单继续付款
+get_purchase_order_quick_return / create_purchase_return
+get_purchase_return_detail / search_purchase_returns / void_purchase_return
+
+# 库存
+query_stock_page / get_stock_by_product / get_stock_summary
+query_stock_logs / list_stock_alerts / get_purchase_suggestions
+list_stock_doc_types(context, doc_direction)
+create_stock_transfer / get_stock_transfer_detail
+create_other_stock_doc / get_other_stock_doc_detail
+
+# 资金与报表
+create_receipt_order / create_payment_order
+get_financial_order_detail(context, kind, order_id) / list_financial_orders
+void_financial_order(context, kind, order_id) -> None
+list_receivables / list_payables / get_financial_status
+query_sales_report / query_purchase_report / query_profit_report
+query_settlement_report / query_reconciliation
 ```
 
-Adapter 使用固定相对路径调用云创业版商品目录与销售单接口：
+Adapter 使用固定相对路径调用云创业版接口，按业务域分组：
 
 ```text
+# 商品目录与基础资料
 GET  /product/page?pageNum=1&pageSize=100&status=1
-GET  /customer/page?pageNum=1&pageSize=10&status=1&keyword=...
-GET  /warehouse/page?pageNum=1&pageSize=10&status=1&keyword=...
-GET  /staff/page?pageNum=1&pageSize=10&status=1&keyword=...
-POST /sales/orders
-GET  /sales/orders/{id}
-GET  /sales/orders/page?pageNum=1&pageSize=20&sortBy=updateTime&orderType=desc
-PUT /sales/orders/{id}/void
-PUT /sales/orders/{id}
+GET  /customer/page、/warehouse/page、/staff/page
+GET  /supplier/page、/settlement-account/page
+
+# 销售单与销售退货
+POST /sales/orders          GET  /sales/orders/{id}
+GET  /sales/orders/page     PUT  /sales/orders/{id}
+PUT  /sales/orders/{id}/void
+POST /sales/orders/receipt                       # 销售单继续收款
+GET  /sales/orders/{id}/quick-return             # 退货快捷预填
+POST /sales/returns          GET  /sales/returns/{id}
+GET  /sales/returns/page     PUT  /sales/returns/{id}/void
+
+# 采购单与采购退货
+POST /purchase/orders        GET  /purchase/orders/{id}
+GET  /purchase/orders/page   PUT  /purchase/orders/{id}
+PUT  /purchase/orders/{id}/void
+POST /purchase/orders/payment                    # 采购单继续付款
+GET  /purchase/orders/{id}/quick-return          # 退货快捷预填
+POST /purchase/returns       GET  /purchase/returns/{id}
+GET  /purchase/returns/page  PUT  /purchase/returns/{id}/void
+
+# 库存
+GET  /inventory/page、/inventory/detail-by-product、/inventory/summary
+GET  /inventory/logs/page、/inventory/alerts/list、/inventory/alerts/purchase-suggestions
+GET  /inventory/inbound-type/list、/inventory/outbound-type/list
+POST /inventory/transfers    GET  /inventory/transfers/{id}
+POST /inventory/other-inbounds、/inventory/other-outbounds
+
+# 资金与报表
+POST /financial/receipt-orders、/financial/payment-orders
+GET  /financial/receipt-orders/page、/financial/payment-orders/page
+GET  /financial/receivables/{...}、/financial/payables/{...}、/financial/status
+GET  /sales/analysis、/sales/details/page、/sales/details/summary
+GET  /sales/ranking/product、/sales/ranking/customer
+GET  /purchase/statistics、/purchase/details/page、/purchase/details/summary
+GET  /financial/profits/summary、/financial/profits/by-customer、/financial/profits/by-product
+GET  /financial/settlements/statistics
+GET  /financial/reconciliation/summary/page、/financial/reconciliation/statement/page
 ```
 
 接口顶层成功码为 `A00000`，商品数组位于 `data.list`，总数位于 `data.total`。
@@ -125,14 +189,17 @@ Adapter 按 100 条一页自动翻页（减少串行往返，保护首单耗时�
 
 ## 3. 对外工具
 
-开单 Agent 和远程 MCP 发布以下十个工具：
+开单服务通过远程 MCP 共发布 59 个工具：商品目录与基础资料 4 个、销售单 6 个、
+采购单 6 个、采购退货 5 个、销售退货 5 个、单据收付款 4 个、库存单据 4 个、
+收付款单 10 个、库存与往来查询 10 个、报表分析 5 个。完整清单与输入 Schema 以
+`AGENTS.md`「业务场景覆盖」和 MCP `tools/list` 为准。销售单链路的工具如下：
 
 | 工具 | 输入 | 职责 | 主要输出 |
 |---|---|---|---|
 | `syncProducts` | `limit?` | 从当前 ERP 账号同步商品并替换当前 Session 的内存目录 | `catalog_version`、`product_count`、`sample_products` |
 | `listProducts` | `page?`、`page_size?` | 分页列出当前会话商品目录中的所有商品；目录为空时自动同步 | `page`、`page_size`、`total`、`has_more`、`products` |
 | `searchProducts` | `keywords`、`limit?` | 按 ID、编号、条码、名称、同义词组和模糊相似度批量查询已有商品 | 每个关键词的匹配状态、唯一商品或 `recommendations` |
-| `searchBillingReferences` | `reference_type`、`keyword?`、`limit?`、`page?` | 查询客户、出库仓库或经手人候选，支持翻页 | 分页元数据、名称、默认标记 |
+| `searchBillingReferences` | `reference_type`、`keyword?`、`limit?`、`page?` | 查询客户、供应商、仓库、经手人或结算账户候选，支持翻页 | 分页元数据、名称、默认标记 |
 | `previewSalesOrder` | 完整销售单业务字段、`save_type`、`confirmed_products?`、`partial?` | 校验必填项、解析基础资料、匹配商品并保存不可变预览 | 有序待办、缺失项、候选、商品数组、预览金额、`preview_id` |
 | `submitSalesOrder` | `preview_id`、可选 `idempotency_key`、`confirmed_by_user` | 明确确认后调用真实写单接口 | `order_no`（业务单号）、保存类型、幂等重放标志 |
 | `getSalesOrder` | `order_id` | 查询销售单详情，含商品明细、收款记录和状态 | `order`（完整 SalesOrderVO） |
@@ -140,11 +207,18 @@ Adapter 按 100 条一页自动翻页（减少串行往返，保护首单耗时�
 | `voidSalesOrder` | `order_id`、`confirmed_by_user` | 用户确认后作废销售单，不可恢复 | `voided`、`order_no`（业务单号） |
 | `updateSalesOrder` | `order_id`、`order_date?`、`handler_id?`、`items?`、`customer_id?`、`warehouse_id?`、`save_type?`、`remark?`、`confirmed_by_user` | 用户确认后修改已存在销售单；建议先查详情；经手人、客户、仓库可传内部 ID 或名称（纯数字视为内部 ID，名称须唯一匹配） | `modified`、`order_no`（业务单号） |
 
-十个工具的返回值都是 MCP 结构化 JSON 内容。`submitSalesOrder`、
-`voidSalesOrder` 和 `updateSalesOrder` 具有 ERP 写副作用，要求 `billing:write`、
-明确用户确认；`submitSalesOrder` 可省略幂等键（默认绑定 preview_id），预览提交成功后即失效，
-不可用新幂等键重复提交。`getSalesOrder` 和
-`listSalesOrders` 是只读操作，要求 `billing:read`。服务不维护可逐行修改的文件草稿，
+采购单、退货单、库存单据与收付款单的工具命名遵循同一模式：`previewXxx`
+生成不可变预览，`submitXxx` 凭 `preview_id` 与 `confirmed_by_user` 真实写入，
+`getXxx` / `listXxx` 只读查询，`voidXxx` 确认后作废；提交签名统一为
+`(preview_id, idempotency_key?, confirmed_by_user)`。除销售单提供
+`save_type`（draft=0 / pre_receipt=1 / final=2）外，其余写操作固定
+`saveType=2` 正式生效。
+
+所有工具的返回值都是 MCP 结构化 JSON 内容。全部 `submitXxx`、`voidXxx` 和
+`updateXxx` 具有 ERP 写副作用，要求 `billing:write`、
+明确用户确认；`submitXxx` 可省略幂等键（默认绑定 preview_id），预览提交成功后即失效，
+不可用新幂等键重复提交。`getXxx` 和
+`listXxx` 是只读操作，要求 `billing:read`。服务不维护可逐行修改的文件草稿，
 但会在隔离 Session 中短期保存不可变提交预览和成功幂等结果。
 
 `listProducts`、`searchBillingReferences` 和 `listSalesOrders` 统一返回
@@ -159,7 +233,8 @@ Adapter 按 100 条一页自动翻页（减少串行往返，保护首单耗时�
 1. 从 `InvocationContext` 取得当前租户和账号，并校验 `billing:read`。
 2. 通过 `BillingApiPort.fetch_products()` 调用当前 ERP 账号。
 3. 归一化并过滤商品目录。
-4. 用接口结果替换当前 Session 的租户隔离内存商品目录。
+4. 用接口结果刷新租户级共享的内存商品目录；显式 `limit` 截断同步只作用于
+   当前会话，不影响同租户其他会话。
 5. 在内存中重建 `ProductCatalog` 和 `ProductMatcher`。
 6. 仅返回目录版本和商品数量，不创建商品目录文件，也不返回主机文件路径或业务
    凭据。
@@ -174,12 +249,12 @@ Adapter 按 100 条一页自动翻页（减少串行往返，保护首单耗时�
 }
 ```
 
-`searchProducts` 和 `previewSalesOrder` 都只使用当前 Session 已加载的内存目录。
+`searchProducts` 和 `previewSalesOrder` 都只使用已加载的内存目录。
 `searchProducts` 在目录为空时返回错误并提示先调用 `syncProducts`；
 `previewSalesOrder` 在目录为空时自动执行一次同步（与 `syncProducts` 相同的鉴权和
 归一化流程）后再匹配，避免“先报错、再由模型补调 `syncProducts`”的额外模型
-往返；自动同步失败时直接返回底层错误。Session 释放后，同步得到的商品目录
-随之释放，不提供运行时商品目录文件。
+往返；自动同步失败时直接返回底层错误。目录随租户缓存常驻内存、按 TTL 后台
+刷新，不提供运行时商品目录文件。
 
 ## 5. 完整同义词组
 
@@ -477,8 +552,9 @@ ERP 商品 ID。
 
 ## 9. 安全与隔离
 
-- 商品目录、ToolSet 和运行时按 `(tenant_id, account_id, session_id)` 隔离。
-- ERP API 同步的商品只保存在当前 Session 内存中，不生成商品目录文件。
+- ToolSet 和运行时按 `(tenant_id, account_id, session_id)` 隔离。
+- 商品目录是租户级共享的内存缓存（TTL 与过期后台刷新），会话淘汰后不回退
+  冷启动；ERP API 同步的商品不落盘，不生成商品目录文件。
 - `ERP_BILLING_PRODUCT_CATALOG`、`alias_path` 和 `category_path` 如有配置，仅作为服务端只读输入；
   模型和前端不能提供主机文件路径。
 - Adapter 只调用源码中固定的相对路径。

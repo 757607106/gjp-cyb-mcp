@@ -1,33 +1,30 @@
-"""把 AgentScope ToolBase 原样导出为 MCP Tool。
+"""把 SessionFunctionTool 发布为 MCP Python SDK (FastMCP) 工具。
 
-AgentScope 与 MCP 共用工具名称、描述和 input_schema，避免维护两套协议定义。
-MCP 请求进入时先调用 IdentityResolver；对接方应在 Resolver 中校验 JWT/OAuth
-访问令牌，再返回不含敏感凭据的 InvocationContext。
+工具按「schema 工具集 + 会话工具集」两层发布：客户端 list_tools 只见
+schema 集合（用于展示契约），每次调用先经 IdentityResolver 解析
+Bearer/X-API-Key 身份，再按 (tenant, account, session) 解析隔离的
+ToolSet，绑定 InvocationContext 后执行同名工具，预览与幂等状态随会话
+实例隔离。
 """
 
 from __future__ import annotations
 
+import functools
 import inspect
 import json
 import logging
 import time
-from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
+from collections.abc import Awaitable, AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from typing import Any, Protocol
 
-from agentscope.message import TextBlock
-from agentscope.tool import ToolBase, ToolChunk
-from mcp import types
-from mcp.server.lowlevel import Server
+from mcp.server.fastmcp import FastMCP
 from mcp.server.lowlevel.server import request_ctx
-from mcp.server.sse import SseServerTransport
-from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+from mcp.types import ToolAnnotations
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
-from starlette.routing import Mount
-from starlette.routing import BaseRoute
-from starlette.routing import Route
+from starlette.routing import BaseRoute, Route
 
 from .context import InvocationContext
 from .logging_config import (
@@ -37,7 +34,7 @@ from .logging_config import (
     error_text,
 )
 from .tools import SessionFunctionTool
-from .toolset import AgentScopeToolSet
+from .toolset import SessionToolSet
 
 logger = logging.getLogger(__name__)
 
@@ -63,11 +60,11 @@ def _snake_to_camel(name: str) -> str:
     若服务端仍下发 snake_case，模型会在 prompt 的 snake_case 与工具列表的
     camelCase 之间混淆而调用失败。在导出层统一转为 camelCase，让两端一致。
     """
-    parts = name.split("_")
+    parts = [part for part in name.split("_") if part]
     if len(parts) <= 1:
         return name
     return parts[0] + "".join(
-        part[:1].upper() + part[1:] for part in parts[1:] if part
+        part[:1].upper() + part[1:] for part in parts[1:]
     )
 
 
@@ -87,136 +84,207 @@ class McpToolSetResolver(Protocol):
     def resolve(
         self,
         context: InvocationContext,
-    ) -> AgentScopeToolSet | Awaitable[AgentScopeToolSet]:
+    ) -> SessionToolSet | Awaitable[SessionToolSet]:
         ...
 
 
 def create_mcp_server(
     name: str,
-    schema_toolset: AgentScopeToolSet,
+    schema_toolset: SessionToolSet,
     identity_resolver: McpIdentityResolver,
     toolset_resolver: McpToolSetResolver,
     instructions: str = "",
-) -> Server:
+) -> FastMCP:
     """创建产品 MCP Server；身份、会话和业务 API 鉴权均由对接层注入。
 
     instructions 由业务层传入精简使用契约，随 MCP initialize 下发，
     让未单独配置 System Prompt 的客户端也能获得最低限度的使用约束。
     """
-    server = Server(
+    server = FastMCP(
         name,
-        version="1.0.0",
         instructions=instructions.strip()
         or "业务身份由服务端认证，调用工具时不要传递账号、密码或访问令牌。",
+        stateless_http=True,
+        json_response=True,
     )
-    exported_tools = {
-        _snake_to_camel(tool.name): tool
-        for tool in schema_toolset.executable_tools()
-    }
+    exported_tools = schema_toolset.executable_tools()
+    for tool in exported_tools:
+        _register_session_tool(
+            server,
+            tool,
+            schema_toolset=schema_toolset,
+            identity_resolver=identity_resolver,
+            toolset_resolver=toolset_resolver,
+        )
+    _install_arguments_guard(server, exported_tools)
+    logger.info("MCP 工具列表 tools=%d", len(exported_tools))
+    return server
 
-    @server.list_tools()
-    async def list_tools() -> list[types.Tool]:
-        logger.info("MCP 工具列表 tools=%d", len(exported_tools))
-        return [
-            types.Tool(
-                name=exported_name,
-                description=tool.description,
-                inputSchema=tool.input_schema,
-                outputSchema=getattr(tool, "output_schema", None),
-                annotations=types.ToolAnnotations(
-                    readOnlyHint=tool.is_read_only,
-                    destructiveHint=not tool.is_read_only,
-                ),
-            )
-            for exported_name, tool in exported_tools.items()
-        ]
 
-    @server.call_tool()
-    async def call_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        started = time.perf_counter()
-        request_context = request_ctx.get()
-        try:
-            schema_tool = exported_tools[name]
-        except KeyError as exc:
-            raise ValueError("未知工具：%s" % name) from exc
-        logger.info("MCP 调用开始 tool=%s", name)
-        if logger.isEnabledFor(logging.DEBUG):
+def _register_session_tool(
+    server: FastMCP,
+    tool: SessionFunctionTool,
+    *,
+    schema_toolset: SessionToolSet,
+    identity_resolver: McpIdentityResolver,
+    toolset_resolver: McpToolSetResolver,
+) -> None:
+    """注册薄壳工具：签名与原函数一致，运行时分发到会话工具集。
+
+    薄壳经 functools.wraps 继承原函数签名与 docstring，FastMCP 据此生成
+    参数模型；发布层用业务声明的 input/output schema 覆盖，使枚举与
+    范围约束直接进入 MCP 协议。
+    """
+    exported_name = _snake_to_camel(tool.name)
+
+    @functools.wraps(tool.func)
+    async def shell(**kwargs: Any) -> dict[str, Any]:
+        return await _dispatch_tool(
+            exported_name,
+            tool,
+            schema_toolset=schema_toolset,
+            identity_resolver=identity_resolver,
+            toolset_resolver=toolset_resolver,
+            arguments=kwargs,
+        )
+
+    registered = server._tool_manager.add_tool(  # noqa: SLF001 - SDK 未公开按 Tool 注册入口
+        shell,
+        name=exported_name,
+        description=tool.description,
+        annotations=ToolAnnotations(
+            readOnlyHint=tool.is_read_only,
+            destructiveHint=not tool.is_read_only,
+        ),
+    )
+    registered.parameters = tool.input_schema
+    if tool.output_schema is not None:
+        registered.fn_metadata = registered.fn_metadata.model_copy(
+            update={"output_schema": tool.output_schema},
+        )
+
+
+def _install_arguments_guard(
+    server: FastMCP,
+    tools: Sequence[SessionFunctionTool],
+) -> None:
+    """重注册 lowlevel call_tool 回调，恢复参数契约校验。
+
+    FastMCP 以 validate_input=False 注册回调，其参数模型又会静默丢弃
+    未知参数：枚举、范围、必填与未知参数在协议层都不再被拦截。这里按
+    SDK 默认的 validate_input=True 重新注册守卫回调——lowlevel 先按
+    发布 inputSchema 执行官方 jsonschema 校验（违规返回 isError=True
+    的 "Input validation error: ..."），守卫再拦截未知参数名，返回
+    结构化 tool_arguments_invalid 供模型自行纠正，其余交回 FastMCP
+    原回调执行。
+    """
+    schemas = {_snake_to_camel(tool.name): tool.input_schema for tool in tools}
+    fastmcp_call_tool = server.call_tool
+
+    @server._mcp_server.call_tool()  # noqa: SLF001 - SDK 未公开覆盖回调注册入口
+    async def guarded_call_tool(name: str, arguments: dict[str, Any]) -> Any:
+        schema = schemas.get(name)
+        if schema is not None:
+            unknown = sorted(set(arguments) - set(schema.get("properties", {})))
+            if unknown:
+                logger.info("MCP 参数不匹配 tool=%s unknown=%s", name, unknown)
+                return {
+                    "ok": False,
+                    "error": {
+                        "code": "tool_arguments_invalid",
+                        "message": "工具参数不匹配：未知参数 %s" % "、".join(unknown),
+                    },
+                }
+        return await fastmcp_call_tool(name, arguments)
+
+
+async def _dispatch_tool(
+    exported_name: str,
+    schema_tool: SessionFunctionTool,
+    *,
+    schema_toolset: SessionToolSet,
+    identity_resolver: McpIdentityResolver,
+    toolset_resolver: McpToolSetResolver,
+    arguments: dict[str, Any],
+) -> dict[str, Any]:
+    started = time.perf_counter()
+    request_context = request_ctx.get()
+    logger.info("MCP 调用开始 tool=%s", exported_name)
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(
+            "MCP 请求详情 tool=%s auth=%s args=%s",
+            exported_name,
+            _masked_authorization(request_context),
+            clip_log_text(json.dumps(arguments, ensure_ascii=False)),
+        )
+        if credential_dump_enabled():
             logger.debug(
-                "MCP 请求详情 tool=%s auth=%s args=%s",
-                name,
-                _masked_authorization(request_context),
-                clip_log_text(json.dumps(arguments, ensure_ascii=False)),
+                "MCP 请求头 tool=%s headers=%s",
+                exported_name,
+                json.dumps(_request_headers(request_context), ensure_ascii=False),
             )
-            if credential_dump_enabled():
-                logger.debug(
-                    "MCP 请求头 tool=%s headers=%s",
-                    name,
-                    json.dumps(_request_headers(request_context), ensure_ascii=False),
-                )
+    try:
+        resolved = identity_resolver.resolve(request_context)
+        context = await resolved if inspect.isawaitable(resolved) else resolved
+    except Exception as exc:
+        logger.warning(
+            "MCP 鉴权失败 tool=%s auth=%s error=%s",
+            exported_name,
+            _masked_authorization(request_context),
+            error_text(exc),
+        )
+        raise
+    resolved_toolset = toolset_resolver.resolve(context)
+    runtime_toolset = (
+        await resolved_toolset
+        if inspect.isawaitable(resolved_toolset)
+        else resolved_toolset
+    )
+    if not isinstance(runtime_toolset, type(schema_toolset)):
+        raise TypeError(
+            "运行时 ToolSet 与服务产品不一致：期望 %s，实际 %s"
+            % (
+                type(schema_toolset).__name__,
+                type(runtime_toolset).__name__,
+            ),
+        )
+    runtime_tool = runtime_toolset.get(schema_tool.name)
+    if runtime_tool.input_schema != schema_tool.input_schema:
+        raise ValueError(
+            "运行时工具 schema 与 MCP 发布版本不一致：%s" % exported_name,
+        )
+    with runtime_toolset.bind_context(context):
         try:
-            resolved = identity_resolver.resolve(request_context)
-            context = await resolved if inspect.isawaitable(resolved) else resolved
+            result = await runtime_tool.invoke_raw(**arguments)
         except Exception as exc:
             logger.warning(
-                "MCP 鉴权失败 tool=%s auth=%s error=%s",
-                name,
-                _masked_authorization(request_context),
+                "MCP 调用失败 tool=%s tenant=%s session=%s elapsed=%dms error=%s",
+                exported_name,
+                context.tenant_id,
+                context.session_id,
+                elapsed_ms(started),
                 error_text(exc),
             )
             raise
-        resolved_toolset = toolset_resolver.resolve(context)
-        runtime_toolset = (
-            await resolved_toolset
-            if inspect.isawaitable(resolved_toolset)
-            else resolved_toolset
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(
+            "MCP 调用返回 tool=%s result=%s",
+            exported_name,
+            clip_log_text(json.dumps(result, ensure_ascii=False)),
         )
-        if not isinstance(runtime_toolset, type(schema_toolset)):
-            raise TypeError(
-                "运行时 ToolSet 与服务产品不一致：期望 %s，实际 %s"
-                % (
-                    type(schema_toolset).__name__,
-                    type(runtime_toolset).__name__,
-                ),
-            )
-        tool = runtime_toolset.get(schema_tool.name)
-        if tool.is_external_tool:
-            raise ValueError("MCP 不支持执行外部 HITL 工具：%s" % name)
-        if tool.input_schema != schema_tool.input_schema:
-            raise ValueError("运行时工具 schema 与 MCP 发布版本不一致：%s" % name)
-        with runtime_toolset.bind_context(context):
-            try:
-                result = await _invoke_tool(
-                    tool, arguments, tenant_id=context.tenant_id
-                )
-            except Exception as exc:
-                logger.warning(
-                    "MCP 调用失败 tool=%s tenant=%s session=%s elapsed=%dms error=%s",
-                    name,
-                    context.tenant_id,
-                    context.session_id,
-                    elapsed_ms(started),
-                    error_text(exc),
-                )
-                raise
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(
-                "MCP 调用返回 tool=%s result=%s",
-                name,
-                clip_log_text(json.dumps(result, ensure_ascii=False)),
-            )
-        logger.info(
-            "MCP 调用完成 ok=%s tool=%s tenant=%s account=%s session=%s request=%s elapsed=%dms",
-            result.get("ok", True),
-            name,
-            context.tenant_id,
-            context.account_id,
-            context.session_id,
-            context.request_id,
-            elapsed_ms(started),
-        )
-        return result
-
-    return server
+    if isinstance(result, dict):
+        _warn_large_result(result, exported_name, context.tenant_id)
+    logger.info(
+        "MCP 调用完成 ok=%s tool=%s tenant=%s account=%s session=%s request=%s elapsed=%dms",
+        result.get("ok", True) if isinstance(result, dict) else True,
+        exported_name,
+        context.tenant_id,
+        context.account_id,
+        context.session_id,
+        context.request_id,
+        elapsed_ms(started),
+    )
+    return result
 
 
 def _masked_authorization(mcp_request_context: Any) -> str:
@@ -258,127 +326,38 @@ def _request_headers(mcp_request_context: Any) -> dict[str, str]:
     return dict(headers)
 
 
-async def _invoke_tool(
-    tool: ToolBase,
-    arguments: dict[str, Any],
-    *,
-    tenant_id: str = "",
-) -> dict[str, Any]:
-    """执行 AgentScope 工具并返回 MCP structuredContent。
-
-    SessionFunctionTool 优先走 invoke_raw() 直接拿原始 dict，
-    避免 dict→JSON text→TextBlock→json.loads 的脆弱往返。
-    其他工具仍走标准 ToolChunk 序列化路径。
-    """
-    if isinstance(tool, SessionFunctionTool):
-        try:
-            # 只把参数绑定失败（名称或个数不匹配）转成结构化错误，
-            # 模型可自行纠正后重试；函数体内部的异常（含 TypeError）
-            # 属于服务端缺陷，如实上抛，不误导模型反复纠正参数。
-            tool.validate_arguments(**arguments)
-        except TypeError as exc:
-            return {
-                "ok": False,
-                "error": {
-                    "code": "tool_arguments_invalid",
-                    "message": "工具参数不匹配：%s" % exc,
-                },
-            }
-        result = await tool.invoke_raw(**arguments)
-        if isinstance(result, dict):
-            _warn_large_result(result, tool.name, tenant_id)
-            return result
-        return {"ok": True, "result": result}
-    result = await tool(**arguments)
-    chunks: list[ToolChunk] = []
-    if isinstance(result, AsyncGenerator):
-        async for chunk in result:
-            chunks.append(chunk)
-    else:
-        chunks.append(result)
-    texts = [
-        block.text
-        for chunk in chunks
-        for block in chunk.content
-        if isinstance(block, TextBlock)
-    ]
-    text = "".join(texts).strip()
-    if not text:
-        return {"ok": True}
-    if len(text.encode("utf-8")) > _TOOL_RESULT_WARN_BYTES:
-        logger.warning(
-            "MCP 结果较大 tool=%s tenant=%s size=%dKB，可能影响模型上下文",
-            getattr(tool, "name", "unknown"),
-            tenant_id or "unknown",
-            len(text.encode("utf-8")) // 1024,
-        )
-    try:
-        payload = json.loads(text)
-    except json.JSONDecodeError:
-        return {"ok": True, "result": text}
-    return payload if isinstance(payload, dict) else {"ok": True, "result": payload}
-
-
 def create_mcp_http_app(
-    server: Server,
-    streamable_path: str = "/mcp",
-    sse_path: str = "/sse",
-    sse_messages_path: str = "/messages/",
+    server: FastMCP,
     extra_routes: Sequence[BaseRoute] = (),
     shutdown: Callable[[], Awaitable[None]] | None = None,
 ) -> Starlette:
-    """创建 MCP HTTP ASGI 应用。
+    """创建 MCP Streamable HTTP ASGI 应用。
 
     - `/mcp`：Streamable HTTP，适用于支持新版 MCP HTTP 传输的客户端。
-    - `/sse`：SSE，适用于当前只支持 SSE 传输的 MCP 客户端。
     - `/healthz`：无鉴权探活端点，供负载均衡和监控使用。
+    - extra_routes：业务附加路由（如 WorkBuddy OAuth 回调）。
 
     认证中间件应由部署方包在该应用外层；IdentityResolver 再把认证结果映射为
     InvocationContext，从而确保每次工具调用都使用当前账号的数据。
     """
-    manager = StreamableHTTPSessionManager(
-        app=server,
-        stateless=True,
-        json_response=True,
-    )
-    sse = SseServerTransport(sse_messages_path)
+    app = server.streamable_http_app()
 
     async def healthz(_request: Request) -> Response:
         return JSONResponse({"ok": True})
 
-    class McpAsgiEndpoint:
-        async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
-            await manager.handle_request(scope, receive, send)
+    app.router.routes.append(Route("/healthz", endpoint=healthz, methods=["GET"]))
+    if extra_routes:
+        app.router.routes.extend(extra_routes)
+    if shutdown is not None:
+        inner = app.router.lifespan_context
 
-    async def handle_sse(request: Request) -> Response:
-        async with sse.connect_sse(
-            request.scope,
-            request.receive,
-            request._send,  # noqa: SLF001 - MCP SDK SSE 示例要求使用 Starlette 底层 send。
-        ) as streams:
-            await server.run(
-                streams[0],
-                streams[1],
-                server.create_initialization_options(),
-            )
-        return Response()
-
-    @asynccontextmanager
-    async def lifespan(_app: Starlette):
-        async with manager.run():
-            try:
-                yield
-            finally:
-                if shutdown is not None:
+        @asynccontextmanager
+        async def lifespan(starlette_app: Starlette) -> AsyncIterator[None]:
+            async with inner(starlette_app):
+                try:
+                    yield
+                finally:
                     await shutdown()
 
-    return Starlette(
-        routes=[
-            *extra_routes,
-            Route("/healthz", endpoint=healthz, methods=["GET"]),
-            Route(streamable_path, endpoint=McpAsgiEndpoint()),
-            Route(sse_path, endpoint=handle_sse, methods=["GET"]),
-            Mount(sse_messages_path, app=sse.handle_post_message),
-        ],
-        lifespan=lifespan,
-    )
+        app.router.lifespan_context = lifespan
+    return app

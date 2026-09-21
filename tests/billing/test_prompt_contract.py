@@ -1,10 +1,12 @@
-"""ERP 开单提示词的用户输出契约回归测试。"""
+"""ERP 业务提示词的用户输出契约回归测试。"""
 
 import erp_billing.prompt as prompt_module
 from erp_billing.prompt import (
     ERP_BILLING_MCP_INSTRUCTIONS,
     ERP_BILLING_SYSTEM_PROMPT,
 )
+from erp_billing.toolset import BILLING_MCP_TOOL_NAMES
+from gjp_common.mcp import _snake_to_camel
 
 
 def test_prompt_module_exposes_only_two_billing_prompt_constants() -> None:
@@ -17,22 +19,12 @@ def test_prompt_module_exposes_only_two_billing_prompt_constants() -> None:
 
 
 def test_system_prompt_remains_compact_and_lists_every_tool() -> None:
-    """完整提示词应控制体积，同时保留十个工具的准确名称。"""
-    assert len(ERP_BILLING_SYSTEM_PROMPT) <= 5000
-    tool_names = {
-        "syncProducts",
-        "listProducts",
-        "searchProducts",
-        "searchBillingReferences",
-        "previewSalesOrder",
-        "submitSalesOrder",
-        "getSalesOrder",
-        "listSalesOrders",
-        "voidSalesOrder",
-        "updateSalesOrder",
-    }
+    """完整提示词应控制体积，同时保留全部已发布工具的准确名称。"""
+    assert len(ERP_BILLING_SYSTEM_PROMPT) <= 7500
+    tool_names = {_snake_to_camel(name) for name in BILLING_MCP_TOOL_NAMES}
+    assert len(tool_names) == 59
     for tool_name in tool_names:
-        assert tool_name in ERP_BILLING_SYSTEM_PROMPT
+        assert tool_name in ERP_BILLING_SYSTEM_PROMPT, "提示词缺少工具名：%s" % tool_name
 
 
 def test_mcp_instructions_keep_minimum_output_constraints() -> None:
@@ -66,3 +58,17 @@ def test_billing_flow_follows_server_actions_without_enumerating_customers() -> 
     assert "严格按 required_actions 的返回顺序" in ERP_BILLING_SYSTEM_PROMPT
     assert "只有 confirm_submit 才进入提交确认" in ERP_BILLING_MCP_INSTRUCTIONS
     assert "不得用空关键词查询完整客户列表" in ERP_BILLING_SYSTEM_PROMPT
+
+
+def test_prompt_uses_generic_document_error_codes() -> None:
+    """提示词应引导新的通用单据错误码，不再引用销售单专属旧码。"""
+    assert "erp_document_result_unknown" in ERP_BILLING_SYSTEM_PROMPT
+    assert "erp_document_confirmation_required" in ERP_BILLING_SYSTEM_PROMPT
+    assert "erp_document_preview_not_found" in ERP_BILLING_SYSTEM_PROMPT
+    for obsolete in (
+        "erp_sales_order_result_unknown",
+        "erp_sales_order_confirmation_required",
+        "erp_sales_order_preview_not_found",
+    ):
+        assert obsolete not in ERP_BILLING_SYSTEM_PROMPT
+        assert obsolete not in ERP_BILLING_MCP_INSTRUCTIONS

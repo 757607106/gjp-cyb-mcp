@@ -1,4 +1,5 @@
-"""真实 MCP 服务全流程 e2e 测试：十个工具、会话隔离、幂等、稳定性与性能。
+"""真实 MCP 服务全流程 e2e 测试：销售、采购、退货、库存、资金、报表、
+会话隔离、幂等、稳定性与性能。
 
 默认整体跳过，同时设置以下环境变量后启用（上游为真实 ERP 测试环境）：
 
@@ -7,7 +8,8 @@
 
 测试启动真实 uvicorn 子进程，通过 MCP Streamable HTTP 客户端访问；
 X-Conversation-Id 参与会话隔离，验证无状态传输下状态按会话键保留。
-写操作创建的销售单带"E2E自动化测试"备注，并在流程末尾作废。
+写操作创建的销售单、采购单、退货单与收付款单带"E2E自动化测试"备注，
+并在流程末尾作废；调拨与其他出入库没有作废接口，只验证预览不提交。
 """
 
 from __future__ import annotations
@@ -56,6 +58,19 @@ _BUDGET_MS: dict[str, int] = {
     "submitSalesOrder": 20_000,
     "updateSalesOrder": 20_000,
     "voidSalesOrder": 20_000,
+    "previewPurchaseOrder": 20_000,
+    "submitPurchaseOrder": 20_000,
+    "voidPurchaseOrder": 20_000,
+    "previewPurchaseReturn": 20_000,
+    "submitPurchaseReturn": 20_000,
+    "voidPurchaseReturn": 20_000,
+    "previewSalesReturn": 20_000,
+    "submitSalesReturn": 20_000,
+    "voidSalesReturn": 20_000,
+    "submitReceiptOrder": 20_000,
+    "voidReceiptOrder": 20_000,
+    "submitPaymentOrder": 20_000,
+    "voidPaymentOrder": 20_000,
 }
 _DEFAULT_BUDGET_MS = 15_000
 
@@ -63,6 +78,41 @@ _DEFAULT_BUDGET_MS = 15_000
 _SERVER_URL = ""
 _TIMINGS: list[tuple[str, float]] = []
 _STATE: dict[str, Any] = {}
+
+# submit 工具 → 单据类别；cleanup 按类别选择作废工具并倒序作废
+_SUBMIT_TOOL_KINDS = {
+    "submitSalesOrder": "sales_order",
+    "submitPurchaseOrder": "purchase_order",
+    "submitPurchaseReturn": "purchase_return",
+    "submitSalesReturn": "sales_return",
+    "submitSalesReceipt": "sales_receipt",
+    "submitPurchasePayment": "purchase_payment",
+    "submitStockTransfer": "stock_transfer",
+    "submitOtherStockDoc": "other_stock_doc",
+    "submitReceiptOrder": "receipt_order",
+    "submitPaymentOrder": "payment_order",
+}
+_VOID_TOOLS = {
+    "sales_order": "voidSalesOrder",
+    "purchase_order": "voidPurchaseOrder",
+    "purchase_return": "voidPurchaseReturn",
+    "sales_return": "voidSalesReturn",
+    "receipt_order": "voidReceiptOrder",
+    "payment_order": "voidPaymentOrder",
+}
+_GET_TOOLS = {
+    "sales_order": "getSalesOrder",
+    "purchase_order": "getPurchaseOrder",
+    "purchase_return": "getPurchaseReturn",
+    "sales_return": "getSalesReturn",
+    "receipt_order": "getReceiptOrder",
+    "payment_order": "getPaymentOrder",
+}
+# 无作废接口的单据不允许在 e2e 中真实提交，避免污染测试账套
+_UNVOIDABLE_KINDS = frozenset(
+    {"sales_receipt", "purchase_payment", "stock_transfer", "other_stock_doc"},
+)
+_CREATED_DOCUMENTS: list[tuple[str, str, str]] = []
 
 
 def _free_port() -> int:
@@ -124,19 +174,77 @@ def server_url():
 
 
 @pytest.fixture(scope="module", autouse=True)
-def ensure_created_order_is_voided(server_url):
-    """任一后续断言失败时，也要兜底作废本轮已经创建的真实测试单。"""
-    yield
-    order_no = str(_STATE.get("order_no") or "")
-    if not order_no or _STATE.get("voided"):
-        return
-    result = _call(
-        "voidSalesOrder",
-        {"order_id": order_no, "confirmed_by_user": True},
+def billing_data(server_url):
+    """独立准备只读基础数据，不依赖前面测试的断言是否通过。"""
+    _STATE.clear()
+    _CREATED_DOCUMENTS.clear()
+    synced = _call("syncProducts", record_timing=False)
+    assert synced["ok"], synced.get("error")
+    _STATE["product_count"] = synced["product_count"]
+    listed = _call("listProducts", {"page": 1, "page_size": 10}, record_timing=False)
+    assert listed["ok"], listed.get("error")
+    assert listed["products"], "测试账套需要至少一个可用商品"
+    _STATE["product"] = next(
+        (item for item in listed["products"] if item.get("unit")),
+        listed["products"][0],
+    )
+    for kind in ("customer", "warehouse", "handler", "supplier", "settlement_account"):
+        found = _call(
+            "searchBillingReferences",
+            {"reference_type": kind, "limit": 5},
+            record_timing=False,
+        )
+        assert found["ok"] and found["options"], "测试账套缺少可用资料：" + kind
+        _STATE[kind] = found["options"][0]["name"]
+    warehouses = _call(
+        "searchBillingReferences", {"reference_type": "warehouse", "limit": 5},
         record_timing=False,
     )
-    assert result["ok"] is True, "E2E 兜底作废失败：%s" % result.get("error")
-    _STATE["voided"] = True
+    _STATE["second_warehouse"] = next(
+        (
+            option["name"]
+            for option in warehouses["options"]
+            if option["name"] != _STATE["warehouse"]
+        ),
+        "",
+    )
+    doc_types = _call(
+        "listStockDocTypes", {"kind": "inbound"}, record_timing=False,
+    )
+    assert doc_types["ok"], doc_types.get("error")
+    _STATE["inbound_doc_types"] = doc_types.get("types") or []
+    yield
+    failures = []
+    for kind, document_no, conversation in reversed(_CREATED_DOCUMENTS):
+        try:
+            if kind in _UNVOIDABLE_KINDS:
+                failures.append("%s 无作废接口却创建了 %s" % (kind, document_no))
+                continue
+            id_param = "return_id" if kind.endswith("_return") else "order_id"
+            detail = _call(
+                _GET_TOOLS[kind], {id_param: document_no},
+                conversation=conversation, record_timing=False,
+            )
+            assert detail["ok"], detail.get("error")
+            document = detail.get("order") or detail.get("document") or {}
+            if document.get("status") == 3:
+                continue
+            if kind == "sales_order" and document.get("status") in (0, 1):
+                converted = _call(
+                    "updateSalesOrder",
+                    {"order_id": document_no, "save_type": "final", "confirmed_by_user": True},
+                    conversation=conversation, record_timing=False,
+                )
+                assert converted["ok"], converted.get("error")
+            result = _call(
+                _VOID_TOOLS[kind],
+                {id_param: document_no, "confirmed_by_user": True},
+                conversation=conversation, record_timing=False,
+            )
+            assert result["ok"], result.get("error")
+        except Exception as exc:
+            failures.append("%s(%s): %s" % (kind, document_no, exc))
+    assert not failures, "本轮测试单清理失败：" + "; ".join(failures)
 
 
 def _headers(conversation: str) -> dict[str, str]:
@@ -196,7 +304,17 @@ def _call(
                     result = await session.call_tool(tool, arguments or {})
                     if record_timing:
                         _TIMINGS.append((tool, (time.perf_counter() - started) * 1000))
-                    return _unwrap(result)
+                    payload = _unwrap(result)
+                    submit_kind = _SUBMIT_TOOL_KINDS.get(tool)
+                    if submit_kind and payload.get("ok") and payload.get("document_no"):
+                        created = (submit_kind, str(payload["document_no"]), conversation)
+                        if created not in _CREATED_DOCUMENTS:
+                            _CREATED_DOCUMENTS.append(created)
+                    if tool == "submitSalesOrder" and payload.get("ok") and payload.get("order_no"):
+                        created = ("sales_order", str(payload["order_no"]), conversation)
+                        if created not in _CREATED_DOCUMENTS:
+                            _CREATED_DOCUMENTS.append(created)
+                    return payload
 
     return asyncio.run(_run())
 
@@ -244,8 +362,8 @@ def test_healthz(server_url):
     assert response.json() == {"ok": True}
 
 
-def test_initialize_lists_ten_tools(server_url):
-    """MCP initialize 应返回服务说明及 10 个带输入输出 Schema 的工具。"""
+def test_initialize_lists_all_tools(server_url):
+    """MCP initialize 应返回服务说明及 59 个带输入输出 Schema 的工具。"""
 
     async def _run() -> list[Any]:
         async with httpx.AsyncClient(
@@ -259,18 +377,47 @@ def test_initialize_lists_ten_tools(server_url):
                     started = time.perf_counter()
                     initialized = await session.initialize()
                     _TIMINGS.append(("mcpInitialize", (time.perf_counter() - started) * 1000))
-                    assert "ERP 销售开单服务" in (initialized.instructions or "")
+                    assert "ERP 业务服务" in (initialized.instructions or "")
                     tools = await session.list_tools()
                     return tools.tools
 
     tools = asyncio.run(_run())
     names = {tool.name for tool in tools}
     assert names == {
-        "syncProducts", "listProducts", "searchProducts",
-        "searchBillingReferences", "previewSalesOrder", "submitSalesOrder",
-        "getSalesOrder", "listSalesOrders", "voidSalesOrder",
-        "updateSalesOrder",
+        # 商品目录与基础资料
+        "syncProducts", "listProducts", "searchProducts", "searchBillingReferences",
+        # 销售单
+        "previewSalesOrder", "submitSalesOrder", "getSalesOrder",
+        "listSalesOrders", "voidSalesOrder", "updateSalesOrder",
+        # 采购单
+        "previewPurchaseOrder", "submitPurchaseOrder", "getPurchaseOrder",
+        "listPurchaseOrders", "voidPurchaseOrder", "updatePurchaseOrder",
+        # 采购退货单
+        "previewPurchaseReturn", "submitPurchaseReturn", "getPurchaseReturn",
+        "listPurchaseReturns", "voidPurchaseReturn",
+        # 销售退货单
+        "previewSalesReturn", "submitSalesReturn", "getSalesReturn",
+        "listSalesReturns", "voidSalesReturn",
+        # 销售单继续收款 / 采购单继续付款
+        "previewSalesReceipt", "submitSalesReceipt",
+        "previewPurchasePayment", "submitPurchasePayment",
+        # 库存调拨与其他出入库
+        "previewStockTransfer", "submitStockTransfer",
+        "previewOtherStockDoc", "submitOtherStockDoc",
+        # 收款单与付款单
+        "previewReceiptOrder", "submitReceiptOrder", "getReceiptOrder",
+        "listReceiptOrders", "voidReceiptOrder",
+        "previewPaymentOrder", "submitPaymentOrder", "getPaymentOrder",
+        "listPaymentOrders", "voidPaymentOrder",
+        # 库存与往来查询
+        "queryStock", "getStockByProduct", "getStockSummary", "queryStockLogs",
+        "listStockAlerts", "getPurchaseSuggestions", "listStockDocTypes",
+        "listReceivables", "listPayables", "getFinancialStatus",
+        # 报表分析
+        "querySalesReport", "queryPurchaseReport", "queryProfitReport",
+        "querySettlementReport", "queryReconciliation",
     }
+    assert len(names) == 59
     for tool in tools:
         assert tool.inputSchema["type"] == "object"
         assert tool.outputSchema is not None
@@ -316,7 +463,6 @@ def test_sync_products(server_url):
     assert result["product_count"] >= 1
     assert len(result["sample_products"]) >= 1
     assert "id" not in result["sample_products"][0]
-    _STATE["product_count"] = result["product_count"]
 
 
 def test_sync_products_with_limit(server_url):
@@ -341,12 +487,6 @@ def test_list_products_pagination(server_url):
 
     second = _call("listProducts", {"page": 2, "page_size": 5})
     assert second["ok"] is True
-    # 记录真实商品供后续开单使用：优先取有单位的商品
-    products = first["products"] + second["products"]
-    _STATE["product"] = next(
-        (item for item in products if item.get("unit")),
-        products[0],
-    )
 
 
 def test_fresh_conversation_reuses_shared_catalog(server_url):
@@ -414,24 +554,24 @@ def test_search_products_multiple_keywords(server_url):
 
 
 def test_search_billing_references_with_page(server_url):
-    """searchBillingReferences 支持翻页并隐藏内部 ID。"""
+    """searchBillingReferences 支持翻页并保留候选唯一身份。"""
     page1 = _call("searchBillingReferences", {
         "reference_type": "customer", "keyword": "", "limit": 5, "page": 1,
     })
     assert page1["ok"] is True
     assert 1 <= len(page1["options"]) <= 5
-    assert set(page1["options"][0]) <= {"name", "is_default"}
+    assert set(page1["options"][0]) == {"id", "code", "name", "is_default", "is_system"}
+    assert page1["options"][0]["id"]
     assert page1["page"] == 1
     assert page1["page_size"] == 5
     assert page1["total"] >= len(page1["options"])
-    _STATE["customer"] = page1["options"][0]["name"]
 
     page2 = _call("searchBillingReferences", {
         "reference_type": "customer", "keyword": "", "limit": 5, "page": 2,
     })
     assert page2["ok"] is True
-    names1 = {item["name"] for item in page1["options"]}
-    names2 = {item["name"] for item in page2["options"]}
+    names1 = {item["id"] for item in page1["options"]}
+    names2 = {item["id"] for item in page2["options"]}
     assert not (names1 & names2), "翻页后不应返回重复候选"
 
     for reference_type in ("warehouse", "handler"):
@@ -440,7 +580,6 @@ def test_search_billing_references_with_page(server_url):
         })
         assert result["ok"] is True
         assert result["options"], "%s 候选不应为空" % reference_type
-        _STATE[reference_type] = result["options"][0]["name"]
 
 
 def test_search_billing_references_keyword_filter(server_url):
@@ -565,7 +704,7 @@ def test_conversation_isolation(server_url):
         conversation=_ISOLATED_CONVERSATION,
     )
     assert result["ok"] is False
-    assert result["error"]["code"] == "erp_sales_order_preview_not_found"
+    assert result["error"]["code"] == "erp_document_preview_not_found"
 
 
 def test_draft_order_lifecycle_with_voice_source(server_url):
@@ -645,6 +784,18 @@ def test_draft_order_lifecycle_with_voice_source(server_url):
     # 真实 ERP 不允许直接作废草稿单（不满足作废条件），
     # 工具应透传结构化错误而非协议崩溃
     draft = detail["order"]
+    changed = _call(
+        "updateSalesOrder",
+        {"order_id": draft_order_no, "remark": _E2E_REMARK + "，仅改备注", "confirmed_by_user": True},
+        conversation=conversation,
+    )
+    assert changed["ok"], changed.get("error")
+    after = _call("getSalesOrder", {"order_id": draft_order_no}, conversation=conversation)["order"]
+    assert after["remark"] == _E2E_REMARK + "，仅改备注"
+    assert after["status"] == draft["status"]
+    assert [(row["productId"], row["quantity"], row["unitPrice"]) for row in after["items"]] == [
+        (row["productId"], row["quantity"], row["unitPrice"]) for row in draft["items"]
+    ]
     rejected = _call(
         "voidSalesOrder",
         {"order_id": draft_order_no, "confirmed_by_user": True},
@@ -654,27 +805,9 @@ def test_draft_order_lifecycle_with_voice_source(server_url):
     assert rejected["error"]["code"] == "erp_live_request_failed"
 
     # 草稿转正式过账后再作废，完成清理闭环
-    draft_item = draft["items"][0]
     converted = _call(
         "updateSalesOrder",
-        {
-            "order_id": draft_order_no,
-            "order_date": draft["orderDate"],
-            "handler_id": str(draft["handlerId"]),
-            "items": [
-                {
-                    "product_id": str(draft_item["productId"]),
-                    "quantity": draft_item["quantity"],
-                    "unit": draft_item.get("unit") or "",
-                    "order_item_id": str(
-                        draft_item.get("id") or draft_item.get("orderItemId") or "",
-                    ),
-                },
-            ],
-            "save_type": "final",
-            "remark": _E2E_REMARK,
-            "confirmed_by_user": True,
-        },
+        {"order_id": draft_order_no, "save_type": "final", "confirmed_by_user": True},
         conversation=conversation,
     )
     assert converted["ok"] is True, converted.get("error")
@@ -707,7 +840,7 @@ def test_submit_requires_confirmation(server_url):
         "confirmed_by_user": False,
     })
     assert result["ok"] is False
-    assert result["error"]["code"] == "erp_sales_order_confirmation_required"
+    assert result["error"]["code"] == "erp_document_confirmation_required"
 
 
 def test_submit_returns_order_no_and_replays_idempotently(server_url):
@@ -780,7 +913,7 @@ def test_submit_idempotency_key_conflict(server_url):
         "confirmed_by_user": True,
     })
     assert conflict["ok"] is False
-    assert conflict["error"]["code"] == "erp_sales_order_idempotency_key_conflict"
+    assert conflict["error"]["code"] == "erp_document_idempotency_key_conflict"
 
 
 def test_get_sales_order_by_order_no(server_url):
@@ -846,7 +979,7 @@ def test_update_requires_confirmation(server_url):
         "confirmed_by_user": False,
     })
     assert result["ok"] is False
-    assert result["error"]["code"] == "erp_sales_order_confirmation_required"
+    assert result["error"]["code"] == "erp_document_confirmation_required"
 
 
 def test_update_rejects_invalid_items(server_url):
@@ -889,6 +1022,7 @@ def test_update_sales_order(server_url):
             {
                 "product_id": str(item["productId"]),
                 "quantity": original_qty + 1,
+                "unit_price": item["unitPrice"],
                 "unit": item.get("unit") or "",
                 "order_item_id": str(item.get("id") or item.get("orderItemId") or ""),
                 "remark": "E2E修改",
@@ -920,7 +1054,7 @@ def test_void_sales_order(server_url):
         "order_id": _STATE["order_no"], "confirmed_by_user": False,
     })
     assert rejected["ok"] is False
-    assert rejected["error"]["code"] == "erp_sales_order_confirmation_required"
+    assert rejected["error"]["code"] == "erp_document_confirmation_required"
 
     voided = _call("voidSalesOrder", {
         "order_id": _STATE["order_no"], "confirmed_by_user": True,
@@ -1005,7 +1139,7 @@ def test_submit_idempotency_key_validation(server_url):
             "confirmed_by_user": True,
         }, record_timing=False)
         assert result["ok"] is False, key
-        assert result["error"]["code"] == "erp_sales_order_idempotency_key_invalid", key
+        assert result["error"]["code"] == "erp_document_idempotency_key_invalid", key
 
 
 def test_submit_preview_consumed_after_submission(server_url):
@@ -1016,7 +1150,7 @@ def test_submit_preview_consumed_after_submission(server_url):
         "confirmed_by_user": True,
     }, record_timing=False)
     assert result["ok"] is False
-    assert result["error"]["code"] == "erp_sales_order_preview_not_found"
+    assert result["error"]["code"] == "erp_document_preview_not_found"
 
 
 def test_preview_empty_arguments_reports_all_missing(server_url):
@@ -1165,6 +1299,736 @@ def test_update_handler_name_unmatched(server_url):
     }, record_timing=False)
     assert result["ok"] is False
     assert result["error"]["code"] == "erp_update_reference_unmatched"
+
+
+# ---------------------------------------------------------------------------
+# 新增业务域：库存、往来与报表查询（只读）
+# ---------------------------------------------------------------------------
+
+
+def test_search_billing_references_supplier_and_settlement_account(server_url):
+    """供应商与结算账户资料类型可查询并分页。"""
+    for kind in ("supplier", "settlement_account"):
+        result = _call(
+            "searchBillingReferences",
+            {"reference_type": kind, "limit": 3},
+            record_timing=False,
+        )
+        assert result["ok"], result.get("error")
+        assert 1 <= len(result["options"]) <= 3
+        assert result["options"][0]["name"]
+
+
+def test_query_stock_and_summary(server_url):
+    """queryStock 按关键词查库存；getStockSummary 返回库存汇总。"""
+    product = _STATE["product"]
+    result = _call(
+        "queryStock",
+        {"keyword": product["product_name"][:2], "page": 1, "page_size": 10},
+        record_timing=False,
+    )
+    assert result["ok"], result.get("error")
+    rows = result["data"]
+    assert isinstance(rows, list)
+    if rows:
+        assert "productId" in rows[0]
+
+    summary = _call("getStockSummary", record_timing=False)
+    assert summary["ok"], summary.get("error")
+    assert isinstance(summary["data"], dict)
+
+    if rows:
+        by_product = _call(
+            "getStockByProduct",
+            {"product_id": str(rows[0]["productId"])},
+            record_timing=False,
+        )
+        assert by_product["ok"], by_product.get("error")
+
+
+def test_query_stock_logs_and_alerts(server_url):
+    """queryStockLogs 按关键词与日期查流水；listStockAlerts 支持按类型过滤。"""
+    product = _STATE["product"]
+    today = time.strftime("%Y-%m-%d")
+    week_ago = time.strftime("%Y-%m-%d", time.gmtime(time.time() - 7 * 86400))
+    logs = _call(
+        "queryStockLogs",
+        {
+            "keyword": product["product_name"][:2],
+            "start_date": week_ago,
+            "end_date": today,
+            "page": 1,
+            "page_size": 10,
+        },
+        record_timing=False,
+    )
+    assert logs["ok"], logs.get("error")
+    assert isinstance(logs["data"], list)
+
+    alerts = _call(
+        "listStockAlerts", {"alert_type": 1, "page": 1, "page_size": 10},
+        record_timing=False,
+    )
+    assert alerts["ok"], alerts.get("error")
+    assert isinstance(alerts["data"], list)
+
+
+def test_get_purchase_suggestions_and_doc_types(server_url):
+    """getPurchaseSuggestions 返回采购建议；listStockDocTypes 区分出入库。"""
+    suggestions = _call("getPurchaseSuggestions", record_timing=False)
+    assert suggestions["ok"], suggestions.get("error")
+
+    for kind in ("inbound", "outbound"):
+        doc_types = _call(
+            "listStockDocTypes", {"kind": kind}, record_timing=False,
+        )
+        assert doc_types["ok"], doc_types.get("error")
+        assert isinstance(doc_types["types"], list)
+
+
+def test_list_receivables_and_payables_summary(server_url):
+    """listReceivables/listPayables 的 summary 视图返回分页数据。"""
+    month_start = time.strftime("%Y-%m-01")
+    today = time.strftime("%Y-%m-%d")
+    for tool in ("listReceivables", "listPayables"):
+        result = _call(
+            tool,
+            {"view": "summary", "start_date": month_start, "end_date": today,
+             "page": 1, "page_size": 10},
+            record_timing=False,
+        )
+        assert result["ok"], "%s: %s" % (tool, result.get("error"))
+        assert isinstance(result["data"], list), tool
+
+    status = _call("getFinancialStatus", record_timing=False)
+    assert status["ok"], status.get("error")
+    assert isinstance(status["data"], dict)
+
+
+def test_query_reports(server_url):
+    """销售/采购/利润/往来结算报表与客户对账 summary 视图可用。"""
+    month_start = time.strftime("%Y-%m-01")
+    today = time.strftime("%Y-%m-%d")
+    cases = [
+        ("querySalesReport", {"view": "analysis"}),
+        ("querySalesReport", {"view": "ranking_product"}),
+        ("queryPurchaseReport", {"view": "statistics"}),
+        ("queryProfitReport", {"view": "summary"}),
+        ("querySettlementReport", {}, {"page", "page_size"}),
+        ("queryReconciliation", {"view": "summary"}),
+    ]
+    for tool, extra, *skip in cases:
+        omitted = skip[0] if skip else set()
+        args = {
+            **extra,
+            "start_date": month_start,
+            "end_date": today,
+            "page": 1,
+            "page_size": 10,
+        }
+        for key in omitted:
+            args.pop(key)
+        result = _call(tool, args, record_timing=False)
+        assert result["ok"], "%s: %s" % (tool, result.get("error"))
+        assert "data" in result, tool
+
+
+# ---------------------------------------------------------------------------
+# 新增业务域：采购单与退货单全流程（提交后末尾作废）
+# ---------------------------------------------------------------------------
+
+
+def _make_ready_purchase_preview(
+    base_arguments: dict[str, Any],
+    conversation: str,
+) -> dict[str, Any]:
+    """循环确认候选商品与采购价，直到 previewPurchaseOrder 返回可提交预览。"""
+    confirmed: list[dict[str, str]] = []
+    confirmed_prices: list[dict[str, Any]] = []
+    for _ in range(5):
+        result = _call(
+            "previewPurchaseOrder",
+            {**base_arguments,
+             "confirmed_products": confirmed,
+             "confirmed_prices": confirmed_prices},
+            conversation=conversation,
+            record_timing=False,
+        )
+        assert result["ok"], result.get("error")
+        if result["ready_to_submit"]:
+            return result
+        pending: list[dict[str, str]] = []
+        prices: list[dict[str, Any]] = []
+        for item in result["recommended_products"]:
+            entry = {"line_id": item["line_id"], "product_id": item["product_id"]}
+            if entry not in pending:
+                pending.append(entry)
+        for item in result["unmatched_products"]:
+            searched = _call(
+                "searchProducts", {"keywords": [item["product_name"]]},
+                conversation=conversation, record_timing=False,
+            )
+            entry = searched["results"][0]
+            candidates = list(entry.get("recommendations") or [])
+            if entry["product"] is not None:
+                candidates.insert(0, entry["product"])
+            assert candidates, "采购单 unmatched 行没有任何候选可确认"
+            pending.append({
+                "line_id": item["line_id"],
+                "product_id": candidates[0]["product_id"],
+            })
+        for warning in result.get("price_warnings") or []:
+            prices.append({
+                "line_id": warning["line_id"],
+                "product_id": warning["product_id"],
+                "unit_price": 1.0,
+            })
+        assert pending or prices, "采购单未就绪但没有可确认项"
+        confirmed = pending
+        confirmed_prices = prices
+    raise AssertionError("采购单多轮确认后仍未 ready_to_submit")
+
+
+def test_purchase_order_lifecycle(server_url):
+    """采购单全流程：预览 → 确认拦截 → 提交 → 查详情 → 列表过滤 → 作废。"""
+    conversation = "e2e-purchase-" + _RUN_ID
+    product = _STATE["product"]
+    preview = _make_ready_purchase_preview({
+        "order_text": "%s2%s" % (product["product_name"], product.get("unit") or ""),
+        "supplier": _STATE["supplier"],
+        "warehouse": _STATE["warehouse"],
+        "handler": _STATE["handler"],
+        "order_date": time.strftime("%Y-%m-%d"),
+        "remark": _E2E_REMARK,
+    }, conversation)
+    assert preview["preview_id"]
+    assert preview["preview"]["document_kind"] == "purchase_order"
+
+    rejected = _call(
+        "submitPurchaseOrder",
+        {"preview_id": preview["preview_id"], "confirmed_by_user": False},
+        conversation=conversation,
+        record_timing=False,
+    )
+    assert rejected["ok"] is False
+    assert rejected["error"]["code"] == "erp_document_confirmation_required"
+
+    submitted = _call(
+        "submitPurchaseOrder",
+        {
+            "preview_id": preview["preview_id"],
+            "idempotency_key": "e2e-purchase-" + _RUN_ID,
+            "confirmed_by_user": True,
+        },
+        conversation=conversation,
+    )
+    assert submitted["ok"], submitted.get("error")
+    order_no = submitted["document_no"]
+    assert order_no
+    _STATE["purchase_order_no"] = order_no
+
+    detail = _call(
+        "getPurchaseOrder", {"order_id": order_no}, conversation=conversation,
+    )
+    assert detail["ok"], detail.get("error")
+    assert detail["document"]["orderNo"] == order_no
+
+    listed = _call(
+        "listPurchaseOrders",
+        {"order_no": order_no, "page": 1, "page_size": 10},
+        conversation=conversation,
+        record_timing=False,
+    )
+    assert listed["ok"], listed.get("error")
+    assert any(
+        document.get("orderNo") == order_no for document in listed["documents"]
+    )
+
+    voided = _call(
+        "voidPurchaseOrder",
+        {"order_id": order_no, "confirmed_by_user": True},
+        conversation=conversation,
+    )
+    assert voided["ok"], voided.get("error")
+    _STATE.pop("purchase_order_no", None)
+
+
+def test_purchase_return_lifecycle(server_url):
+    """采购退货全流程：建采购单 → 整单退货预览 → 提交 → 查详情 → 作废退货与源单。"""
+    conversation = "e2e-purchase-return-" + _RUN_ID
+    product = _STATE["product"]
+    preview = _make_ready_purchase_preview({
+        "order_text": "%s1%s" % (product["product_name"], product.get("unit") or ""),
+        "supplier": _STATE["supplier"],
+        "warehouse": _STATE["warehouse"],
+        "handler": _STATE["handler"],
+        "order_date": time.strftime("%Y-%m-%d"),
+        "remark": _E2E_REMARK,
+    }, conversation)
+    submitted = _call(
+        "submitPurchaseOrder",
+        {
+            "preview_id": preview["preview_id"],
+            "idempotency_key": "e2e-purchase-return-po-" + _RUN_ID,
+            "confirmed_by_user": True,
+        },
+        conversation=conversation,
+    )
+    assert submitted["ok"], submitted.get("error")
+    purchase_order_no = submitted["document_no"]
+
+    return_preview = _call(
+        "previewPurchaseReturn",
+        {"order_id": purchase_order_no, "remark": _E2E_REMARK},
+        conversation=conversation,
+    )
+    assert return_preview["ok"], return_preview.get("error")
+    assert return_preview["ready_to_submit"] is True
+    assert return_preview["preview"]["document_kind"] == "purchase_return"
+    assert return_preview["preview"]["items"]
+
+    return_submitted = _call(
+        "submitPurchaseReturn",
+        {
+            "preview_id": return_preview["preview_id"],
+            "idempotency_key": "e2e-purchase-return-" + _RUN_ID,
+            "confirmed_by_user": True,
+        },
+        conversation=conversation,
+    )
+    assert return_submitted["ok"], return_submitted.get("error")
+    return_no = return_submitted["document_no"]
+    assert return_no
+
+    detail = _call(
+        "getPurchaseReturn", {"return_id": return_no}, conversation=conversation,
+    )
+    assert detail["ok"], detail.get("error")
+
+    listed = _call(
+        "listPurchaseReturns",
+        {"return_no": return_no, "page": 1, "page_size": 10},
+        conversation=conversation,
+        record_timing=False,
+    )
+    assert listed["ok"], listed.get("error")
+
+    voided_return = _call(
+        "voidPurchaseReturn",
+        {"return_id": return_no, "confirmed_by_user": True},
+        conversation=conversation,
+    )
+    assert voided_return["ok"], voided_return.get("error")
+    voided_order = _call(
+        "voidPurchaseOrder",
+        {"order_id": purchase_order_no, "confirmed_by_user": True},
+        conversation=conversation,
+    )
+    assert voided_order["ok"], voided_order.get("error")
+
+
+def test_sales_return_lifecycle(server_url):
+    """销售退货全流程：建销售单 → 整单退货预览 → 提交 → 查详情 → 作废退货。"""
+    conversation = "e2e-sales-return-" + _RUN_ID
+    product = _STATE["product"]
+    order_preview = _make_ready_preview({
+        "order_text": "%s1%s" % (product["product_name"], product.get("unit") or ""),
+        "customer": _STATE["customer"],
+        "warehouse": _STATE["warehouse"],
+        "handler": _STATE["handler"],
+        "order_date": time.strftime("%Y-%m-%d"),
+        "remark": _E2E_REMARK,
+        "save_type": "final",
+    }, conversation)
+    submitted = _call(
+        "submitSalesOrder",
+        {
+            "preview_id": order_preview["preview_id"],
+            "idempotency_key": "e2e-sales-return-so-" + _RUN_ID,
+            "confirmed_by_user": True,
+        },
+        conversation=conversation,
+    )
+    assert submitted["ok"], submitted.get("error")
+    sales_order_no = submitted["order_no"]
+
+    return_preview = _call(
+        "previewSalesReturn",
+        {"order_id": sales_order_no, "remark": _E2E_REMARK},
+        conversation=conversation,
+    )
+    assert return_preview["ok"], return_preview.get("error")
+    assert return_preview["ready_to_submit"] is True
+    assert return_preview["preview"]["document_kind"] == "sales_return"
+    assert return_preview["preview"]["items"]
+
+    return_submitted = _call(
+        "submitSalesReturn",
+        {
+            "preview_id": return_preview["preview_id"],
+            "idempotency_key": "e2e-sales-return-" + _RUN_ID,
+            "confirmed_by_user": True,
+        },
+        conversation=conversation,
+    )
+    assert return_submitted["ok"], return_submitted.get("error")
+    return_no = return_submitted["document_no"]
+
+    detail = _call(
+        "getSalesReturn", {"return_id": return_no}, conversation=conversation,
+    )
+    assert detail["ok"], detail.get("error")
+
+    listed = _call(
+        "listSalesReturns",
+        {"return_no": return_no, "page": 1, "page_size": 10},
+        conversation=conversation,
+        record_timing=False,
+    )
+    assert listed["ok"], listed.get("error")
+
+    voided_return = _call(
+        "voidSalesReturn",
+        {"return_id": return_no, "confirmed_by_user": True},
+        conversation=conversation,
+    )
+    assert voided_return["ok"], voided_return.get("error")
+
+
+# ---------------------------------------------------------------------------
+# 新增业务域：资金单据（收款单/付款单全流程，继续收付款仅预览）
+# ---------------------------------------------------------------------------
+
+
+def _pick_fund_type(preview, *, fallback_index=0):
+    """从预览返回的款项类型候选中挑一个可独立提交的类型（优先非系统类型）。"""
+    resolution = preview["reference_resolutions"]["fund_type"]
+    candidates = resolution["candidates"]
+    assert candidates, "预览未返回款项类型候选"
+    for candidate in candidates:
+        if not candidate.get("is_system"):
+            return candidate["name"]
+    return candidates[fallback_index]["name"]
+
+
+def test_receipt_order_lifecycle(server_url):
+    """收款单全流程：无核销先返回款项类型候选 → 携类型再预览 → 确认拦截 → 提交 → 查询 → 作废。"""
+    conversation = "e2e-receipt-" + _RUN_ID
+    base_args = {
+        "receipt_amount": 0.01,
+        "account": _STATE["settlement_account"],
+        "handler": _STATE["handler"],
+        "order_date": time.strftime("%Y-%m-%d"),
+        "remark": _E2E_REMARK,
+    }
+    first_preview = _call(
+        "previewReceiptOrder", base_args, conversation=conversation,
+        record_timing=False,
+    )
+    assert first_preview["ok"], first_preview.get("error")
+    assert first_preview["ready_to_submit"] is False
+    assert "provide_fund_type" in first_preview["required_actions"]
+
+    fund_type = _pick_fund_type(first_preview)
+    preview = _call(
+        "previewReceiptOrder",
+        {**base_args, "fund_type": fund_type},
+        conversation=conversation,
+    )
+    assert preview["ok"], preview.get("error")
+    assert preview["ready_to_submit"] is True
+    assert preview["preview_id"]
+    assert preview["preview"]["fund_type"] == fund_type
+
+    rejected = _call(
+        "submitReceiptOrder",
+        {"preview_id": preview["preview_id"], "confirmed_by_user": False},
+        conversation=conversation,
+        record_timing=False,
+    )
+    assert rejected["ok"] is False
+    assert rejected["error"]["code"] == "erp_document_confirmation_required"
+
+    submitted = _call(
+        "submitReceiptOrder",
+        {
+            "preview_id": preview["preview_id"],
+            "idempotency_key": "e2e-receipt-" + _RUN_ID,
+            "confirmed_by_user": True,
+        },
+        conversation=conversation,
+    )
+    assert submitted["ok"], submitted.get("error")
+    order_no = submitted["document_no"]
+    assert order_no
+
+    detail = _call(
+        "getReceiptOrder", {"order_id": order_no}, conversation=conversation,
+    )
+    assert detail["ok"], detail.get("error")
+
+    listed = _call(
+        "listReceiptOrders",
+        {"order_no": order_no, "page": 1, "page_size": 10},
+        conversation=conversation,
+        record_timing=False,
+    )
+    assert listed["ok"], listed.get("error")
+
+    voided = _call(
+        "voidReceiptOrder",
+        {"order_id": order_no, "confirmed_by_user": True},
+        conversation=conversation,
+    )
+    assert voided["ok"], voided.get("error")
+
+
+def test_payment_order_lifecycle(server_url):
+    """付款单全流程：无核销先返回款项类型候选 → 携类型再预览 → 提交 → 查询 → 作废。"""
+    conversation = "e2e-payment-" + _RUN_ID
+    base_args = {
+        "payment_amount": 0.01,
+        "account": _STATE["settlement_account"],
+        "handler": _STATE["handler"],
+        "order_date": time.strftime("%Y-%m-%d"),
+        "remark": _E2E_REMARK,
+    }
+    first_preview = _call(
+        "previewPaymentOrder", base_args, conversation=conversation,
+        record_timing=False,
+    )
+    assert first_preview["ok"], first_preview.get("error")
+    assert first_preview["ready_to_submit"] is False
+    assert "provide_fund_type" in first_preview["required_actions"]
+
+    fund_type = _pick_fund_type(first_preview)
+    preview = _call(
+        "previewPaymentOrder",
+        {**base_args, "fund_type": fund_type},
+        conversation=conversation,
+    )
+    assert preview["ok"], preview.get("error")
+    assert preview["ready_to_submit"] is True
+    assert preview["preview"]["fund_type"] == fund_type
+
+    submitted = _call(
+        "submitPaymentOrder",
+        {
+            "preview_id": preview["preview_id"],
+            "idempotency_key": "e2e-payment-" + _RUN_ID,
+            "confirmed_by_user": True,
+        },
+        conversation=conversation,
+    )
+    assert submitted["ok"], submitted.get("error")
+    order_no = submitted["document_no"]
+
+    detail = _call(
+        "getPaymentOrder", {"order_id": order_no}, conversation=conversation,
+    )
+    assert detail["ok"], detail.get("error")
+
+    voided = _call(
+        "voidPaymentOrder",
+        {"order_id": order_no, "confirmed_by_user": True},
+        conversation=conversation,
+    )
+    assert voided["ok"], voided.get("error")
+
+
+def test_order_money_previews_without_submit(server_url):
+    """继续收款/继续付款仅验证预览：金额上下文与账户解析正确，不真实提交。"""
+    conversation = "e2e-order-money-" + _RUN_ID
+    product = _STATE["product"]
+    order_preview = _make_ready_preview({
+        "order_text": "%s1%s" % (product["product_name"], product.get("unit") or ""),
+        "customer": _STATE["customer"],
+        "warehouse": _STATE["warehouse"],
+        "handler": _STATE["handler"],
+        "order_date": time.strftime("%Y-%m-%d"),
+        "remark": _E2E_REMARK,
+        "save_type": "final",
+    }, conversation)
+    submitted = _call(
+        "submitSalesOrder",
+        {
+            "preview_id": order_preview["preview_id"],
+            "idempotency_key": "e2e-order-money-" + _RUN_ID,
+            "confirmed_by_user": True,
+        },
+        conversation=conversation,
+        record_timing=False,
+    )
+    assert submitted["ok"], submitted.get("error")
+    sales_order_no = submitted["order_no"]
+
+    receipt_preview = _call(
+        "previewSalesReceipt",
+        {
+            "order_id": sales_order_no,
+            "receipt_amount": 0.01,
+            "receipt_account": _STATE["settlement_account"],
+        },
+        conversation=conversation,
+    )
+    assert receipt_preview["ok"], receipt_preview.get("error")
+    assert receipt_preview["ready_to_submit"] is True
+    assert receipt_preview["preview"]["document_kind"] == "sales_receipt"
+    assert receipt_preview["preview"]["receipt_amount"] == 0.01
+
+    purchase_preview = _make_ready_purchase_preview({
+        "order_text": "%s1%s" % (product["product_name"], product.get("unit") or ""),
+        "supplier": _STATE["supplier"],
+        "warehouse": _STATE["warehouse"],
+        "handler": _STATE["handler"],
+        "order_date": time.strftime("%Y-%m-%d"),
+        "remark": _E2E_REMARK,
+    }, conversation)
+    purchase_submitted = _call(
+        "submitPurchaseOrder",
+        {
+            "preview_id": purchase_preview["preview_id"],
+            "idempotency_key": "e2e-order-money-po-" + _RUN_ID,
+            "confirmed_by_user": True,
+        },
+        conversation=conversation,
+        record_timing=False,
+    )
+    assert purchase_submitted["ok"], purchase_submitted.get("error")
+
+    payment_preview = _call(
+        "previewPurchasePayment",
+        {
+            "order_id": purchase_submitted["document_no"],
+            "payment_amount": 0.01,
+            "payment_account": _STATE["settlement_account"],
+        },
+        conversation=conversation,
+    )
+    assert payment_preview["ok"], payment_preview.get("error")
+    assert payment_preview["ready_to_submit"] is True
+    assert payment_preview["preview"]["document_kind"] == "purchase_payment"
+    # 仅预览不提交；两张源单交给模块末尾统一作废清理
+
+
+def test_financial_counterparty_rejected(server_url):
+    """收款单同时提供客户与供应商时被结构化拒绝，不写入 ERP。"""
+    result = _call(
+        "previewReceiptOrder",
+        {
+            "receipt_amount": 0.01,
+            "account": _STATE["settlement_account"],
+            "handler": _STATE["handler"],
+            "customer": _STATE["customer"],
+            "supplier": _STATE["supplier"],
+        },
+        record_timing=False,
+    )
+    assert result["ok"] is False
+    assert result["error"]["code"] == "erp_financial_order_counterparty_invalid"
+
+
+# ---------------------------------------------------------------------------
+# 新增业务域：库存单据预览（无作废接口，不真实提交）
+# ---------------------------------------------------------------------------
+
+
+def test_preview_stock_transfer_rejects_same_warehouse(server_url):
+    """调出与调入仓库相同时拒绝生成调拨预览。"""
+    result = _call(
+        "previewStockTransfer",
+        {
+            "order_text": "%s1%s" % (
+                _STATE["product"]["product_name"],
+                _STATE["product"].get("unit") or "",
+            ),
+            "from_warehouse": _STATE["warehouse"],
+            "to_warehouse": _STATE["warehouse"],
+            "handler": _STATE["handler"],
+        },
+        record_timing=False,
+    )
+    assert result["ok"] is False
+    assert result["error"]["code"] == "erp_stock_transfer_warehouse_invalid"
+
+
+def test_preview_stock_transfer_ready(server_url):
+    """两个仓库可用时循环确认商品后调拨预览可就绪；单仓库账套跳过。"""
+    if not _STATE["second_warehouse"]:
+        pytest.skip("测试账套只有一个仓库，跳过调拨预览")
+    conversation = "e2e-transfer-" + _RUN_ID
+    base_arguments = {
+        "order_text": "%s1%s" % (
+            _STATE["product"]["product_name"],
+            _STATE["product"].get("unit") or "",
+        ),
+        "from_warehouse": _STATE["warehouse"],
+        "to_warehouse": _STATE["second_warehouse"],
+        "handler": _STATE["handler"],
+        "transfer_date": time.strftime("%Y-%m-%d"),
+    }
+    confirmed: list[dict[str, str]] = []
+    for _ in range(4):
+        transfer = _call(
+            "previewStockTransfer",
+            {**base_arguments, "confirmed_products": confirmed},
+            conversation=conversation,
+            record_timing=False,
+        )
+        assert transfer["ok"], transfer.get("error")
+        if transfer["ready_to_submit"]:
+            break
+        pending = [
+            {"line_id": item["line_id"], "product_id": item["product_id"]}
+            for item in transfer["recommended_products"]
+        ]
+        for item in transfer["unmatched_products"]:
+            searched = _call(
+                "searchProducts", {"keywords": [item["product_name"]]},
+                conversation=conversation, record_timing=False,
+            )
+            entry = searched["results"][0]
+            candidates = list(entry.get("recommendations") or [])
+            if entry["product"] is not None:
+                candidates.insert(0, entry["product"])
+            assert candidates, "调拨 unmatched 行没有任何候选可确认"
+            pending.append({
+                "line_id": item["line_id"],
+                "product_id": candidates[0]["product_id"],
+            })
+        assert pending, "调拨预览未就绪但没有可确认项"
+        confirmed = pending
+    else:
+        raise AssertionError("调拨预览多轮确认后仍未就绪")
+    assert transfer["preview"]["document_kind"] == "stock_transfer"
+    # 不提交调拨单：无作废接口，避免污染测试账套库存
+
+
+def test_preview_other_stock_doc_inbound(server_url):
+    """其他入库单预览可就绪（或按账套类型数据返回待办），不真实提交。"""
+    conversation = "e2e-other-doc-" + _RUN_ID
+    doc_types = _STATE["inbound_doc_types"]
+    arguments = {
+        "kind": "inbound",
+        "order_text": "%s1%s" % (
+            _STATE["product"]["product_name"],
+            _STATE["product"].get("unit") or "",
+        ),
+        "warehouse": _STATE["warehouse"],
+        "handler": _STATE["handler"],
+        "doc_date": time.strftime("%Y-%m-%d"),
+    }
+    if doc_types:
+        first = doc_types[0]
+        arguments["doc_type"] = str(first.get("id") or first.get("name") or "")
+    result = _call("previewOtherStockDoc", arguments, conversation=conversation)
+    assert result["ok"], result.get("error")
+    # 类型或商品未就绪时返回 required_actions，就绪时给出预览
+    if result["ready_to_submit"]:
+        assert result["preview"]["document_kind"] == "other_stock_doc"
+    else:
+        assert result["required_actions"]
+    # 不提交：无作废接口
 
 
 def test_list_products_pagination_boundaries(server_url):
