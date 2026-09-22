@@ -4,8 +4,8 @@
 
     uv run uvicorn erp_billing.workbuddy_app:app --host 0.0.0.0 --port 8103
 
-原有 ``erp_billing.app:app`` 保持不变；本入口只增加 WorkBuddy OAuth、ERP
-AI Token 绑定和 HTTP 保护层。
+本入口提供生产 WorkBuddy OAuth、ERP AI Token 绑定和 HTTP 保护层；独立的
+``erp_billing.app:app`` 提供生产 ``X-API-Key`` 直连。
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from gjp_common.logging_config import configure_logging
 from .adapters import UnavailableBillingApi, create_match_logger_from_env
 from .app import BillingSessionToolSetResolver
 from .config import ErpBillingSettings
-from .mcp_service import create_billing_mcp_service, mcp_transport_allowlists
+from .mcp_service import create_billing_mcp_service, mcp_transport_allowlists, rate_limit_billing_mcp
 from .session import ErpBillingSession
 from .toolset import BillingToolSet
 from .workbuddy_oauth import (
@@ -94,7 +94,9 @@ def create_workbuddy_billing_app(
         allowed_hosts=allowed_hosts,
         allowed_origins=allowed_origins,
     )
-    return WorkBuddyOAuthProtectionMiddleware(service, oauth_provider)
+    return rate_limit_billing_mcp(
+        WorkBuddyOAuthProtectionMiddleware(service, oauth_provider),
+    )
 
 
 class _LazyWorkBuddyApp:

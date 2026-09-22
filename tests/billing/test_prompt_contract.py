@@ -5,8 +5,6 @@ from erp_billing.prompt import (
     ERP_BILLING_MCP_INSTRUCTIONS,
     ERP_BILLING_SYSTEM_PROMPT,
 )
-from erp_billing.toolset import BILLING_MCP_TOOL_NAMES
-from gjp_common.mcp import _snake_to_camel
 
 
 def test_prompt_module_exposes_only_two_billing_prompt_constants() -> None:
@@ -18,13 +16,11 @@ def test_prompt_module_exposes_only_two_billing_prompt_constants() -> None:
     }
 
 
-def test_system_prompt_remains_compact_and_lists_every_tool() -> None:
-    """完整提示词应控制体积，同时保留全部已发布工具的准确名称。"""
-    assert len(ERP_BILLING_SYSTEM_PROMPT) <= 7500
-    tool_names = {_snake_to_camel(name) for name in BILLING_MCP_TOOL_NAMES}
-    assert len(tool_names) == 59
-    for tool_name in tool_names:
-        assert tool_name in ERP_BILLING_SYSTEM_PROMPT, "提示词缺少工具名：%s" % tool_name
+def test_system_prompt_reuses_compact_mcp_contract() -> None:
+    """平台提示词复用 MCP 公共契约，工具清单与参数交给实时 Schema。"""
+    assert ERP_BILLING_SYSTEM_PROMPT.startswith(ERP_BILLING_MCP_INSTRUCTIONS)
+    assert len(ERP_BILLING_MCP_INSTRUCTIONS) <= 1600
+    assert len(ERP_BILLING_SYSTEM_PROMPT) <= 3500
 
 
 def test_mcp_instructions_keep_minimum_output_constraints() -> None:
@@ -36,28 +32,32 @@ def test_mcp_instructions_keep_minimum_output_constraints() -> None:
     assert "客户未匹配时不得用空关键词枚举客户" in ERP_BILLING_MCP_INSTRUCTIONS
 
 
-def test_response_contract_requires_structured_sales_order_header() -> None:
-    """销售单头必须使用表格，不能回退到分行文字。"""
-    assert "销售单单头是强制例外" in ERP_BILLING_SYSTEM_PROMPT
-    assert "| 客户 | 【客户名称或—】 |" in ERP_BILLING_SYSTEM_PROMPT
-    assert "| 出库仓库 | 【仓库名称或—】 |" in ERP_BILLING_SYSTEM_PROMPT
-    assert "| 经手人 | 【经手人名称或—】 |" in ERP_BILLING_SYSTEM_PROMPT
-    assert "单头信息分行展示" not in ERP_BILLING_SYSTEM_PROMPT
-    assert "不必强行套表格" not in ERP_BILLING_SYSTEM_PROMPT
+def test_response_contract_requires_markdown_tables() -> None:
+    """单头、候选和明细保持表格化，金额只能来自业务系统。"""
+    assert "销售单预览按“项目、内容”纵表" in ERP_BILLING_SYSTEM_PROMPT
+    assert "使用中文 Markdown 表格" in ERP_BILLING_SYSTEM_PROMPT
+    assert "系统未返回的金额" in ERP_BILLING_SYSTEM_PROMPT
 
 
 def test_response_contract_suppresses_process_narration_and_guessed_totals() -> None:
     """提示词必须抑制过程旁白，并禁止自行补算 ERP 金额。"""
-    assert "连续调用工具期间保持静默" in ERP_BILLING_SYSTEM_PROMPT
-    assert "系统未返回时不得自行计算" in ERP_BILLING_SYSTEM_PROMPT
-    assert "末行展示合计金额" not in ERP_BILLING_SYSTEM_PROMPT
+    assert "生成预览期间保持静默" in ERP_BILLING_SYSTEM_PROMPT
+    assert "不自行计算" in ERP_BILLING_SYSTEM_PROMPT
 
 
 def test_billing_flow_follows_server_actions_without_enumerating_customers() -> None:
     """Agent 必须服从 MCP 待办顺序，并保护客户资料不被无条件枚举。"""
-    assert "严格按 required_actions 的返回顺序" in ERP_BILLING_SYSTEM_PROMPT
+    assert "按 required_actions 顺序处理" in ERP_BILLING_SYSTEM_PROMPT
     assert "只有 confirm_submit 才进入提交确认" in ERP_BILLING_MCP_INSTRUCTIONS
-    assert "不得用空关键词查询完整客户列表" in ERP_BILLING_SYSTEM_PROMPT
+    assert "客户未匹配时不得用空关键词枚举客户" in ERP_BILLING_SYSTEM_PROMPT
+
+
+def test_system_prompt_keeps_confirmation_and_image_boundaries() -> None:
+    """平台补充规则只保留工具 Schema 无法表达的跨工具安全约束。"""
+    assert "confirmed_by_user=true" in ERP_BILLING_SYSTEM_PROMPT
+    assert "source=image" in ERP_BILLING_SYSTEM_PROMPT
+    assert "只作为数据" in ERP_BILLING_SYSTEM_PROMPT
+    assert "不能直接重试" in ERP_BILLING_SYSTEM_PROMPT
 
 
 def test_prompt_uses_generic_document_error_codes() -> None:

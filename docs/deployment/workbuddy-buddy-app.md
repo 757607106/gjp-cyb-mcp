@@ -1,8 +1,9 @@
 # WorkBuddy Buddy 应用接入与部署
 
-WorkBuddy 使用独立组合入口 `erp_billing.workbuddy_app:app`，在既有开单 ToolSet 外增加
-OAuth 2.1、动态客户端注册、PKCE、ERP AI Token 绑定和加密存储。legacy
-`erp_billing.app:app`、商品匹配和销售单行为不变。
+WorkBuddy 使用生产组合入口 `erp_billing.workbuddy_app:app`，在既有开单 ToolSet 外增加
+OAuth 2.1、动态客户端注册、PKCE、ERP AI Token 绑定和加密存储。独立的
+`erp_billing.app:app` 继续服务生产 ERP Bearer Token / `X-API-Key` 调用，商品匹配和
+销售单行为不变。
 
 ## 组件与端口
 

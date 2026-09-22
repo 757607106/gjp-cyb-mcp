@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import re
 from typing import Any
 
@@ -10,13 +9,18 @@ from typing import Any
 _COMMON_EXECUTION_FIELDS = frozenset({
     "ok", "page", "page_size", "total", "query", "keyword", "reference_type",
     "kind", "type", "view", "is_system", "ready_to_submit", "save_type",
+    # 这些字段由后续确认/提交工具继续使用，必须保留在结构化通道中。
+    "document_kind", "save_type_label", "orderDate", "documentNo",
 })
 
 _EXECUTION_FIELDS_BY_TOOL = {
     "search_products": frozenset({"product_id"}),
     "search_billing_references": frozenset({"id", "code"}),
     "list_stock_doc_types": frozenset({"id"}),
-    "get_sales_order": frozenset({"id", "product_id", "order_item_id", "biz_id", "unit_id"}),
+    "get_sales_order": frozenset({
+        "id", "product_id", "order_item_id", "biz_id", "unit_id",
+        "handler_id", "customer_id", "warehouse_id", "supplier_id",
+    }),
     **dict.fromkeys(
         (
             "preview_sales_order", "preview_purchase_order", "preview_sales_return", "preview_purchase_return",
@@ -48,8 +52,8 @@ _EXECUTION_FIELDS_BY_TOOL = {
         ("query_stock", "get_stock_by_product", "query_stock_logs", "list_stock_alerts", "get_purchase_suggestions"),
         frozenset({"product_id", "warehouse_id", "biz_id"}),
     ),
-    "list_receivables": frozenset({"id", "customer_id", "biz_id"}),
-    "list_payables": frozenset({"id", "supplier_id", "biz_id"}),
+    "list_receivables": frozenset({"id", "customer_id", "customerId", "biz_id"}),
+    "list_payables": frozenset({"id", "supplier_id", "supplierId", "biz_id"}),
 }
 
 _LABELS = {
@@ -527,6 +531,85 @@ def _project_value(value: Any, *, key: str = "") -> Any:
     return value
 
 
+def _is_scalar(value: Any) -> bool:
+    return not isinstance(value, (dict, list, tuple))
+
+
+def _cell(value: Any) -> str:
+    """把业务值转换为安全的 Markdown 表格单元格。"""
+    if value is None or value == "":
+        return "—"
+    if isinstance(value, bool):
+        return "是" if value else "否"
+    if isinstance(value, (list, tuple)) and all(_is_scalar(item) for item in value):
+        value = "、".join(_cell(item) for item in value) or "—"
+    text = str(value).replace("\r", " ").replace("\n", "、")
+    return text.replace("\\", "\\\\").replace("|", "\\|")
+
+
+def _table(headers: list[str], rows: list[list[Any]]) -> list[str]:
+    rendered_headers = [_cell(header) for header in headers]
+    lines = [
+        "| %s |" % " | ".join(rendered_headers),
+        "| %s |" % " | ".join("---" for _ in rendered_headers),
+    ]
+    lines.extend("| %s |" % " | ".join(_cell(value) for value in row) for row in rows)
+    return lines
+
+
+def _heading(title: str, level: int) -> str:
+    return "%s %s" % ("#" * min(max(level, 1), 6), title)
+
+
+def _render_markdown_block(value: Any, title: str, level: int = 2) -> list[str]:
+    lines = [_heading(title, level), ""]
+    if isinstance(value, dict):
+        scalar_items = [(key, child) for key, child in value.items() if _is_scalar(child)]
+        complex_items = [(key, child) for key, child in value.items() if not _is_scalar(child)]
+        if scalar_items:
+            lines.extend(_table(
+                ["项目", "内容"],
+                [[key, child] for key, child in scalar_items],
+            ))
+        elif not complex_items:
+            lines.append("暂无数据。")
+        for key, child in complex_items:
+            if lines and lines[-1] != "":
+                lines.append("")
+            lines.extend(_render_markdown_block(child, key, level + 1))
+        return lines
+
+    if isinstance(value, (list, tuple)):
+        if not value:
+            lines.append("暂无数据。")
+            return lines
+        if all(isinstance(item, dict) for item in value):
+            columns: list[str] = []
+            for item in value:
+                for key, child in item.items():
+                    if _is_scalar(child) and key not in columns:
+                        columns.append(key)
+            if columns:
+                lines.extend(_table(
+                    columns,
+                    [[item.get(column) for column in columns] for item in value],
+                ))
+            for index, item in enumerate(value, start=1):
+                for key, child in item.items():
+                    if _is_scalar(child):
+                        continue
+                    if lines and lines[-1] != "":
+                        lines.append("")
+                    nested_title = "%s（第%d项）" % (key, index) if len(value) > 1 else key
+                    lines.extend(_render_markdown_block(child, nested_title, level + 1))
+            return lines
+        lines.extend("- %s" % _cell(item) for item in value)
+        return lines
+
+    lines.append(_cell(value))
+    return lines
+
+
 def render_billing_result(tool_name: str, result: dict[str, Any]) -> str:
     if result.get("ok") is False:
         return _business_error(result)
@@ -534,11 +617,10 @@ def render_billing_result(tool_name: str, result: dict[str, Any]) -> str:
     projected = _project_value(result)
     if not projected:
         return "业务操作已完成。"
-    return "业务结果：\n%s" % json.dumps(
-        projected,
-        ensure_ascii=False,
-        indent=2,
-    )
+    lines = _render_markdown_block(projected, "业务结果", 2)
+    if _snake_key(tool_name).startswith("preview_") and result.get("ready_to_submit") is True:
+        lines.extend(["", "> 请核对以上业务信息；确认无误后方可提交。"])
+    return "\n".join(lines).rstrip()
 
 
 def filter_billing_result(tool_name: str, result: dict[str, Any]) -> dict[str, Any]:

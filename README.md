@@ -5,9 +5,9 @@
 
 ```text
 AI 平台 / SaaS 对话页 / WorkBuddy
-  │ Authorization: Bearer <ERP JWT / OAuth2 token>
+  │ ERP Bearer / X-API-Key / MCP OAuth token
   ▼
-ERP 业务 MCP（erp_billing.app / erp_billing.workbuddy_app）
+ERP 业务 MCP（ERP 长期凭据：app；OAuth：workbuddy_app）
   ├─ McpIdentityResolver：解析身份与 billing scopes
   ├─ McpToolSetResolver：按 tenant/account/session 隔离会话
   ├─ BillingToolSet：资料追问、商品匹配、预览和提交
@@ -21,10 +21,10 @@ ERP URL 不是租户动态参数，由部署环境唯一配置：
 ERP_BILLING_BASE_URL=https://test-ai.yuncyb.com/aicyberp-api
 ```
 
-URL 不进入 `InvocationContext` 或 Tool Schema。生产环境由 MCP 客户端直接携带
-ERP JWT / OAuth2 Bearer，服务端只从 payload 解析无凭据身份，并在调用 ERP API 时
-按当前请求注入原 Bearer；账号、密码、验证码、Cookie 和 Token 都不进入模型可见
-工具参数。
+URL 不进入 `InvocationContext` 或 Tool Schema。生产支持两条独立链路：直连接口逐
+请求接收 ERP `Authorization: Bearer` 或 `X-API-Key` 长期凭据；OAuth 入口将 MCP
+access token 与服务端绑定的 ERP 凭据分离。账号、密码、验证码、Cookie 和 Token
+都不进入模型可见工具参数。
 
 ## 业务场景
 
@@ -53,8 +53,9 @@ ERP JWT / OAuth2 Bearer，服务端只从 payload 解析无凭据身份，并在
 `saveType=2` 保存过账，不暴露草稿态。
 
 提示词只保留两个入口：`ERP_BILLING_MCP_INSTRUCTIONS` 由 MCP initialize 自动下发，
-`ERP_BILLING_SYSTEM_PROMPT` 供 AI 平台装配 Agent。两者职责不同，不需要对接方再
-拼接第三份响应契约。
+`ERP_BILLING_SYSTEM_PROMPT` 供 AI 平台装配 Agent，并复用前者后只补充跨工具确认、
+安全与图片规则。工具选择和参数含义以实时 `tools/list` Schema 为准，不需要对接方再
+拼接或维护第三份响应契约。
 
 ## 开发
 

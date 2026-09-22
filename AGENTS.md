@@ -63,7 +63,9 @@ MCP 只覆盖对话式业务场景，按场景组织工具，不镜像 ERP 全�
 
 ## 鉴权与安全设计
 
-- **生产禁止账号密码登录**：生产 MCP 使用 Bearer JWT / OAuth2。legacy 客户端直接使用 ERP JWT 作为 Bearer Token，可信接入方先完成鉴权，服务端只解析 payload 用于会话隔离并把原 Token 交给 ERP 最终鉴权；legacy 入口不得作为无访问控制的公网认证端点。
+- **生产禁止账号密码登录**：生产 MCP 支持直连 ERP 长期凭据与 WorkBuddy OAuth 两条独立入口。直连客户端逐请求传 `Authorization: Bearer <ERP token>` 或 `X-API-Key`，由 ERP 最终鉴权；OAuth access token 与服务端绑定的 ERP 凭据分离。
+- **不可混淆两类 Bearer**：`erp_billing.app:app` 收到的 `Authorization: Bearer` 是 ERP 长期业务 Token，必须与 `X-API-Key` 一样在生产动态接收并原样交给 ERP；它不是 MCP OAuth access token，不得因 OAuth 合规改造而禁用或改绑。只有 `erp_billing.workbuddy_app:app` 的 Bearer 才是 MCP OAuth Token。直连接口同时出现两个凭据 Header 时沿用 `Authorization` 优先规则。
+- **鉴权回归底线**：任何认证重构都必须保留生产直连 Bearer、生产直连 `X-API-Key`、WorkBuddy OAuth 三条路径，并通过 `tests/billing/test_app_identity.py` 与 `tests/billing/test_workbuddy_oauth.py`；凭据始终位于 HTTP Header，不进入 Tool Schema、Prompt 或模型消息。
 - **工具参数只含业务数据**：账号、密码、JWT、Cookie 和业务 Token 不进入 MCP 工具 JSON Schema，也不允许模型生成。
 - **对接方处理鉴权**：服务通过 `BillingApiPort` 留出入口，由 Adapter 根据 `InvocationContext` 注入当前账套凭据。
 - **身份隔离**：`InvocationContext` 不含凭据，通过 `ContextVar` 绑定当前异步任务，请求结束后恢复。
@@ -90,9 +92,9 @@ integrations/workbuddy/gjp-erp-billing/  # WorkBuddy 连接器元数据与 erp-b
 `Session` 是领域状态容器，不定义工具，不调用远端登录接口。`BillingToolSet`
 是 MCP 的唯一工具来源。生产服务不构建模型，通过两个 ASGI 入口发布：
 
-- `erp_billing.app:app` — 直连入口，Bearer JWT / X-API-Key 鉴权。
-- `erp_billing.workbuddy_app:app` — WorkBuddy 入口，在直连入口之上增加
-  WorkBuddy OAuth、ERP AI Token 绑定与 HTTP 保护层。
+- `erp_billing.app:app` — 生产直连 ERP Bearer Token / `X-API-Key` 入口。
+- `erp_billing.workbuddy_app:app` — 生产 WorkBuddy OAuth 入口，使用 ERP AI Token
+  绑定与 HTTP 保护层。
 
 ## 开发规范
 

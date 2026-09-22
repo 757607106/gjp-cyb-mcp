@@ -241,18 +241,7 @@ class QueryTools:
         只有商品名称、尚未匹配 ID 时也可用关键词查询；不是历史库存或库存变动记录。
         已匹配一个商品、要看其各仓库库存用 getStockByProduct；全账套库存总量/
         总值用 getStockSummary；历史进出流水用 queryStockLogs；现有预警用
-        listStockAlerts。不要把本工具的单页商品数量当成全局库存汇总。
-
-        Args:
-            keyword: 商品名称模糊关键词，不是商品 ID；留空不按商品名称筛选。
-            warehouse_id: 仓库内部 ID 或可唯一匹配的名称；ID 从
-                searchBillingReferences(reference_type=warehouse) 取得，不得自造；
-                名称有多个候选时先确认，留空不限定仓库。
-            stock_status: 当前库存状态：0=全部，1=正常，2=零库存，3=负库存；
-                省略不传状态筛选，与 listStockAlerts 的 alert_type 含义不同。
-            page: 页码，从 1 开始，默认 1；后续页递增，保持筛选条件不变。
-            page_size: 每页商品数量，1 到 100，默认 20；不是查询总数上限。
-        """
+        listStockAlerts。不要把本工具的单页商品数量当成全局库存汇总。"""
         try:
             context = self._contexts.get()
             context.require_scope("billing:read")
@@ -315,27 +304,12 @@ class QueryTools:
         page: int = 1,
         page_size: int = 20,
     ) -> dict[str, Any]:
-        """只读、分页查询入库、出库、调拨等库存历史变动流水。
+        """只读、分页查询商品或仓库的库存进出记录与历史变动流水。
 
-        用户问“某商品的进出记录”“某段时间库存为什么变化”时使用；不是当前库存
-        快照。查现在剩多少用 queryStock，查一个已匹配商品的各仓库库存用
-        getStockByProduct；本工具不创建出入库单，也不调整库存。
-
-        Args:
-            product_id: 可选商品内部 ID，来自 searchProducts 或 queryStock 的
-                已匹配商品；不得填名称、商品编号或自造 ID，留空不按 ID 筛选。
-            keyword: 商品名称模糊关键词，留空不按名称筛选；与 product_id 同传时
-                两项都作为筛选条件，不是 ID 未命中时的备用关键词。
-            warehouse_id: 仓库内部 ID 或可唯一匹配的名称；ID 从
-                searchBillingReferences(reference_type=warehouse) 取得，不得自造；
-                名称有多个候选时先确认，留空不限定仓库。
-            start_date: 流水开始日期 YYYY-MM-DD，按用户指定期间填写；留空不传
-                该边界，由 ERP 默认行为决定，不自动设为当月。
-            end_date: 流水结束日期 YYYY-MM-DD，不得早于 start_date；留空不传
-                该边界，由 ERP 默认行为决定。
-            page: 页码，从 1 开始，默认 1；后续页递增，保持筛选条件不变。
-            page_size: 每页流水数量，1 到 100，默认 20；不是查询总数上限。
-        """
+        用户问“某商品最近的进出记录”“某段时间库存为什么变化”时直接使用；
+        只有商品名称时可传 keyword，无需先查当前库存或商品目录。不是当前库存
+        快照；查现在剩多少用 queryStock，查一个已匹配商品的各仓库库存用
+        getStockByProduct。本工具不创建出入库单，也不调整库存。"""
         try:
             context = self._contexts.get()
             context.require_scope("billing:read")
@@ -368,15 +342,7 @@ class QueryTools:
 
         用户问“哪些商品库存不足”“有哪些积压预警”“负库存预警有哪些”时使用。
         本工具不设置预警阈值、不新建或处理预警；只查当前库存量用 queryStock，
-        要建议补货清单用 getPurchaseSuggestions，查历史变动用 queryStockLogs。
-
-        Args:
-            alert_type: 预警类型：1=库存不足，2=库存积压，3=负库存；省略查全部
-                类型。与 queryStock 的 stock_status 数字含义不同，不可混用。
-            keyword: 预警商品的名称模糊关键词；留空不按商品名称筛选。
-            page: 页码，从 1 开始，默认 1；后续页递增，保持筛选条件不变。
-            page_size: 每页预警数量，1 到 100，默认 20；不是查询总数上限。
-        """
+        要建议补货清单用 getPurchaseSuggestions，查历史变动用 queryStockLogs。"""
         try:
             context = self._contexts.get()
             context.require_scope("billing:read")
@@ -415,13 +381,7 @@ class QueryTools:
         用户问“报损该选什么出库类型”“其他入库有哪些类型”时使用；按方向查询，
         从真实候选中选择类型 ID 填入 previewOtherStockDoc 的 doc_type，不得自造。
         本工具不新建类型、不开单、不调整库存，也不是盘点或出入库历史单据查询；
-        查历史进出记录用 queryStockLogs，实际开其他出入库单先用 previewOtherStockDoc。
-
-        Args:
-            kind: 必填，inbound=其他入库类型（如报溢），outbound=其他出库类型
-                （如报损）；按用户业务方向选择，与 previewOtherStockDoc 的 kind
-                一致。类型是否可用以实际查询结果为准。
-        """
+        查历史进出记录用 queryStockLogs，实际开其他出入库单先用 previewOtherStockDoc。"""
         try:
             context = self._contexts.get()
             context.require_scope("billing:read")
@@ -448,21 +408,7 @@ class QueryTools:
         或已经收到的钱。欠供应商的钱用 listPayables；客户往来逐笔对账用
         queryReconciliation；已开销售单的单号/状态查询用 listSalesOrders，
         不把单据列表当应收汇总；结算账户收付款统计用 querySettlementReport。
-        本工具不收款、不核销。
-
-        Args:
-            view: 必填，summary=按客户汇总应收，适合“各客户欠我多少钱”；
-                details=应收明细，适合“这些欠款由哪些业务构成”。
-            customer_id: 客户内部 ID 或可唯一匹配的名称；ID 从
-                searchBillingReferences(reference_type=customer) 取得，不得自造；
-                名称有多个候选时先确认，留空不限定客户。
-            start_date: 查询开始日期 YYYY-MM-DD，按用户指定期间填写；留空不传
-                该边界，由 ERP 默认行为决定，不自动设为当月。
-            end_date: 查询结束日期 YYYY-MM-DD，不得早于 start_date；留空不传
-                该边界，由 ERP 默认行为决定。
-            page: 页码，从 1 开始，默认 1；翻页保持 view、日期与客户筛选不变。
-            page_size: 每页数量，1 到 100，默认 20；不是查询总数上限。
-        """
+        本工具不收款、不核销。"""
         try:
             context = self._contexts.get()
             context.require_scope("billing:read")
@@ -498,21 +444,7 @@ class QueryTools:
         采购额或已经付出的钱。客户欠本企业的钱用 listReceivables；采购统计用
         queryPurchaseReport；已开采购单的单号/状态查询用 listPurchaseOrders，
         不把单据列表当应付汇总；结算账户收付款统计用 querySettlementReport。
-        本工具不付款、不核销，queryReconciliation 也不是供应商对账工具。
-
-        Args:
-            view: 必填，summary=按供应商汇总应付，适合“我欠各供应商多少钱”；
-                details=应付明细，适合“这些欠款由哪些业务构成”。
-            supplier_id: 供应商内部 ID 或可唯一匹配的名称；ID 从
-                searchBillingReferences(reference_type=supplier) 取得，不得自造；
-                名称有多个候选时先确认，留空不限定供应商。
-            start_date: 查询开始日期 YYYY-MM-DD，按用户指定期间填写；留空不传
-                该边界，由 ERP 默认行为决定，不自动设为当月。
-            end_date: 查询结束日期 YYYY-MM-DD，不得早于 start_date；留空不传
-                该边界，由 ERP 默认行为决定。
-            page: 页码，从 1 开始，默认 1；翻页保持 view、日期与供应商筛选不变。
-            page_size: 每页数量，1 到 100，默认 20；不是查询总数上限。
-        """
+        本工具不付款、不核销，queryReconciliation 也不是供应商对账工具。"""
         try:
             context = self._contexts.get()
             context.require_scope("billing:read")
@@ -539,12 +471,7 @@ class QueryTools:
         用户问“企业资产负债情况如何”“某天的财务状况怎样”时使用；不是某段
         时间的收付款流水或利润报表。期间利润用 queryProfitReport；结算账户
         收付款统计用 querySettlementReport；客户欠款用 listReceivables，
-        欠供应商款用 listPayables。本工具不支持客户、账户或日期范围筛选。
-
-        Args:
-            biz_date: 财务状况业务日期 YYYY-MM-DD，按用户指定日期填写；留空
-                不向 ERP 传日期，由 ERP 默认行为决定，本工具不自动补当天。
-        """
+        欠供应商款用 listPayables。本工具不支持客户、账户或日期范围筛选。"""
         try:
             context = self._contexts.get()
             context.require_scope("billing:read")
@@ -572,30 +499,7 @@ class QueryTools:
         用 listSalesOrders，查看一张销售单用 getSalesOrder，而不是报表 details。
         不要用销售单列表替代统计。利润用 queryProfitReport，客户欠款用
         listReceivables，实际结算收付款用 querySettlementReport，采购统计用
-        queryPurchaseReport；这些指标不等同于销售额。
-
-        Args:
-            view: 必填，analysis=销售分析，适合“这段时间整体销售怎么样”；
-                details=销售明细，适合“具体卖了哪些商品”；
-                details_summary=销售明细汇总合计，适合“同一筛选条件下销售明细
-                合计多少”，不是另一页明细；ranking_product=商品销量排行，适合
-                “什么商品卖得好”；ranking_customer=客户销量排行，适合“哪些客户
-                买得多”，不是客户利润排行。
-            start_date: 报表开始日期 YYYY-MM-DD，按用户指定期间填写；留空不传
-                该边界，由 ERP 默认行为决定，不自动设为当月。
-            end_date: 报表结束日期 YYYY-MM-DD，不得早于 start_date；留空不传
-                该边界，由 ERP 默认行为决定。
-            customer_id: 客户内部 ID 或可唯一匹配的名称；ID 从
-                searchBillingReferences(reference_type=customer) 取得，不得自造；
-                名称有多个候选时先确认，留空不限定客户。
-            handler_id: 经手人内部 ID 或可唯一匹配的名称；ID 从
-                searchBillingReferences(reference_type=handler) 取得，不得自造；
-                名称有多个候选时先确认，留空不限定经手人。
-            page: 页码，从 1 开始，默认 1；用于支持分页的报表视图，翻页保持 view
-                与筛选条件不变；汇总视图不靠翻页累加。
-            page_size: 每页数量，1 到 100，默认 20；用于支持分页的报表视图，
-                不是统计总量或排行指标。
-        """
+        queryPurchaseReport；这些指标不等同于销售额。"""
         try:
             context = self._contexts.get()
             context.require_scope("billing:read")
@@ -637,25 +541,7 @@ class QueryTools:
         “找某单号/状态的单据”用 listPurchaseOrders，查看一张采购单用
         getPurchaseOrder，而不是报表 details。不要用采购单列表替代统计。
         欠供应商多少钱用 listPayables；建议补哪些货用 getPurchaseSuggestions；
-        新建采购单先用 previewPurchaseOrder；本工具不创建采购单。
-
-        Args:
-            view: 必填，statistics=采购统计，适合“整体采购情况怎么样”；
-                details=采购明细，适合“具体采购了哪些商品”；
-                details_summary=采购明细汇总合计，适合“同一筛选条件下采购明细
-                合计多少”，不是另一页明细或待采购建议。
-            start_date: 报表开始日期 YYYY-MM-DD，按用户指定期间填写；留空不传
-                该边界，由 ERP 默认行为决定，不自动设为当月。
-            end_date: 报表结束日期 YYYY-MM-DD，不得早于 start_date；留空不传
-                该边界，由 ERP 默认行为决定。
-            supplier_id: 供应商内部 ID 或可唯一匹配的名称；ID 从
-                searchBillingReferences(reference_type=supplier) 取得，不得自造；
-                名称有多个候选时先确认，留空不限定供应商。
-            page: 页码，从 1 开始，默认 1；用于支持分页的报表视图，翻页保持 view
-                与筛选条件不变；汇总视图不靠翻页累加。
-            page_size: 每页数量，1 到 100，默认 20；用于支持分页的报表视图，
-                不是统计总量。
-        """
+        新建采购单先用 previewPurchaseOrder；本工具不创建采购单。"""
         try:
             context = self._contexts.get()
             context.require_scope("billing:read")
@@ -693,24 +579,7 @@ class QueryTools:
         用户问“赚了多少”“哪些商品/客户贡献利润”时使用；利润不等于销售额、
         收款额、应收款或账户余额。销售额和销量排行用 querySalesReport；结算
         收付款用 querySettlementReport；资产负债概况用 getFinancialStatus。
-        本工具没有商品 ID 筛选参数，不要为 by_product 自造 product_id 参数。
-
-        Args:
-            view: 必填，summary=利润汇总，适合“这段时间整体赚了多少”；
-                by_customer=按客户统计利润，适合“各客户贡献多少利润”；
-                by_product=按商品统计利润，适合“哪些商品赚钱”，不是商品销量排行。
-            start_date: 报表开始日期 YYYY-MM-DD，按用户指定期间填写；留空不传
-                该边界，由 ERP 默认行为决定，不自动设为当月。
-            end_date: 报表结束日期 YYYY-MM-DD，不得早于 start_date；留空不传
-                该边界，由 ERP 默认行为决定。
-            customer_id: 客户内部 ID 或可唯一匹配的名称；ID 从
-                searchBillingReferences(reference_type=customer) 取得，不得自造；
-                名称有多个候选时先确认，留空不限定客户。
-            page: 页码，从 1 开始，默认 1；用于支持分页的报表视图，翻页保持 view
-                与筛选条件不变；汇总视图不靠翻页累加。
-            page_size: 每页数量，1 到 100，默认 20；用于支持分页的报表视图，
-                不是统计总量。
-        """
+        本工具没有商品 ID 筛选参数，不要为 by_product 自造 product_id 参数。"""
         try:
             context = self._contexts.get()
             context.require_scope("billing:read")
@@ -747,18 +616,7 @@ class QueryTools:
         不是客户欠款（listReceivables）、供应商欠款（listPayables）、企业资产
         负债概况（getFinancialStatus）或经营利润（queryProfitReport）。查具体
         收款单/付款单用 listReceiptOrders / listPaymentOrders，不用统计替代单据查询。
-        无 view、分页或账户 ID 筛选参数；本工具不会发起收付款或核销。
-
-        Args:
-            start_date: 结算统计开始日期 YYYY-MM-DD，按用户指定期间填写；留空不传
-                该边界，由 ERP 默认行为决定，不自动设为当月。
-            end_date: 结算统计结束日期 YYYY-MM-DD，不得早于 start_date；留空不传
-                该边界，由 ERP 默认行为决定。
-            sort_by: 可选 ERP 结算统计排序字段；仅在已知受支持的字段且用户要求
-                排序时填写，不把中文指标名或猜测值当字段；留空使用 ERP 默认排序。
-            order_type: 排序方向，asc=升序（从小到大），desc=降序（从大到小）；
-                配合已知 sort_by 使用，省略不传排序方向。
-        """
+        无 view、分页或账户 ID 筛选参数；本工具不会发起收付款或核销。"""
         try:
             context = self._contexts.get()
             context.require_scope("billing:read")
@@ -792,23 +650,7 @@ class QueryTools:
         listReceivables；本工具不是销售统计（querySalesReport），不是销售单
         列表（listSalesOrders），也不支持供应商对账；供应商应付查询用 listPayables。
         summary 不支持日期筛选；要核对指定期间的某客户往来，直接使用 statement
-        并提供真实客户，不必先查 summary。缺少客户时先确认，不为通过校验自造 ID。
-
-        Args:
-            view: 必填，summary=客户对账报表，适合“各客户往来汇总”或“某客户
-                往来汇总”，不能指定日期范围；statement=指定客户对账单明细，适合
-                “逐笔核对某客户某段时间的往来”，必须提供 customer_id。
-            customer_id: 客户内部 ID 或可唯一匹配的名称；ID 从
-                searchBillingReferences(reference_type=customer) 取得，不得自造；
-                名称有多个候选时先确认。statement 必填，summary 留空不限定客户。
-            start_date: 仅 statement 使用的开始日期 YYYY-MM-DD，按用户指定期间
-                填写；留空不传该边界，由 ERP 默认行为决定，不自动设为当月。
-                summary 不使用此筛选，应省略。
-            end_date: 仅 statement 使用的结束日期 YYYY-MM-DD，不得早于 start_date；
-                留空不传该边界，由 ERP 默认行为决定；summary 不使用，应省略。
-            page: 页码，从 1 开始，默认 1；翻页保持 view、客户及日期条件不变。
-            page_size: 每页数量，1 到 100，默认 20；不是查询总数上限。
-        """
+        并提供真实客户，不必先查 summary。缺少客户时先确认，不为通过校验自造 ID。"""
         try:
             context = self._contexts.get()
             context.require_scope("billing:read")

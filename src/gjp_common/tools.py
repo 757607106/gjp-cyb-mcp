@@ -34,6 +34,20 @@ def _parameter_descriptions(docstring: str) -> dict[str, str]:
     return descriptions
 
 
+def _close_input_objects(schema: dict[str, Any], *, root: bool = False) -> None:
+    """关闭输入对象的未知字段，同时保留显式声明的开放对象。"""
+    is_object = schema.get("type") == "object"
+    if is_object and (root or "properties" in schema):
+        schema.setdefault("additionalProperties", False)
+    for value in schema.values():
+        if isinstance(value, dict):
+            _close_input_objects(value)
+        elif isinstance(value, list):
+            for item in value:
+                if isinstance(item, dict):
+                    _close_input_objects(item)
+
+
 class SessionFunctionTool:
     """领域工具：函数 + 可覆盖的输入/输出 JSON Schema 与读写注解。
 
@@ -51,19 +65,30 @@ class SessionFunctionTool:
         input_schema_override: dict[str, Any] | None = None,
         is_read_only: bool = False,
         name: str | None = None,
+        title: str | None = None,
+        destructive_hint: bool | None = None,
+        idempotent_hint: bool | None = None,
+        open_world_hint: bool | None = None,
     ) -> None:
         self._func = func
         self.name = name or func.__name__
-        self.description = inspect.getdoc(func) or ""
+        docstring = inspect.getdoc(func) or ""
+        # Args 已进入 inputSchema，不在 description 中重复占用模型上下文。
+        self.description = docstring.partition("\nArgs:\n")[0].strip()
+        self.title = title
         self.output_schema = output_schema
         self.is_read_only = is_read_only
+        self.destructive_hint = destructive_hint
+        self.idempotent_hint = idempotent_hint
+        self.open_world_hint = open_world_hint
         metadata = func_metadata(func)
         self.input_schema = (
             deepcopy(input_schema_override)
             if input_schema_override is not None
             else metadata.arg_model.model_json_schema(by_alias=True)
         )
-        descriptions = _parameter_descriptions(self.description)
+        _close_input_objects(self.input_schema, root=True)
+        descriptions = _parameter_descriptions(docstring)
         for name, parameter in self.input_schema.get("properties", {}).items():
             if descriptions.get(name) and not parameter.get("description"):
                 parameter["description"] = descriptions[name]

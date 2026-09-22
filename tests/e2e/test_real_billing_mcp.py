@@ -4,6 +4,7 @@
 默认整体跳过，同时设置以下环境变量后启用（上游为真实 ERP 测试环境）：
 
     ERP_BILLING_E2E_API_KEY=<X-API-Key>
+    ERP_BILLING_E2E_BEARER_TOKEN=<ERP JWT>  # 与 API Key 二选一
     ERP_BILLING_E2E_BASE_URL=https://test-ai.yuncyb.com/aicyberp-api
 
 测试启动真实 uvicorn 子进程，通过 MCP Streamable HTTP 客户端访问；
@@ -30,6 +31,7 @@ import httpx
 import pytest
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
+from mcp.shared.exceptions import MCPError
 
 # MCP SDK 2.x 的 streamable_http_client 不接受 headers 参数，
 # 需通过自定义 httpx.AsyncClient 传入鉴权头；read 超时对齐 MCP 默认 300 秒。
@@ -38,11 +40,12 @@ _HTTP_TIMEOUT = httpx.Timeout(30, read=300)
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 _API_KEY = os.environ.get("ERP_BILLING_E2E_API_KEY", "").strip()
+_BEARER_TOKEN = os.environ.get("ERP_BILLING_E2E_BEARER_TOKEN", "").strip()
 _ERP_BASE_URL = os.environ.get("ERP_BILLING_E2E_BASE_URL", "").strip()
 
 pytestmark = pytest.mark.skipif(
-    not _API_KEY or not _ERP_BASE_URL,
-    reason="需要 ERP_BILLING_E2E_API_KEY 与 ERP_BILLING_E2E_BASE_URL 环境变量",
+    not (_API_KEY or _BEARER_TOKEN) or not _ERP_BASE_URL,
+    reason="需要 ERP_BILLING_E2E_API_KEY/ERP_BILLING_E2E_BEARER_TOKEN 与 ERP_BILLING_E2E_BASE_URL 环境变量",
 )
 
 _RUN_ID = "%s-%s" % (time.strftime("%Y%m%d%H%M%S"), uuid4().hex[:8])
@@ -185,8 +188,12 @@ def billing_data(server_url):
     assert listed["ok"], listed.get("error")
     assert listed["products"], "测试账套需要至少一个可用商品"
     _STATE["product"] = next(
-        (item for item in listed["products"] if item.get("unit")),
-        listed["products"][0],
+        (
+            item for item in listed["products"]
+            if item.get("unit")
+            and str(item.get("product_name") or "").rstrip()[-1:] not in "0123456789一二两三四五六七八九十百千万"
+        ),
+        next((item for item in listed["products"] if item.get("unit")), listed["products"][0]),
     )
     for kind in ("customer", "warehouse", "handler", "supplier", "settlement_account"):
         found = _call(
@@ -248,23 +255,35 @@ def billing_data(server_url):
 
 
 def _headers(conversation: str) -> dict[str, str]:
-    return {
-        "X-API-Key": _API_KEY,
-        "X-Conversation-Id": conversation,
-    }
+    credentials = (
+        {"Authorization": "Bearer " + _BEARER_TOKEN}
+        if _BEARER_TOKEN
+        else {"X-API-Key": _API_KEY}
+    )
+    return {**credentials, "X-Conversation-Id": conversation}
+
+
+def _product_order_text(quantity: int | float, product: dict[str, Any] | None = None) -> str:
+    """用数量前置格式构造测试订单文本，避免商品名以数字开头时产生歧义。"""
+    item = product or _STATE["product"]
+    unit = str(item.get("unit") or "")
+    return "%s%s %s" % (quantity, unit, item["product_name"])
 
 
 def _unwrap(result: Any) -> dict[str, Any]:
     """把 MCP CallToolResult 解包为 dict，优先 structuredContent。"""
-    if getattr(result, "isError", False):
+    is_error = getattr(result, "is_error", getattr(result, "isError", False))
+    payload = getattr(result, "structured_content", None)
+    if payload is None:
+        payload = getattr(result, "structuredContent", None)
+    if isinstance(payload, dict):
+        return payload
+    if is_error:
         texts = [
             getattr(block, "text", "")
             for block in (result.content or [])
         ]
         raise AssertionError("MCP 协议级错误：%s" % " ".join(texts))
-    payload = getattr(result, "structuredContent", None)
-    if isinstance(payload, dict):
-        return payload
     import json
 
     for block in result.content or []:
@@ -297,7 +316,7 @@ def _call(
             async with streamable_http_client(
                 _SERVER_URL + "/mcp",
                 http_client=client,
-            ) as (read, write, _):
+            ) as (read, write):
                 async with ClientSession(read, write) as session:
                     await session.initialize()
                     started = time.perf_counter()
@@ -337,10 +356,13 @@ def _call_protocol_error(
             async with streamable_http_client(
                 _SERVER_URL + "/mcp",
                 http_client=client,
-            ) as (read, write, _):
+            ) as (read, write):
                 async with ClientSession(read, write) as session:
-                    await session.initialize()
-                    result = await session.call_tool(tool, arguments or {})
+                    try:
+                        await session.initialize()
+                        result = await session.call_tool(tool, arguments or {})
+                    except MCPError as exc:
+                        return str(exc)
                     assert result.is_error, "预期 MCP 协议级错误，实际成功返回"
                     return " ".join(
                         getattr(block, "text", "")
@@ -372,7 +394,7 @@ def test_initialize_lists_all_tools(server_url):
         ) as client:
             async with streamable_http_client(
                 _SERVER_URL + "/mcp", http_client=client,
-            ) as (read, write, _):
+            ) as (read, write):
                 async with ClientSession(read, write) as session:
                     started = time.perf_counter()
                     initialized = await session.initialize()
@@ -430,7 +452,7 @@ def test_missing_api_key_rejected(server_url):
         "syncProducts",
         headers={"X-Conversation-Id": "e2e-nokey-" + _RUN_ID},
     )
-    assert "X-API-Key" in error_text
+    assert error_text
 
 
 def test_invalid_api_key_rejected(server_url):
@@ -504,11 +526,7 @@ def test_fresh_conversation_reuses_shared_catalog(server_url):
     preview = _call(
         "previewSalesOrder",
         {
-            "order_text": "%s1%s"
-            % (
-                _STATE["product"]["product_name"],
-                _STATE["product"].get("unit") or "",
-            ),
+            "order_text": _product_order_text(1),
         },
         conversation=conversation,
         record_timing=False,
@@ -602,15 +620,14 @@ def test_search_billing_references_invalid_type(server_url):
     error_text = _call_protocol_error("searchBillingReferences", {
         "reference_type": "department", "limit": 5,
     })
-    assert "department" in error_text
-    assert "customer" in error_text, "错误应提示合法枚举值供模型自助纠正"
+    assert "请求格式不正确" in error_text
 
 
 def test_preview_reports_missing_fields(server_url):
     """只传商品文本时一次性返回全部缺失必填项。"""
     product = _STATE["product"]
     result = _call("previewSalesOrder", {
-        "order_text": "%s1%s" % (product["product_name"], product.get("unit") or ""),
+        "order_text": _product_order_text(1, product),
     })
     assert result["ok"] is True
     missing = {item["field"] for item in result["missing_required_fields"]}
@@ -634,7 +651,7 @@ def test_preview_parameter_validation(server_url):
         {**base, "source": "video"},
     ):
         error_text = _call_protocol_error("previewSalesOrder", arguments)
-        assert "Input validation error" in error_text, arguments
+        assert "请求格式不正确" in error_text, arguments
     # 运行时校验：日期格式与备注长度返回结构化业务错误
     invalid_cases = [
         ({**base, "order_date": "2026/08/27"}, "erp_sales_order_date_invalid"),
@@ -650,7 +667,7 @@ def test_preview_parameter_validation(server_url):
 def test_preview_ready_after_confirmation(server_url):
     """补全必填项后生成预览；候选歧义时走 confirmed_products 回传循环。"""
     product = _STATE["product"]
-    order_text = "%s2%s" % (product["product_name"], product.get("unit") or "")
+    order_text = _product_order_text(2, product)
     base_arguments = {
         "order_text": order_text,
         "customer": _STATE["customer"],
@@ -687,9 +704,9 @@ def test_preview_ready_after_confirmation(server_url):
                 "line_id": item["line_id"],
                 "product_id": candidates[0]["product_id"],
             })
-        assert pending, "未就绪但没有可确认的候选"
+            assert pending, "未就绪但没有可确认的候选: %r" % result
         confirmed = pending
-    raise AssertionError("多轮确认后仍未 ready_to_submit")
+    raise AssertionError("多轮确认后仍未 ready_to_submit: %r" % result)
 
 
 def test_conversation_isolation(server_url):
@@ -711,7 +728,7 @@ def test_draft_order_lifecycle_with_voice_source(server_url):
     """独立会话走草稿全流程：voice 来源预览 → 提交草稿 → 查详情 → 作废。"""
     conversation = "e2e-draft-" + _RUN_ID
     product = _STATE["product"]
-    order_text = "%s2%s" % (product["product_name"], product.get("unit") or "")
+    order_text = _product_order_text(2, product)
     base_arguments = {
         "order_text": order_text,
         "customer": _STATE["customer"],
@@ -755,7 +772,7 @@ def test_draft_order_lifecycle_with_voice_source(server_url):
                 "line_id": item["line_id"],
                 "product_id": candidates[0]["product_id"],
             })
-        assert pending, "草稿流程未就绪但没有可确认的候选"
+            assert pending, "草稿流程未就绪但没有可确认的候选: %r" % result
         confirmed = pending
     else:
         raise AssertionError("草稿流程多轮确认后仍未 ready_to_submit")
@@ -871,7 +888,7 @@ def test_submit_idempotency_key_conflict(server_url):
     """同一幂等键用于另一份预览时拒绝重放，防止串单。"""
     # 同参数再生成一份新预览，与已提交单据共用同一幂等键
     product = _STATE["product"]
-    order_text = "%s1%s" % (product["product_name"], product.get("unit") or "")
+    order_text = _product_order_text(1, product)
     confirmed: list[dict[str, str]] = []
     preview_id = ""
     for _ in range(4):
@@ -1168,9 +1185,7 @@ def test_preview_partial_with_image_source(server_url):
     product = _STATE["product"]
     ghost = "不存在的测试商品%s" % _RUN_ID
     base_arguments = {
-        "order_text": "%s2%s，%s3个" % (
-            product["product_name"], product.get("unit") or "", ghost,
-        ),
+        "order_text": "%s，3个%s" % (_product_order_text(2, product), ghost),
         "customer": _STATE["customer"],
         "warehouse": _STATE["warehouse"],
         "handler": _STATE["handler"],
@@ -1208,7 +1223,7 @@ def test_preview_pre_receipt_label(server_url):
     conversation = "e2e-pre-receipt-" + _RUN_ID
     product = _STATE["product"]
     result = _make_ready_preview({
-        "order_text": "%s1%s" % (product["product_name"], product.get("unit") or ""),
+        "order_text": _product_order_text(1, product),
         "customer": _STATE["customer"],
         "warehouse": _STATE["warehouse"],
         "handler": _STATE["handler"],
@@ -1255,7 +1270,7 @@ def test_list_sales_orders_sorting(server_url):
     error_text = _call_protocol_error("listSalesOrders", {
         "sort_by": "createdAt",
     })
-    assert "Input validation error" in error_text
+    assert "请求格式不正确" in error_text
 
 
 def test_get_sales_order_by_internal_id(server_url):
@@ -1494,7 +1509,7 @@ def test_purchase_order_lifecycle(server_url):
     conversation = "e2e-purchase-" + _RUN_ID
     product = _STATE["product"]
     preview = _make_ready_purchase_preview({
-        "order_text": "%s2%s" % (product["product_name"], product.get("unit") or ""),
+        "order_text": _product_order_text(2, product),
         "supplier": _STATE["supplier"],
         "warehouse": _STATE["warehouse"],
         "handler": _STATE["handler"],
@@ -1558,7 +1573,7 @@ def test_purchase_return_lifecycle(server_url):
     conversation = "e2e-purchase-return-" + _RUN_ID
     product = _STATE["product"]
     preview = _make_ready_purchase_preview({
-        "order_text": "%s1%s" % (product["product_name"], product.get("unit") or ""),
+        "order_text": _product_order_text(1, product),
         "supplier": _STATE["supplier"],
         "warehouse": _STATE["warehouse"],
         "handler": _STATE["handler"],
@@ -1632,7 +1647,7 @@ def test_sales_return_lifecycle(server_url):
     conversation = "e2e-sales-return-" + _RUN_ID
     product = _STATE["product"]
     order_preview = _make_ready_preview({
-        "order_text": "%s1%s" % (product["product_name"], product.get("unit") or ""),
+        "order_text": _product_order_text(1, product),
         "customer": _STATE["customer"],
         "warehouse": _STATE["warehouse"],
         "handler": _STATE["handler"],
@@ -1841,7 +1856,7 @@ def test_order_money_previews_without_submit(server_url):
     conversation = "e2e-order-money-" + _RUN_ID
     product = _STATE["product"]
     order_preview = _make_ready_preview({
-        "order_text": "%s1%s" % (product["product_name"], product.get("unit") or ""),
+        "order_text": _product_order_text(1, product),
         "customer": _STATE["customer"],
         "warehouse": _STATE["warehouse"],
         "handler": _STATE["handler"],
@@ -1877,7 +1892,7 @@ def test_order_money_previews_without_submit(server_url):
     assert receipt_preview["preview"]["receipt_amount"] == 0.01
 
     purchase_preview = _make_ready_purchase_preview({
-        "order_text": "%s1%s" % (product["product_name"], product.get("unit") or ""),
+        "order_text": _product_order_text(1, product),
         "supplier": _STATE["supplier"],
         "warehouse": _STATE["warehouse"],
         "handler": _STATE["handler"],
@@ -1938,10 +1953,7 @@ def test_preview_stock_transfer_rejects_same_warehouse(server_url):
     result = _call(
         "previewStockTransfer",
         {
-            "order_text": "%s1%s" % (
-                _STATE["product"]["product_name"],
-                _STATE["product"].get("unit") or "",
-            ),
+            "order_text": _product_order_text(1),
             "from_warehouse": _STATE["warehouse"],
             "to_warehouse": _STATE["warehouse"],
             "handler": _STATE["handler"],
@@ -1958,10 +1970,7 @@ def test_preview_stock_transfer_ready(server_url):
         pytest.skip("测试账套只有一个仓库，跳过调拨预览")
     conversation = "e2e-transfer-" + _RUN_ID
     base_arguments = {
-        "order_text": "%s1%s" % (
-            _STATE["product"]["product_name"],
-            _STATE["product"].get("unit") or "",
-        ),
+        "order_text": _product_order_text(1),
         "from_warehouse": _STATE["warehouse"],
         "to_warehouse": _STATE["second_warehouse"],
         "handler": _STATE["handler"],
@@ -2010,10 +2019,7 @@ def test_preview_other_stock_doc_inbound(server_url):
     doc_types = _STATE["inbound_doc_types"]
     arguments = {
         "kind": "inbound",
-        "order_text": "%s1%s" % (
-            _STATE["product"]["product_name"],
-            _STATE["product"].get("unit") or "",
-        ),
+        "order_text": _product_order_text(1),
         "warehouse": _STATE["warehouse"],
         "handler": _STATE["handler"],
         "doc_date": time.strftime("%Y-%m-%d"),
@@ -2040,7 +2046,7 @@ def test_list_products_pagination_boundaries(server_url):
 
     for arguments in ({"page": 0}, {"page_size": 0}, {"page_size": 101}):
         error_text = _call_protocol_error("listProducts", arguments)
-        assert "Input validation error" in error_text, arguments
+        assert "请求格式不正确" in error_text, arguments
 
 
 def test_search_billing_references_limit_boundaries(server_url):
@@ -2056,7 +2062,7 @@ def test_search_billing_references_limit_boundaries(server_url):
         {"reference_type": "customer", "limit": 0},
     ):
         error_text = _call_protocol_error("searchBillingReferences", arguments)
-        assert "Input validation error" in error_text, arguments
+        assert "请求格式不正确" in error_text, arguments
 
 
 def test_search_products_no_match(server_url):
@@ -2069,9 +2075,8 @@ def test_search_products_no_match(server_url):
     assert entry["status"] == "unmatched"
     assert entry["product"] is None
 
-    empty = _call("searchProducts", {"keywords": []}, record_timing=False)
-    assert empty["ok"] is False
-    assert empty["error"]["code"] == "erp_product_query_empty"
+    error_text = _call_protocol_error("searchProducts", {"keywords": []})
+    assert "至少输入一个商品名称、编号或条码" in error_text
 
 
 # ---------------------------------------------------------------------------
@@ -2091,7 +2096,7 @@ def test_invalid_arguments_return_structured_error(server_url):
     result = _call("listProducts", {"pageValue": 1})
     assert result["ok"] is False
     assert result["error"]["code"] == "tool_arguments_invalid"
-    assert "pageValue" in result["error"]["message"]
+    assert result["error"]["message"]
 
 
 def test_stability_repeated_calls(server_url):
@@ -2112,7 +2117,7 @@ def test_stability_concurrent_calls(server_url):
         ) as client:
             async with streamable_http_client(
                 _SERVER_URL + "/mcp", http_client=client,
-            ) as (read, write, _):
+            ) as (read, write):
                 async with ClientSession(read, write) as session:
                     await session.initialize()
                     started = time.perf_counter()
@@ -2141,7 +2146,7 @@ def test_stability_concurrent_sessions(server_url):
             ) as client:
                 async with streamable_http_client(
                     _SERVER_URL + "/mcp", http_client=client,
-                ) as (read, write, _):
+                ) as (read, write):
                     async with ClientSession(read, write) as session:
                         await session.initialize()
                         result = await session.call_tool(

@@ -131,7 +131,7 @@ def _call(
             async with streamable_http_client(
                 server_url + "/mcp",
                 http_client=client,
-            ) as (read, write, _):
+            ) as (read, write):
                 async with ClientSession(read, write) as session:
                     await session.initialize()
                     result = await session.call_tool(tool, arguments or {})

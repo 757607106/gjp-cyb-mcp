@@ -9,11 +9,14 @@ from typing import Any
 import pytest
 from mcp.server import ServerRequestContext
 from mcp.server.mcpserver import Context
+from mcp.shared.exceptions import MCPError
+from mcp.types import INVALID_PARAMS
 from starlette.routing import Route
 from starlette.testclient import TestClient
 
 from gjp_common.context import InvocationContext, InvocationContextStore
 from gjp_common.mcp import (
+    McpRateLimitMiddleware,
     McpIdentityResolver,
     McpToolSetResolver,
     create_mcp_http_app,
@@ -254,6 +257,17 @@ def test_protocol_unknown_argument_returns_structured_error() -> None:
     assert _CALLS == []
 
 
+def test_unknown_tool_raises_protocol_invalid_params() -> None:
+    """未知工具属于协议错误，不伪装成已完成的工具执行结果。"""
+    server = _make_server()
+
+    with pytest.raises(MCPError) as excinfo:
+        _call_protocol(server, "missingTool", {})
+
+    assert excinfo.value.error.code == INVALID_PARAMS
+    assert excinfo.value.error.data == {"name": "missingTool"}
+
+
 def test_protocol_missing_required_argument_is_protocol_error() -> None:
     """缺失必填参数属于 Schema 违规，得到协议级错误。"""
 
@@ -469,6 +483,84 @@ def test_http_app_2026_business_failure_sets_is_error() -> None:
     assert response.status_code == 200
     assert response.json()["result"]["isError"] is True
     assert response.json()["result"]["structuredContent"]["error"]["code"] == "business_rejected"
+
+
+def test_http_app_unknown_tool_returns_json_rpc_invalid_params() -> None:
+    app = create_mcp_http_app(_make_server())
+    request = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "missingTool",
+            "arguments": {},
+            "_meta": {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {},
+            },
+        },
+    }
+    headers = {
+        "Host": "localhost",
+        "Authorization": "Bearer test-token",
+        "MCP-Protocol-Version": "2026-07-28",
+        "Mcp-Method": "tools/call",
+        "Mcp-Name": "missingTool",
+        "Accept": "application/json",
+    }
+
+    with TestClient(app) as client:
+        response = client.post("/mcp", json=request, headers=headers)
+
+    assert response.status_code == 400
+    assert response.json()["error"] == {
+        "code": INVALID_PARAMS,
+        "message": "未知工具：missingTool",
+        "data": {"name": "missingTool"},
+    }
+
+
+def test_mcp_rate_limit_is_per_credential_and_excludes_healthz() -> None:
+    app = McpRateLimitMiddleware(
+        create_mcp_http_app(_make_server()),
+        requests_per_window=2,
+        window_seconds=60,
+    )
+    request = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/list",
+        "params": {
+            "_meta": {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {},
+            },
+        },
+    }
+    headers = {
+        "Host": "localhost",
+        "Authorization": "Bearer token-a",
+        "MCP-Protocol-Version": "2026-07-28",
+        "Mcp-Method": "tools/list",
+        "Accept": "application/json",
+    }
+
+    with TestClient(app) as client:
+        assert client.post("/mcp", json=request, headers=headers).status_code == 200
+        assert client.post("/mcp", json=request, headers=headers).status_code == 200
+        limited = client.post("/mcp", json=request, headers=headers)
+        other_credential = client.post(
+            "/mcp",
+            json=request,
+            headers={**headers, "Authorization": "Bearer token-b"},
+        )
+        health = client.get("/healthz")
+
+    assert limited.status_code == 429
+    assert limited.json()["error"] == "rate_limit_exceeded"
+    assert int(limited.headers["retry-after"]) >= 1
+    assert other_credential.status_code == 200
+    assert health.status_code == 200
 
 
 def test_http_app_runs_shutdown_callback() -> None:

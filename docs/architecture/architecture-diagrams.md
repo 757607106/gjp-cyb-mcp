@@ -90,7 +90,7 @@ sequenceDiagram
         ERP-->>Adapter: 当前账套商品
         Adapter-->>Tool: BillingProductSnapshot
     end
-    Tool-->>Agent: structuredContent JSON
+    Tool-->>Agent: content 中文 Markdown + structuredContent JSON
 ```
 
 固定 Base URL、Bearer 和 Cookie 不进入工具参数、工具结果或模型上下文；

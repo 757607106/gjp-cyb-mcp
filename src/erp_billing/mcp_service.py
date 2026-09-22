@@ -5,9 +5,12 @@ from urllib.parse import urlsplit
 
 from starlette.applications import Starlette
 from starlette.routing import BaseRoute
+from starlette.types import ASGIApp
 
 from gjp_common.config import get_env_value
+from gjp_common.errors import DomainError
 from gjp_common.mcp import (
+    McpRateLimitMiddleware,
     McpIdentityResolver,
     McpToolSetResolver,
     create_mcp_http_app,
@@ -16,6 +19,31 @@ from gjp_common.mcp import (
 from .prompt import ERP_BILLING_MCP_INSTRUCTIONS
 from .presentation import present_billing_result
 from .toolset import BillingToolSet
+
+
+def rate_limit_billing_mcp(app: ASGIApp) -> ASGIApp:
+    """为最终 MCP 入口统一增加按凭据计数的固定窗口限流。"""
+
+    try:
+        requests_per_window = int(
+            get_env_value("GJP_MCP_RATE_LIMIT_REQUESTS", "120") or 120,
+        )
+        window_seconds = float(
+            get_env_value("GJP_MCP_RATE_LIMIT_WINDOW_SECONDS", "60") or 60,
+        )
+    except ValueError as exc:
+        raise DomainError(
+            "mcp_config_invalid",
+            "MCP 限流配置必须是数字",
+        ) from exc
+    try:
+        return McpRateLimitMiddleware(
+            app,
+            requests_per_window=requests_per_window,
+            window_seconds=window_seconds,
+        )
+    except ValueError as exc:
+        raise DomainError("mcp_config_invalid", str(exc)) from exc
 
 
 def mcp_transport_allowlists(public_base_url: str = "") -> tuple[list[str], list[str]]:

@@ -17,10 +17,11 @@ from starlette.testclient import TestClient
 from erp_billing.app import (
     ApiKeyIdentityResolver,
     DirectJwtIdentityResolver,
-    LegacyCredentialProtectionMiddleware,
+    DirectCredentialProtectionMiddleware,
     SessionCredentialStore,
     _CompositeIdentityResolver,
     _create_identity_resolver,
+    create_billing_app,
 )
 from gjp_common.connections import BusinessApiCredential
 from gjp_common.context import InvocationContext
@@ -160,10 +161,10 @@ def test_local_resolver_strips_duplicate_bearer_prefix() -> None:
     assert store.resolve(context).value == jwt
 
 
-def test_composition_root_accepts_real_erp_claim_shape_in_production(
+def test_production_bearer_resolver_accepts_real_erp_claim_shape(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """生产 legacy 入口接受接入方透传的 eff Token，不要求本地签名密钥。"""
+    """生产直连接受 ERP eff Token，不要求本地签名密钥。"""
     monkeypatch.setenv("GJP_ENV", "production")
     token = _make_token(
         {
@@ -279,6 +280,19 @@ def test_composite_resolver_falls_back_to_api_key() -> None:
     assert store.resolve(context).kind == "api_key"
 
 
+def test_direct_resolver_accepts_dynamic_api_key_and_bearer() -> None:
+    """直连接口动态接收两种 ERP 长期凭据。"""
+    store = SessionCredentialStore()
+    resolver = _create_identity_resolver(store)
+
+    api_key_context = resolver.resolve(_mcp_api_key_context("ak_production"))
+    assert store.resolve(api_key_context).value == "ak_production"
+
+    bearer = _make_token(_valid_payload())
+    bearer_context = resolver.resolve(_mcp_context(bearer))
+    assert store.resolve(bearer_context).value == bearer
+
+
 def test_resolver_shares_catalog_state_within_tenant(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -322,7 +336,7 @@ def test_resolver_shares_catalog_state_within_tenant(
 def test_production_without_secret_allows_api_key_and_bearer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """legacy 两种逐请求凭据都不依赖部署级 JWT Secret。"""
+    """生产直连的两种逐请求凭据都不依赖部署级 JWT Secret。"""
     monkeypatch.setenv("GJP_ENV", "production")
     monkeypatch.delenv("ERP_BILLING_API_KEYS", raising=False)
 
@@ -343,7 +357,7 @@ def test_legacy_http_boundary_rejects_missing_and_invalid_credentials() -> None:
     async def endpoint(_request):
         return JSONResponse({"ok": True})
 
-    app = LegacyCredentialProtectionMiddleware(
+    app = DirectCredentialProtectionMiddleware(
         Starlette(routes=[Route("/mcp", endpoint=endpoint, methods=["POST"])]),
     )
     with TestClient(app) as client:
@@ -355,3 +369,33 @@ def test_legacy_http_boundary_rejects_missing_and_invalid_credentials() -> None:
     assert malformed.status_code == 401
     assert missing.headers["www-authenticate"].startswith("Bearer")
     assert api_key.status_code == 200
+
+
+def test_direct_http_boundary_accepts_api_key_and_bearer() -> None:
+    async def endpoint(_request):
+        return JSONResponse({"ok": True})
+
+    app = DirectCredentialProtectionMiddleware(
+        Starlette(routes=[Route("/mcp", endpoint=endpoint, methods=["POST"])]),
+    )
+    with TestClient(app) as client:
+        bearer = client.post(
+            "/mcp",
+            headers={"Authorization": "Bearer " + _make_token(_valid_payload())},
+        )
+        api_key = client.post("/mcp", headers={"X-API-Key": "ak_test"})
+
+    assert bearer.status_code == 200
+    assert api_key.status_code == 200
+
+
+def test_production_direct_entry_starts_for_dynamic_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """生产直连接口不要求 OAuth 配置。"""
+    monkeypatch.setenv("GJP_ENV", "production")
+    monkeypatch.setenv("ERP_BILLING_BASE_URL", "https://erp.example/api")
+
+    app = create_billing_app()
+
+    assert app is not None

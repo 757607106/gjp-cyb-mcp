@@ -246,7 +246,7 @@ class McpEndpoint:
     async def __aenter__(self) -> "McpEndpoint":
         self._client = httpx.AsyncClient(headers=self._headers, timeout=_HTTP_TIMEOUT)
         stream = streamable_http_client(self._url, http_client=self._client)
-        self._read, self._write, _ = await stream.__aenter__()
+        self._read, self._write = await stream.__aenter__()
         self._session = ClientSession(self._read, self._write)
         await self._session.__aenter__()
         await self._session.initialize()

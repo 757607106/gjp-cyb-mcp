@@ -1,7 +1,6 @@
 """单位确认、局部修改与上游错误的完整工具边界回归。"""
 
 import asyncio
-import json
 from copy import deepcopy
 from types import SimpleNamespace
 
@@ -154,14 +153,12 @@ def test_protocol_filtered_preview_confirmation_submit_and_replay(tmp_path):
             {"productId": product["product_id"], "quantity": 4, "unit": "斤", "unitPrice": 3.5},
         ]
 
-        visible = json.loads(ready.content[0].text.split("\n", 1)[1])["单据预览"]
-        assert visible["明细"][0]["名称"] == "土豆"
-        assert visible["明细"][0]["数量"] == 4
-        assert visible["明细"][0]["单位"] == "斤"
-        assert visible["明细"][0]["单价"] == 3.5
-        assert visible["明细"][0]["金额"] == 14
+        visible = ready.content[0].text
+        assert "### 单据预览" in visible
+        assert "| 名称 | 数量 | 单位 | 单价 | 金额 |" in visible
+        assert "| 土豆 | 4.0 | 斤 | 3.5 | 14.0 |" in visible
         assert prepared["preview"]["items"][0]["line_amount"] == 14
-        assert visible["合计金额"] == 14
+        assert "| 合计金额 | 14.0 |" in visible
         assert submitted.structured_content["order_no"] in submitted.content[0].text
         # 先验证写入闭环和业务展示，再检查控制值不能因中文标签包装而泄漏。
         for result in (search, references, first, ready, rejected, submitted, replay):
@@ -275,11 +272,12 @@ def test_protocol_filtered_sales_detail_can_update_existing_line(tmp_path, item_
         assert http.get_responses["/sales/orders/123"]["data"] == current
         for result in (detail, updated):
             _assert_business_text(result, order["id"], item[item_id_key], item["productId"])
-        visible = json.loads(detail.content[0].text.split("\n", 1)[1])["单据"]
-        assert visible["明细"][0]["商品名称"] == "土豆"
-        assert visible["明细"][0]["数量"] == 2
-        assert visible["明细"][0]["金额"] == 48
-        assert visible["合计金额"] == 48
+        visible = detail.content[0].text
+        assert "### 单据" in visible
+        for label in ("数量", "单位", "单价", "备注", "成本单价", "商品名称", "金额"):
+            assert label in visible
+        assert "| 2 | 箱 | 12 | 24 | 保留行备注 | 9 | 土豆 | 48.0 |" in visible
+        assert "| 合计金额 | 48.0 |" in visible
 
     asyncio.run(scenario())
 

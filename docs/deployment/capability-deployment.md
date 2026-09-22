@@ -13,14 +13,18 @@
 
 | 入口 | MCP 凭据 | ERP 凭据 |
 |---|---|---|
-| legacy Bearer | `Authorization: Bearer <JWT>` | 同一 JWT |
-| legacy API Key | `X-API-Key: <key>` | 同一 API Key |
+| 生产直连 Bearer | `Authorization: Bearer <ERP token>` | 同一 ERP Token |
+| 生产直连 API Key | `X-API-Key: <key>` | 同一 API Key |
 | WorkBuddy OAuth | WorkBuddy MCP access token | 服务端加密保存的 ERP AI Token |
 
-legacy Bearer 由可信 AI 平台完成前置鉴权，MCP 只解析 `tenantId`、`loginId` 做会话
-隔离并把原 Token 交给 ERP API 最终鉴权；因此 legacy 入口必须通过私网、网关访问
-控制或来源白名单限制，不能作为无访问控制的公网认证端点。WorkBuddy MCP token 与
-ERP Token 必须分离，任何入口都不得把凭据加入工具参数或模型消息。
+生产三方可选择 WorkBuddy OAuth 或直连 ERP 长期凭据。OAuth MCP token 与 ERP Token
+必须分离；直连 Bearer/API Key 逐请求动态接收，并由 ERP API 最终鉴权。服务端从
+Bearer payload 读取 `tenantId`、`loginId` 只用于会话隔离，不把它当作独立验签。
+任何入口都不得把凭据加入工具参数或模型消息。
+
+两个入口的 `/mcp` 都在认证中间件外层执行固定窗口限流，默认同一凭据每 60 秒最多
+120 个请求，超过后返回 HTTP 429 和 `Retry-After`。部署可通过
+`GJP_MCP_RATE_LIMIT_REQUESTS`、`GJP_MCP_RATE_LIMIT_WINDOW_SECONDS` 调整正数阈值。
 
 ## 会话与权限
 

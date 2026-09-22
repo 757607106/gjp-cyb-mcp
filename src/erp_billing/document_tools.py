@@ -561,23 +561,7 @@ class DocumentTools:
         必须取得用户确认的正数采购价，通过 confirmed_prices 重新预览。
         本工具仅预览，无远端写入；根据 required_actions 补齐并重新调用，
         ready_to_submit=true 且取得 preview_id 后，用户明确确认该预览
-        才能调用 submitPurchaseOrder；就绪不等于用户已确认。
-
-        Args:
-            order_text: 完整采购商品文本，须包含商品和数量；多轮修改仍传完整明细。
-            supplier: 业务必填，供应商名称、编号或 searchBillingReferences 返回的 ID。
-            warehouse: 业务必填，入库仓库名称、编号或 searchBillingReferences 返回的 ID。
-            handler: 业务必填，经手人名称、编号或 searchBillingReferences 返回的 ID。
-            order_date: 业务必填，采购录单日期 YYYY-MM-DD，不默认当天。
-            remark: 可选的采购整单备注，最多 200 个字符。
-            confirmed_products: 用户选定的商品绑定列表，每行含当前预览 line_id 和
-                预览或 searchProducts 候选的 product_id；不是提交确认。
-            confirmed_units: 用户对 unit_warnings 确认的行，含当前 line_id、该行已匹配
-                product_id、ERP unit 和按该单位确认的 quantity（至少 0.0001），不自行换算。
-            confirmed_prices: 用户确认的采购价列表，每行含当前 line_id、已匹配 product_id
-                和正数 unit_price；覆盖目录采购价，不用销售价或自行估价。
-            partial: 默认 false；用户同意跳过未匹配行时传 true，仅预览已匹配商品，不直接提交。
-        """
+        才能调用 submitPurchaseOrder；就绪不等于用户已确认。"""
         try:
             context = self._contexts.get()
             context.require_scope("billing:read")
@@ -740,19 +724,7 @@ class DocumentTools:
 
         采购退货记录用 listPurchaseReturns，采购统计分析用 queryPurchaseReport，
         不要用当前页合计代替报表。选定单据后用 getPurchaseOrder 查看详情，
-        再衔接采购退货、继续付款或经确认的修改/作废。
-
-        Args:
-            page: 页码，从 1 开始，默认 1；has_more=true 时可继续翻页。
-            page_size: 每页单据数量，1 到 100，默认 20。
-            start_date: 筛选开始日期 YYYY-MM-DD；留空不限制起始日期。
-            end_date: 筛选结束日期 YYYY-MM-DD，不早于开始日期；留空不限制结束日期。
-            status: 单据状态：0=草稿、1=预付、2=已生效、3=已作废；省略不筛选。
-            payment_status: 付款状态：0=未付款、1=部分付款、2=已完成；省略不筛选。
-            return_status: 退货状态：0=无退货、1=部分退货、2=全部退货；省略不筛选。
-            order_no: 采购业务单号模糊匹配关键词，不是内部 ID；留空不筛选。
-            supplier_id: 供应商内部 ID 或名称，候选用 searchBillingReferences 查询；留空不筛选。
-        """
+        再衔接采购退货、继续付款或经确认的修改/作废。"""
         try:
             context = self._contexts.get()
             context.require_scope("billing:read")
@@ -824,26 +796,7 @@ class DocumentTools:
         先调用 getPurchaseOrder 核实原单和待改内容，取得用户明确确认后再调用；
         未确认不调用，不得自造 confirmed_by_user=true。只传需要修改的字段，
         省略字段保留 ERP 当前值；items 是完整替换，不是增量。完成后用
-        getPurchaseOrder 核对；仅追加一笔付款用 previewPurchasePayment。
-
-        Args:
-            order_id: 经 getPurchaseOrder 核实的采购单内部 ID 或业务单号 orderNo。
-            order_date: 新录单日期 YYYY-MM-DD；省略保留，传入时不能为空。
-            handler_id: 新经手人内部 ID 或名称，取自 searchBillingReferences；省略保留，不能传空。
-            items: 修改后的完整非空明细，基于 getPurchaseOrder 保留未改行；每行必填
-                product_id（原单或 searchProducts 的商品 ID）、正数 quantity、非负 unit_price。
-                可选 unit、原行 order_item_id 和行 remark；省略整个参数保留原明细。
-            supplier_id: 新供应商内部 ID 或名称，取自 searchBillingReferences；留空不修改。
-            warehouse_id: 新入库仓库内部 ID 或名称，取自 searchBillingReferences；留空不修改。
-            remark: 新整单备注，最多 200 字符；省略保留，空字符串清空。
-            discount_amount: 新优惠金额，非负，允许 0；省略保留原值。
-            discount_account_id: 优惠结算账户内部 ID，取自 searchBillingReferences，
-                不解析名称；留空不修改。
-            payment_amount: 新采购单付款金额，非负，允许 0；省略保留，不是追加付款额。
-            payment_account_id: 付款结算账户内部 ID，取自 searchBillingReferences，
-                不解析名称；留空不修改。
-            confirmed_by_user: 默认 false；仅在核实原单且用户明确确认本次修改后传 true。
-        """
+        getPurchaseOrder 核对；仅追加一笔付款用 previewPurchasePayment。"""
         try:
             context = self._contexts.get()
             context.require_scope("billing:write")
@@ -923,24 +876,7 @@ class DocumentTools:
         listPurchaseOrders/getPurchaseOrder 定位原采购单，不传已有退货单 ID。
         本工具回读快捷退货数据，自动带出供应商、仓库、经手人与可退商品数量。
         仅预览，无远端写入；检查 required_actions、ready_to_submit 和 preview_id，
-        未就绪先补齐重预览；就绪且用户明确确认后才能调用 submitPurchaseReturn。
-
-        Args:
-            order_id: 原采购单内部 ID 或业务单号 orderNo，来自 listPurchaseOrders/getPurchaseOrder；
-                不是采购退货单 ID。
-            items: 用户选定的退货行，product_id 必须来自源单可退明细，quantity 为源单单位的
-                正数且不超过可退数量；unit_price 可选、非负，省略用源价。省略 items
-                默认退快捷退货预填的全部可退商品数量（已扣历史退货），不能传空数组。
-            refund_amount: 本次收到供应商退款的金额，非负；省略或 0 不随退货收款。
-                与 discount_amount 同时提供时，两者合计不得超过退货总额。
-            refund_account_id: 退款收款结算账户名称、编号或 searchBillingReferences 返回的 ID；
-                退款大于 0 时必填，须唯一匹配。
-            discount_amount: 本次优惠/减免金额，非负；省略或 0 不附加优惠，合计规则同退款。
-            discount_account_id: 优惠承担结算账户名称、编号或 searchBillingReferences 返回的 ID；
-                优惠大于 0 时必填，须唯一匹配。
-            return_date: 退货日期 YYYY-MM-DD；省略用原单快捷退货的 returnDate，无值时用当天。
-            remark: 可选的采购退货整单备注。
-        """
+        未就绪先补齐重预览；就绪且用户明确确认后才能调用 submitPurchaseReturn。"""
         try:
             context = self._contexts.get()
             context.require_scope("billing:read")
@@ -1118,17 +1054,7 @@ class DocumentTools:
 
         返回单据列表而非采购统计；采购分析用 queryPurchaseReport，不以当前页
         合计代替报表。选定退货单后用 getPurchaseReturn 核实详情，再确认作废
-        或用 previewReceiptOrder 预览退款核销；新退货来源请查 listPurchaseOrders。
-
-        Args:
-            page: 页码，从 1 开始，默认 1；has_more=true 时可继续翻页。
-            page_size: 每页退货单数量，1 到 100，默认 20。
-            start_date: 筛选开始日期 YYYY-MM-DD；留空不限制起始日期。
-            end_date: 筛选结束日期 YYYY-MM-DD，不早于开始日期；留空不限制结束日期。
-            status: 退货单状态：0=草稿、2=已生效、3=已作废；省略不筛选，其余状态以 ERP 为准。
-            return_no: 采购退货业务单号模糊匹配关键词，不是原采购单号；留空不筛选。
-            supplier_id: 供应商内部 ID 或名称，候选用 searchBillingReferences 查询；留空不筛选。
-        """
+        或用 previewReceiptOrder 预览退款核销；新退货来源请查 listPurchaseOrders。"""
         try:
             context = self._contexts.get()
             context.require_scope("billing:read")
@@ -1198,24 +1124,7 @@ class DocumentTools:
         定位原销售单，不传已有销售退货单 ID；快捷退货自动带出客户、仓库、
         经手人与可退商品数量。仅预览，无远端写入；检查 required_actions、
         ready_to_submit 和 preview_id，未就绪先补齐重预览；就绪且用户明确确认
-        后才能调用 submitSalesReturn。
-
-        Args:
-            order_id: 原销售单内部 ID 或业务单号 orderNo，来自 listSalesOrders/getSalesOrder；
-                不是销售退货单 ID 或采购单 ID。
-            items: 用户选定的退货行，product_id 必须来自源单可退明细，quantity 为源单单位的
-                正数且不超过可退数量；unit_price 可选、非负，省略用源价。省略 items
-                默认退快捷退货预填的全部可退商品数量（已扣历史退货），不能传空数组。
-            refund_amount: 本次退给客户的金额，非负；省略或 0 不随退货退款。
-                与 discount_amount 同时提供时，两者合计不得超过退货总额。
-            refund_account_id: 向客户退款的结算账户名称、编号或 searchBillingReferences 返回的 ID；
-                退款大于 0 时必填，须唯一匹配。
-            discount_amount: 本次折让金额，非负；省略或 0 不附加折让，合计规则同退款。
-            discount_account_id: 折让承担结算账户名称、编号或 searchBillingReferences 返回的 ID；
-                折让大于 0 时必填，须唯一匹配。
-            return_date: 退货日期 YYYY-MM-DD；省略用原单快捷退货的 returnDate，无值时用当天。
-            remark: 可选的销售退货整单备注。
-        """
+        后才能调用 submitSalesReturn。"""
         try:
             context = self._contexts.get()
             context.require_scope("billing:read")
@@ -1394,18 +1303,7 @@ class DocumentTools:
 
         返回单据列表而非销售统计；销售分析用 querySalesReport，不以当前页
         合计代替报表。选定退货单后用 getSalesReturn 核实详情，再确认作废
-        或用 previewPaymentOrder 预览退款核销；新退货来源请查 listSalesOrders。
-
-        Args:
-            page: 页码，从 1 开始，默认 1；has_more=true 时可继续翻页。
-            page_size: 每页退货单数量，1 到 100，默认 20。
-            start_date: 筛选开始日期 YYYY-MM-DD；留空不限制起始日期。
-            end_date: 筛选结束日期 YYYY-MM-DD，不早于开始日期；留空不限制结束日期。
-            status: 退货单状态：0=草稿、2=已生效、3=已作废；省略不筛选，其余状态以 ERP 为准。
-            refund_status: 退款状态：0=未退款、1=部分退款、2=已完成；省略不筛选。
-            return_no: 销售退货业务单号模糊匹配关键词，不是原销售单号；留空不筛选。
-            customer_id: 客户内部 ID 或名称，候选用 searchBillingReferences 查询；留空不筛选。
-        """
+        或用 previewPaymentOrder 预览退款核销；新退货来源请查 listSalesOrders。"""
         try:
             context = self._contexts.get()
             context.require_scope("billing:read")
@@ -1472,19 +1370,7 @@ class DocumentTools:
         先用 listSalesOrders/getSalesOrder 核实目标销售单及未收金额；需要独立
         收款单或多单核销用 previewReceiptOrder，客户退货用 previewSalesReturn。
         本工具仅预览，无远端写入；返回 required_actions、ready_to_submit、preview_id，
-        按候选补齐后重预览，用户明确确认就绪预览后才能调用 submitSalesReceipt。
-
-        Args:
-            order_id: 目标销售单内部 ID 或业务单号 orderNo，来自 listSalesOrders/getSalesOrder，
-                不是收款单或销售退货单 ID。
-            receipt_amount: 本次追加收款金额，非负，不是累计已收；可为 0，但与免账不能同时为 0，
-                两者合计不得超过该单未收金额。
-            receipt_account: 收款结算账户名称、编号或 searchBillingReferences 返回的 ID；
-                即使收款为 0、仅免账也必须提供并匹配。
-            discount_amount: 本次免账金额（优惠/折让），非负，省略按 0；与收款合计受未收金额限制。
-            discount_account: 免账承担结算账户名称、编号或 searchBillingReferences 返回的 ID；
-                免账大于 0 时必填并须匹配。
-        """
+        按候选补齐后重预览，用户明确确认就绪预览后才能调用 submitSalesReceipt。"""
         try:
             context = self._contexts.get()
             context.require_scope("billing:read")
@@ -1625,19 +1511,7 @@ class DocumentTools:
         先用 listPurchaseOrders/getPurchaseOrder 核实目标采购单及未付金额；需要
         独立付款单或多单核销用 previewPaymentOrder，采购退货用 previewPurchaseReturn。
         本工具仅预览，无远端写入；返回 required_actions、ready_to_submit、preview_id，
-        按候选补齐后重预览，用户明确确认就绪预览后才能调用 submitPurchasePayment。
-
-        Args:
-            order_id: 目标采购单内部 ID 或业务单号 orderNo，来自 listPurchaseOrders/getPurchaseOrder，
-                不是付款单或采购退货单 ID。
-            payment_amount: 本次追加付款金额，非负，不是累计已付；可为 0，但与免账不能同时为 0，
-                两者合计不得超过该单未付金额。
-            payment_account: 付款结算账户名称、编号或 searchBillingReferences 返回的 ID；
-                即使付款为 0、仅免账也必须提供并匹配。
-            discount_amount: 本次免账金额（优惠/折让），非负，省略按 0；与付款合计受未付金额限制。
-            discount_account: 免账承担结算账户名称、编号或 searchBillingReferences 返回的 ID；
-                免账大于 0 时必填并须匹配。
-        """
+        按候选补齐后重预览，用户明确确认就绪预览后才能调用 submitPurchasePayment。"""
         try:
             context = self._contexts.get()
             context.require_scope("billing:read")
@@ -1786,21 +1660,7 @@ class DocumentTools:
         调出、调入仓库必须不同；单仓报损/报溢用 previewOtherStockDoc。
         仓库和经手人候选用 searchBillingReferences，商品候选用 searchProducts。
         本工具仅预览，无远端写入；根据 required_actions 补商品/单位等并重预览，
-        ready_to_submit=true 且取得 preview_id 后，用户明确确认才能调用 submitStockTransfer。
-
-        Args:
-            order_text: 完整调拨商品文本，须含商品和数量；多轮修改仍传完整明细。
-            from_warehouse: 必填，调出仓库名称、编号或 searchBillingReferences 返回的 ID。
-            to_warehouse: 必填，调入仓库名称、编号或 searchBillingReferences 返回的 ID，须不同于调出仓库。
-            handler: 必填，经手人名称、编号或 searchBillingReferences 返回的 ID。
-            transfer_date: 调拨日期 YYYY-MM-DD；省略默认当天。
-            remark: 可选的调拨整单备注，最多 200 个字符。
-            confirmed_products: 用户选定的商品绑定列表，每行含当前预览 line_id 和
-                预览或 searchProducts 候选的 product_id；不是提交确认。
-            confirmed_units: 用户对 unit_warnings 确认的行，含当前 line_id、已匹配 product_id、
-                ERP unit 及按该单位确认的 quantity（至少 0.0001），不自行换算。
-            partial: 默认 false；用户同意跳过未匹配行时传 true，仅预览已匹配商品，不直接提交。
-        """
+        ready_to_submit=true 且取得 preview_id 后，用户明确确认才能调用 submitStockTransfer。"""
         try:
             context = self._contexts.get()
             context.require_scope("billing:read")
@@ -1960,22 +1820,7 @@ class DocumentTools:
         先用 listStockDocTypes 查询方向对应的类型；基础资料用 searchBillingReferences，
         商品用 searchProducts 查候选。仅预览，无远端写入；按 required_actions 补齐
         并重预览，ready_to_submit=true 且取得 preview_id 后，用户明确确认才能调用
-        submitOtherStockDoc。
-
-        Args:
-            kind: 单据方向，inbound=其他入库（如报溢），outbound=其他出库（如报损）。
-            order_text: 完整出入库商品文本，须含商品和数量；多轮修改仍传完整明细。
-            warehouse: 必填，发生出入库的仓库名称、编号或 searchBillingReferences 返回的 ID。
-            handler: 必填，经手人名称、编号或 searchBillingReferences 返回的 ID。
-            doc_type: 必填，listStockDocTypes 返回的与 kind 同方向的类型 ID 或名称，不能自造。
-            doc_date: 出入库单据日期 YYYY-MM-DD；省略默认当天。
-            remark: 可选的整单备注，最多 200 个字符。
-            confirmed_products: 用户选定的商品绑定列表，每行含当前预览 line_id 和
-                预览或 searchProducts 候选的 product_id；不是提交确认。
-            confirmed_units: 用户对 unit_warnings 确认的行，含当前 line_id、已匹配 product_id、
-                ERP unit 及按该单位确认的 quantity（至少 0.0001），不自行换算。
-            partial: 默认 false；用户同意跳过未匹配行时传 true，仅预览已匹配商品，不直接提交。
-        """
+        submitOtherStockDoc。"""
         try:
             context = self._contexts.get()
             context.require_scope("billing:read")
@@ -2142,31 +1987,7 @@ class DocumentTools:
         采购退货退款。核销前用 getSalesOrder/getPurchaseReturn 等对应详情工具
         核实单据、往来单位及内部 ID；基础资料用 searchBillingReferences 查候选。
         仅预览，无远端写入；按 required_actions 和候选补齐后重新预览，
-        ready_to_submit=true 且取得 preview_id 后，用户明确确认才能调用 submitReceiptOrder。
-
-        Args:
-            receipt_amount: 独立收款总额，至少 0.01；不能以 0 金额仅免账，核销合计不得超过此金额。
-            account: 必填，收款结算账户名称、编号或 searchBillingReferences 返回的 ID。
-            handler: 必填，经手人名称、编号或 searchBillingReferences 返回的 ID。
-            customer: 客户名称或 searchBillingReferences 返回的 ID；核销销售类单据时须匹配，
-                与 supplier 只能提供其一。
-            supplier: 供应商名称或 searchBillingReferences 返回的 ID；核销采购类单据时须匹配，
-                如采购退货退款，与 customer 只能提供其一。
-            order_date: 独立收款单日期 YYYY-MM-DD；省略默认当天。
-            discount_amount: 优惠（抹零）金额，非负；省略或 0 不附加优惠，不增加可核销总额。
-            discount_account: 免账承担结算账户名称、编号或 searchBillingReferences 返回的 ID；
-                优惠大于 0 时必填并须匹配。
-            fund_type: 收款款项类型名称、编号或 ID；省略时按销售单核销推断销售收款、
-                按采购退货核销推断采购退款收款，无法推断时从本预览
-                reference_resolutions.fund_type.candidates 选择后重预览，无单独款项类型工具。
-                无核销收款须选适用的自定义类型，不能用强制核销的系统销售收款类型。
-            writeoff_details: 可选多单核销分配；每行 biz_type 为 sales_order（销售单）、
-                purchase_order（采购单）、sales_return（销售退货）、purchase_return（采购退货）；
-                biz_id 取对应 getSalesOrder/getPurchaseOrder/getSalesReturn/getPurchaseReturn
-                的单据内部 ID，不是单号或退货的源单 ID；writeoff_amount 须为正，合计不超过
-                receipt_amount。核实各单往来单位；省略或空数组只收款不核销。
-            remark: 可选的独立收款单备注，最多 200 个字符。
-        """
+        ready_to_submit=true 且取得 preview_id 后，用户明确确认才能调用 submitReceiptOrder。"""
         try:
             context = self._contexts.get()
             context.require_scope("billing:read")
@@ -2270,19 +2091,7 @@ class DocumentTools:
         """只读分页查找独立收款单，支持日期、状态、往来单位及结算账户筛选。
 
         不是销售订单列表或结算汇总，结算统计用 querySettlementReport，不以当前页
-        合计代替报表。选定单据后用 getReceiptOrder 核实详情，明确确认后才可 voidReceiptOrder。
-
-        Args:
-            page: 页码，从 1 开始，默认 1；has_more=true 时可继续翻页。
-            page_size: 每页收款单数量，1 到 100，默认 20。
-            start_date: 筛选开始日期 YYYY-MM-DD；留空不限制起始日期。
-            end_date: 筛选结束日期 YYYY-MM-DD，不早于开始日期；留空不限制结束日期。
-            status: 收款单状态：0=草稿、2=已生效、3=已作废；省略不筛选。
-            order_no: 独立收款业务单号模糊匹配关键词，不是被核销单据的单号；留空不筛选。
-            counterparty_id: 客户或供应商内部 ID、名称，候选用 searchBillingReferences；
-                先尝试客户再供应商，留空不筛选。
-            account_id: 结算账户内部 ID 或名称，候选用 searchBillingReferences；留空不筛选。
-        """
+        合计代替报表。选定单据后用 getReceiptOrder 核实详情，明确确认后才可 voidReceiptOrder。"""
         try:
             context = self._contexts.get()
             context.require_scope("billing:read")
@@ -2344,30 +2153,7 @@ class DocumentTools:
         或销售退货退款。核销前用 getPurchaseOrder/getSalesReturn 等对应详情工具
         核实单据、往来单位及内部 ID；基础资料用 searchBillingReferences 查候选。
         仅预览，无远端写入；按 required_actions 和候选补齐后重新预览，
-        ready_to_submit=true 且取得 preview_id 后，用户明确确认才能调用 submitPaymentOrder。
-
-        Args:
-            payment_amount: 独立付款总额，至少 0.01；不能以 0 金额仅免账，核销合计不得超过此金额。
-            account: 必填，付款结算账户名称、编号或 searchBillingReferences 返回的 ID。
-            handler: 必填，经手人名称、编号或 searchBillingReferences 返回的 ID。
-            supplier: 供应商名称或 searchBillingReferences 返回的 ID；核销采购类单据时须匹配，
-                与 customer 只能提供其一。
-            customer: 客户名称或 searchBillingReferences 返回的 ID；核销销售类单据时须匹配，
-                如销售退货退款，与 supplier 只能提供其一。
-            order_date: 独立付款单日期 YYYY-MM-DD；省略默认当天。
-            discount_amount: 优惠（抹零）金额，非负；省略或 0 不附加优惠，不增加可核销总额。
-            discount_account: 免账承担结算账户名称、编号或 searchBillingReferences 返回的 ID；
-                优惠大于 0 时必填并须匹配。
-            fund_type: 付款款项类型名称、编号或 ID；省略时按采购单核销推断采购付款、
-                按销售退货核销推断销售退款付款，无法推断时从本预览
-                reference_resolutions.fund_type.candidates 选择后重预览，无单独款项类型工具。
-            writeoff_details: 可选多单核销分配；每行 biz_type 为 sales_order（销售单）、
-                purchase_order（采购单）、sales_return（销售退货）、purchase_return（采购退货）；
-                biz_id 取对应 getSalesOrder/getPurchaseOrder/getSalesReturn/getPurchaseReturn
-                的单据内部 ID，不是单号或退货的源单 ID；writeoff_amount 须为正，合计不超过
-                payment_amount。核实各单往来单位；省略或空数组只付款不核销。
-            remark: 可选的独立付款单备注，最多 200 个字符。
-        """
+        ready_to_submit=true 且取得 preview_id 后，用户明确确认才能调用 submitPaymentOrder。"""
         try:
             context = self._contexts.get()
             context.require_scope("billing:read")
@@ -2471,19 +2257,7 @@ class DocumentTools:
         """只读分页查找独立付款单，支持日期、状态、往来单位及结算账户筛选。
 
         不是采购订单列表或结算汇总，结算统计用 querySettlementReport，不以当前页
-        合计代替报表。选定单据后用 getPaymentOrder 核实详情，明确确认后才可 voidPaymentOrder。
-
-        Args:
-            page: 页码，从 1 开始，默认 1；has_more=true 时可继续翻页。
-            page_size: 每页付款单数量，1 到 100，默认 20。
-            start_date: 筛选开始日期 YYYY-MM-DD；留空不限制起始日期。
-            end_date: 筛选结束日期 YYYY-MM-DD，不早于开始日期；留空不限制结束日期。
-            status: 付款单状态：0=草稿、2=已生效、3=已作废；省略不筛选。
-            order_no: 独立付款业务单号模糊匹配关键词，不是被核销单据的单号；留空不筛选。
-            counterparty_id: 供应商或客户内部 ID、名称，候选用 searchBillingReferences；
-                实际先尝试客户再供应商，留空不筛选。
-            account_id: 结算账户内部 ID 或名称，候选用 searchBillingReferences；留空不筛选。
-        """
+        合计代替报表。选定单据后用 getPaymentOrder 核实详情，明确确认后才可 voidPaymentOrder。"""
         try:
             context = self._contexts.get()
             context.require_scope("billing:read")

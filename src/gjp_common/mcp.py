@@ -6,24 +6,29 @@ ToolSet。发布层只负责 MCP 协议、参数校验和结果映射，不改�
 
 from __future__ import annotations
 
+import hashlib
 import inspect
 import json
 import logging
+import threading
 import time
 from collections.abc import Awaitable, AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from typing import Any, Protocol
 
+from cachetools import TTLCache
 from jsonschema import ValidationError
 from jsonschema.validators import validator_for
 from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
 from mcp.server.transport_security import TransportSecuritySettings
-from mcp.types import CallToolResult, TextContent, Tool, ToolAnnotations
+from mcp.shared.exceptions import MCPError
+from mcp.types import INVALID_PARAMS, CallToolResult, TextContent, Tool, ToolAnnotations
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import BaseRoute, Route
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .context import InvocationContext
 from .logging_config import clip_log_text, elapsed_ms, error_text
@@ -106,12 +111,20 @@ class SessionMCPServer(MCPServer):
         return [
             Tool(
                 name=name,
+                title=tool.title,
                 description=tool.description,
                 input_schema=tool.input_schema,
                 output_schema=tool.output_schema,
                 annotations=ToolAnnotations(
+                    title=tool.title,
                     read_only_hint=tool.is_read_only,
-                    destructive_hint=not tool.is_read_only,
+                    destructive_hint=(
+                        tool.destructive_hint
+                        if tool.destructive_hint is not None
+                        else not tool.is_read_only
+                    ),
+                    idempotent_hint=tool.idempotent_hint,
+                    open_world_hint=tool.open_world_hint,
                 ),
             )
             for name, tool in self._exported_tools.items()
@@ -126,9 +139,10 @@ class SessionMCPServer(MCPServer):
         """校验协议参数、分发到会话工具并映射为标准工具结果。"""
         schema_tool = self._exported_tools.get(name)
         if schema_tool is None:
-            return _error_result(
-                "未知工具：%s" % name,
-                {"ok": False, "error": {"code": "tool_not_found", "message": "未知工具：%s" % name}},
+            raise MCPError(
+                code=INVALID_PARAMS,
+                message="未知工具：%s" % name,
+                data={"name": name},
             )
         invalid = _validate_arguments(name, arguments, schema_tool.input_schema)
         if invalid is not None:
@@ -209,14 +223,6 @@ def _validate_arguments(
             },
         }
     return None
-
-
-def _error_result(message: str, structured: dict[str, Any]) -> CallToolResult:
-    return CallToolResult(
-        content=[TextContent(type="text", text=message)],
-        structured_content=structured,
-        is_error=True,
-    )
 
 
 def create_mcp_server(
@@ -380,3 +386,90 @@ def create_mcp_http_app(
 
         app.router.lifespan_context = lifespan
     return app
+
+
+class McpRateLimitMiddleware:
+    """按调用凭据限制 MCP HTTP 请求频率，避免令牌原文进入限流状态。"""
+
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        requests_per_window: int,
+        window_seconds: float,
+    ) -> None:
+        if requests_per_window <= 0:
+            raise ValueError("requests_per_window 必须大于 0")
+        if window_seconds <= 0:
+            raise ValueError("window_seconds 必须大于 0")
+        self._app = app
+        self._requests_per_window = requests_per_window
+        self._window_seconds = window_seconds
+        self._lock = threading.Lock()
+        self._windows: TTLCache[str, list[float]] = TTLCache(
+            maxsize=10_000,
+            ttl=window_seconds,
+        )
+
+    @staticmethod
+    def _client_key(scope: Scope) -> str:
+        headers = {
+            key.decode("latin-1").casefold(): value.decode("latin-1")
+            for key, value in scope.get("headers", [])
+        }
+        credential = headers.get("authorization", "").strip()
+        kind = "authorization"
+        if not credential:
+            credential = headers.get("x-api-key", "").strip()
+            kind = "api-key"
+        if credential:
+            digest = hashlib.sha256(credential.encode("utf-8")).hexdigest()
+            return kind + ":" + digest
+        client = scope.get("client")
+        address = str(client[0]) if client else "unknown"
+        return "client:" + address
+
+    def _retry_after(self, key: str) -> int:
+        now = time.monotonic()
+        with self._lock:
+            window = self._windows.get(key)
+            if window is None:
+                self._windows[key] = [1.0, now + self._window_seconds]
+                return 0
+            if window[0] < self._requests_per_window:
+                window[0] += 1
+                return 0
+            return max(1, int(window[1] - now) + 1)
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if (
+            scope.get("type") != "http"
+            or str(scope.get("path") or "") != "/mcp"
+            or scope.get("method") == "OPTIONS"
+        ):
+            await self._app(scope, receive, send)
+            return
+        retry_after = self._retry_after(self._client_key(scope))
+        if not retry_after:
+            await self._app(scope, receive, send)
+            return
+        body = json.dumps(
+            {
+                "error": "rate_limit_exceeded",
+                "error_description": "MCP 请求过于频繁，请稍后重试",
+            },
+            ensure_ascii=False,
+        ).encode("utf-8")
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 429,
+                "headers": [
+                    (b"content-type", b"application/json; charset=utf-8"),
+                    (b"content-length", str(len(body)).encode("ascii")),
+                    (b"retry-after", str(retry_after).encode("ascii")),
+                    (b"cache-control", b"no-store"),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": body})

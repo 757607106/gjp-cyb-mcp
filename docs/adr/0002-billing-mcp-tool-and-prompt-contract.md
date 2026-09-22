@@ -35,6 +35,17 @@
    `ERP_BILLING_SYSTEM_PROMPT` 供 AI 平台配置；不再拆分第三份响应契约。
 10. MCP 只接收文本业务参数。VL Agent 可直接读取图片并组装 `order_text`，语音由
     前端 ASR 转文本；账号、密码、Token、Cookie、文件和媒体均不进入 Tool Schema。
+11. 第三方客户端无需配置额外 System Prompt 即可理解工具：`tools/list` 为每个工具
+    提供中文 `title`、用途与相邻工具边界；参数含义、来源、默认值和约束只在
+    `inputSchema` 中声明一次，顶层对象拒绝未知字段。
+12. 工具行为通过 annotations 明确表达：查询和预览为只读，提交为可幂等的新增，
+    修改与作废为破坏性操作，所有 ERP 工具均标记为可能访问外部系统。
+13. `tools/call` 使用双通道结果：`content` 是可直接展示的中文 Markdown，单值对象
+    用纵向表格、列表用横向表格；`structuredContent` 保留 Agent 后续调用需要的结构化
+    字段。内部 ID、预览令牌和控制字段不进入展示文本。
+14. 有显式 `inputSchema` 的工具不再在函数 docstring 重复维护 `Args:`；参数说明以
+    Schema 为唯一来源。`ERP_BILLING_SYSTEM_PROMPT` 直接复用 MCP Instructions，
+    只补充 Schema 无法表达的跨工具策略，避免三处文案漂移。
 
 ## 结果
 
@@ -43,6 +54,8 @@
 - 删除不可达兼容分支和未读取的草稿字段，领域模型只保留开单流程实际消费的数据。
 - 写操作仍要求 `billing:write` 与明确用户确认；新增单据额外要求当前不可变预览和
   幂等键。
+- 不依赖对接方提示词进行基础排版或脱敏；不支持 `structuredContent` 的客户端也能
+  直接展示 `content`，支持结构化结果的 Agent 仍可完成多轮预览与提交。
 
 ## 非目标
 

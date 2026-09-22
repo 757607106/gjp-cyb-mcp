@@ -10,7 +10,7 @@
 #   BRANCH=test ./scripts/deploy.sh        # test
 #   ./scripts/deploy-workbuddy.sh          # WorkBuddy（见专用脚本）
 #
-# 常用覆盖项：BRANCH、DEPLOY_DIR、GJP_ENV、APP_MODULE、SERVICE_NAME、PORT。
+# 常用覆盖项：BRANCH、DEPLOY_DIR、GJP_ENV、APP_MODULE、SERVICE_NAME、HOST、PORT。
 # systemd 部署的业务配置只读取 service 指定的 EnvironmentFile。
 
 set -euo pipefail
@@ -30,6 +30,7 @@ else
 fi
 PROCESS_PATTERN="uvicorn ${APP_MODULE}"
 GJP_ENV="${GJP_ENV:-local}"
+HOST="${HOST:-127.0.0.1}"
 # ERP 地址默认值仅服务本地（测试）便利；生产禁止脚本注入默认域名，
 # 避免 export 覆盖 config/production.env 里的真实生产地址
 if [ "$GJP_ENV" = "production" ]; then
@@ -127,7 +128,7 @@ start_service() {
         export PATH="/usr/local/bin:$PATH"
 
         nohup uv run uvicorn "$APP_MODULE" \
-            --host 0.0.0.0 --port "$PORT" \
+            --host "$HOST" --port "$PORT" \
             >> "$LOG_FILE" 2>&1 &
         sleep 2
         local pid
@@ -192,6 +193,7 @@ info "目标分支：$BRANCH"
 info "运行环境：$GJP_ENV"
 info "ASGI 入口：$APP_MODULE"
 info "服务名称：$SERVICE_NAME"
+info "监听地址：$HOST:$PORT"
 info "日志级别：$LOG_LEVEL"
 [ -n "$DUMP_CREDENTIALS" ] && warn "已开启完整 token 转储（仅调试用）"
 echo ""

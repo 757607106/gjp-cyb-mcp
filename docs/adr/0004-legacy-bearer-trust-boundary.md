@@ -22,9 +22,9 @@ legacy 请求在到达 ERP 前即被拒绝。WorkBuddy 使用独立 OAuth 入口
    不是签名认证。
 3. 原 Bearer 仅保存在服务端凭据存储中，并原样注入固定地址的 ERP API，由 ERP 做
    最终签名、有效期和权限校验。
-4. AI 平台必须在转发前完成用户鉴权；legacy `/mcp` 必须通过私网、网关访问控制或
-   来源白名单仅向可信平台开放，不能作为无访问控制的公网认证端点。
-5. `X-API-Key` 的逐请求透传方式和 WorkBuddy OAuth 入口保持不变。
+4. 直连 Bearer 与 `X-API-Key` 都是三方逐请求动态提供的 ERP 长期业务凭据，由固定
+   ERP API 最终鉴权；它们不是 WorkBuddy MCP OAuth access token。
+5. 生产三方平台可选择直连 ERP 长期凭据或 WorkBuddy OAuth 入口。
 
 ## 结果
 

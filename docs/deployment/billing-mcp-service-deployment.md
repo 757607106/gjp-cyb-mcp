@@ -20,8 +20,8 @@ uv pip install dist/gjp_erp_billing_mcp-*.whl
 
 | 模式 | ASGI 入口 | 鉴权 | 默认端口 |
 |---|---|---|---|
-| legacy | `erp_billing.app:app` | Bearer JWT / `X-API-Key` | `8102` |
-| WorkBuddy | `erp_billing.workbuddy_app:app` | OAuth 2.1，服务端绑定 ERP Token | `8103` |
+| 生产直连 | `erp_billing.app:app` | ERP Bearer Token / `X-API-Key` | `8102` |
+| 生产 OAuth | `erp_billing.workbuddy_app:app` | OAuth 2.1，服务端绑定 ERP Token | `8103` |
 
 共同配置：
 
@@ -29,11 +29,12 @@ uv pip install dist/gjp_erp_billing_mcp-*.whl
 - `ERP_BILLING_BASE_URL`：部署级固定 HTTPS 地址；
 - `ERP_BILLING_TIMEOUT_SECONDS`：ERP 请求超时，默认 30 秒；
 - `ERP_BILLING_CATALOG_TTL_SECONDS`：租户商品目录 TTL，默认 600 秒。
+- `GJP_MCP_RATE_LIMIT_REQUESTS`：单凭据窗口请求上限，默认 120；
+- `GJP_MCP_RATE_LIMIT_WINDOW_SECONDS`：限流窗口秒数，默认 60。
 
-legacy Bearer/API Key 都由可信接入方逐请求传入，服务端不需要部署级 JWT 签名密钥；
-原凭据由固定地址的 ERP API 做最终鉴权。WorkBuddy 还必须设置公网根地址、OAuth
-数据库、Fernet 密钥和 connector source，详见专用文档。所有系统环境变量优先于
-`config/production.env`。
+生产直连接口逐请求接收 ERP Bearer Token 或 API Key，并交给固定地址的 ERP API 做
+最终鉴权。OAuth 入口还必须设置公网根地址、OAuth 数据库、Fernet 密钥和 connector
+source，详见专用文档。所有系统环境变量优先于 `config/production.env`。
 
 ## 身份与凭据边界
 
@@ -62,7 +63,9 @@ SQLite OAuth 状态和进程内会话只适合单实例。多 worker 或多副�
 - `uv run pytest -q`；
 - `GJP_ENV=production` 且敏感值不在仓库；
 - Nginx 只代理到回环地址上的正确端口；
-- legacy 入口已限制为可信 AI 平台可访问；
+- 生产直连接口接受有效 ERP Bearer Token 或 `X-API-Key`；
+- OAuth 入口只接受有效 MCP access token；
+- 同一凭据超过限流阈值时返回 429 和 `Retry-After`；
 - 未授权 MCP 请求被拒绝，健康检查和 OAuth 元数据符合预期；
 - 写工具必须有 `billing:write`、有效预览、明确确认和幂等键。
 

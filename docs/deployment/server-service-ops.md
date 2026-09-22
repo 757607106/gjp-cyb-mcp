@@ -1,13 +1,13 @@
 # MCP 服务器运维
 
-首次部署分别参考 [legacy 部署](server-deploy-runbook.md) 和
+API Key 入口参考 [直连部署](server-deploy-runbook.md)，OAuth 入口参考
 [WorkBuddy 部署](workbuddy-buddy-app.md)。本文只保留部署后的日常操作。
 
 ## 服务清单
 
 | 服务 | systemd | 入口 | 监听 |
 |---|---|---|---|
-| legacy MCP | `erp-billing-mcp` | `erp_billing.app:app` | `127.0.0.1:8102` |
+| API Key MCP | `erp-billing-mcp` | `erp_billing.app:app` | `127.0.0.1:8102` |
 | WorkBuddy MCP | `erp-billing-workbuddy-mcp` | `erp_billing.workbuddy_app:app` | `127.0.0.1:8103` |
 
 ## 状态与日志

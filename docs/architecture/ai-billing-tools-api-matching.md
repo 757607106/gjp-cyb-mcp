@@ -51,7 +51,7 @@ flowchart LR
 ```
 
 MCP 不接收音频、图片、附件、文件路径或媒体 URL，也不提供 ASR/OCR。使用
-多模态模型（VL）时，Agent 按 `ERP_BILLING_SYSTEM_PROMPT` 第十二章规则直接
+多模态模型（VL）时，Agent 按 `ERP_BILLING_SYSTEM_PROMPT` 的图片处理规则直接
 读图并组装 `order_text`，`source` 传 `image`；非 VL 模型仍由前端 OCR
 转文本后传入。无论哪种方式，`previewSalesOrder` 接收的都是文本。
 

@@ -194,8 +194,16 @@ def test_create_mcp_server_lists_tools_in_camelcase(tmp_path) -> None:
     assert by_name["previewSalesOrder"].output_schema == toolset.get(
         "preview_sales_order",
     ).output_schema
+    assert by_name["previewSalesOrder"].title == "预览销售单"
+    assert by_name["previewSalesOrder"].annotations.title == "预览销售单"
     assert by_name["previewSalesOrder"].annotations.read_only_hint is True
-    assert by_name["submitSalesOrder"].annotations.destructive_hint is True
+    assert by_name["submitSalesOrder"].annotations.destructive_hint is False
+    assert by_name["submitSalesOrder"].annotations.idempotent_hint is True
+    assert by_name["voidSalesOrder"].annotations.destructive_hint is True
+    assert by_name["updateSalesOrder"].annotations.destructive_hint is True
+    assert by_name["syncProducts"].annotations.destructive_hint is False
+    assert by_name["syncProducts"].annotations.idempotent_hint is True
+    assert all(tool.annotations.open_world_hint is True for tool in tools)
 
 
 def test_output_schemas_accept_arguments_guard_rejection(tmp_path) -> None:
@@ -358,9 +366,10 @@ def test_all_published_tools_are_self_describing_without_business_instructions(t
     assert len(published) == 59
     for tool in published:
         assert tool.description
-        assert "仅展示业务信息" in tool.description, tool.name
-        assert "内部 ID" in tool.description, tool.name
-        assert "控制字段" in tool.description, tool.name
+        assert tool.title
+        assert "\nArgs:\n" not in tool.description, tool.name
+        assert "展示：仅展示业务信息" not in tool.description, tool.name
+        assert tool.input_schema["additionalProperties"] is False
         for path, parameter in _schema_properties(tool.input_schema):
             assert parameter.get("description", "").strip(), f"{tool.name}{path} 缺少参数说明"
         metadata = tool.description + json.dumps(tool.input_schema, ensure_ascii=False)
@@ -381,7 +390,8 @@ def test_document_tool_descriptions_explain_dependencies_and_confirmation(tmp_pa
         elif name.startswith("submit_"):
             assert _snake_to_camel(name.replace("submit_", "preview_", 1)) in tool.description, name
             assert "用户" in tool.input_schema["properties"]["confirmed_by_user"]["description"], name
-            assert "preview_id" in tool.description, name
+            assert "preview_id" in tool.input_schema["properties"], name
+            assert tool.input_schema["properties"]["preview_id"]["description"], name
         elif name.startswith(("update_", "void_")):
             rest = name.split("_", 1)[1]
             assert _snake_to_camel("get_" + rest) in tool.description, name

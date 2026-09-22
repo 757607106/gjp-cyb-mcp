@@ -1,12 +1,8 @@
-"""开单 MCP 服务启动入口。
+"""动态接收 ERP Bearer Token 或 API Key 的直连 MCP 服务入口。
 
-MCP 客户端直接使用 ERP JWT 作为 Bearer Token，服务端从 JWT payload 解析
-tenantId、loginId 构造 InvocationContext，并把同一个 JWT 注入当前会话的
-ERP API 调用。业务 URL 始终来自部署级固定配置 ERP_BILLING_BASE_URL。
-
-legacy 入口不持有 ERP 的 JWT 签名密钥，只校验 JWT 结构和身份字段；请求必须
-来自已完成鉴权的可信接入方，ERP API 对透传的原 Token 做最终鉴权。公网部署必须
-通过网关、访问控制或私网限制该入口，不能把 payload 解析当作独立身份认证。
+三方客户端在每个 MCP 请求中通过 ``Authorization: Bearer`` 或 ``X-API-Key``
+传入 ERP 长期业务凭据。服务端只解析身份或生成摘要用于会话隔离，并把原凭据注入
+固定 ERP API 做最终鉴权；WorkBuddy MCP OAuth 使用 ``workbuddy_app`` 独立入口。
 
 运行方式：
 
@@ -42,7 +38,7 @@ from .adapters import (
 from .catalog import ProductCatalog
 from .catalog_state import TenantCatalogState
 from .config import ErpBillingSettings
-from .mcp_service import create_billing_mcp_service, mcp_transport_allowlists
+from .mcp_service import create_billing_mcp_service, mcp_transport_allowlists, rate_limit_billing_mcp
 from .session import ErpBillingSession
 from .toolset import BillingToolSet
 
@@ -358,7 +354,7 @@ class ApiKeyIdentityResolver:
 class _CompositeIdentityResolver:
     """按请求头选择鉴权方式：有 Authorization 走 Bearer，否则走 X-API-Key。
 
-    Bearer 解析器惰性构造；legacy Bearer 与 API Key 都由接入方逐请求传入，
+    Bearer 解析器惰性构造；ERP Bearer 与 API Key 都由接入方逐请求传入，
     服务端不保存部署级业务凭据。
     """
 
@@ -399,8 +395,8 @@ def _create_identity_resolver(bearer_store: SessionCredentialStore) -> Any:
     return _CompositeIdentityResolver(bearer_factory, api_key_resolver)
 
 
-class LegacyCredentialProtectionMiddleware:
-    """在进入 MCP 协议处理前拒绝缺失或格式错误的 legacy 凭据。"""
+class DirectCredentialProtectionMiddleware:
+    """在进入 MCP 协议处理前校验直连接口的凭据类型与基本格式。"""
 
     def __init__(self, app: ASGIApp) -> None:
         self._app = app
@@ -455,7 +451,7 @@ class LegacyCredentialProtectionMiddleware:
 
 
 def create_billing_app() -> Any:
-    """装配固定 ERP URL、逐请求透传 ERP 凭据的开单 MCP 应用。"""
+    """装配动态接收 ERP Bearer Token 或 API Key 的直连 MCP 应用。"""
     configure_logging()
     timeout_seconds = float(get_env_value("ERP_BILLING_TIMEOUT_SECONDS", "30") or 30)
     if timeout_seconds <= 0:
@@ -485,7 +481,7 @@ def create_billing_app() -> Any:
         allowed_hosts=allowed_hosts,
         allowed_origins=allowed_origins,
     )
-    return LegacyCredentialProtectionMiddleware(service)
+    return rate_limit_billing_mcp(DirectCredentialProtectionMiddleware(service))
 
 
 app = _LazyBillingApp(create_billing_app)

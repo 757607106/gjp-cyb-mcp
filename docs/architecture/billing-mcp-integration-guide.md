@@ -80,8 +80,9 @@ submit 模式；除销售单暴露 `save_type`（`draft`/`pre_receipt`/`final`�
 
 - `ERP_BILLING_MCP_INSTRUCTIONS`：服务端自动放入 MCP initialize 响应，对接方无需
   复制或手工拼接。
-- `ERP_BILLING_SYSTEM_PROMPT`：AI 平台 Agent 的完整系统提示词，包含表格输出、
-  工具路由、确认和图片识别规则。
+- `ERP_BILLING_SYSTEM_PROMPT`：AI 平台 Agent 的补充系统提示词；复用 MCP
+  Instructions，并增加跨工具确认、安全和图片识别规则。工具路由和参数含义以实时
+  `tools/list` 返回为准。
 
 只使用这两个入口；不存在独立的第三份响应契约。若 AI 平台已配置完整 System
 Prompt，仍保留 MCP Instructions，因为它属于 MCP 服务自描述，而不是重复的 Agent
