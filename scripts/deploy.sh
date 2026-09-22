@@ -1,214 +1,181 @@
 #!/bin/bash
-# ERP 开单 MCP 一键部署：拉取代码、同步依赖、重启并验证服务。
-#
-# 仅用于服务器部署：pull_code 会 git reset --hard 丢弃未提交改动，
-# 日志写 /var/log 且依赖 Linux ss 命令。本地启动等价命令见 AGENTS.md
-# 「本地启动服务」，不要在本地直接运行本脚本。
+# ERP MCP 代码一键部署。
 #
 # 用法：
-#   ./scripts/deploy.sh                    # main
-#   BRANCH=test ./scripts/deploy.sh        # test
-#   ./scripts/deploy-workbuddy.sh          # WorkBuddy（见专用脚本）
+#   ./scripts/deploy.sh test        # 部署远端 test 分支
+#   ./scripts/deploy.sh production  # 部署远端 main 分支
 #
-# 常用覆盖项：BRANCH、DEPLOY_DIR、GJP_ENV、APP_MODULE、SERVICE_NAME、HOST、PORT。
-# systemd 部署的业务配置只读取 service 指定的 EnvironmentFile。
+# 首次安装、systemd、Nginx 与环境文件配置见：
+# docs/deployment/server-deploy-runbook.md
 
 set -euo pipefail
 
-# 部署参数
-DEPLOY_DIR="${DEPLOY_DIR:-/root/gjp-cyb-mcp}"
-BRANCH="${BRANCH:-main}"
-APP_MODULE="${APP_MODULE:-erp_billing.app:app}"
-if [ "$APP_MODULE" = "erp_billing.workbuddy_app:app" ]; then
-    LOG_FILE="${LOG_FILE:-/var/log/erp-billing-workbuddy-mcp.log}"
-    PORT="${PORT:-8103}"
-    SERVICE_NAME="${SERVICE_NAME:-erp-billing-workbuddy-mcp}"
-else
-    LOG_FILE="${LOG_FILE:-/var/log/erp-billing-mcp.log}"
-    PORT="${PORT:-8102}"
-    SERVICE_NAME="${SERVICE_NAME:-erp-billing-mcp}"
-fi
-PROCESS_PATTERN="uvicorn ${APP_MODULE}"
-GJP_ENV="${GJP_ENV:-local}"
-HOST="${HOST:-127.0.0.1}"
-# ERP 地址默认值仅服务本地（测试）便利；生产禁止脚本注入默认域名，
-# 避免 export 覆盖 config/production.env 里的真实生产地址
-if [ "$GJP_ENV" = "production" ]; then
-    ERP_BILLING_BASE_URL="${ERP_BILLING_BASE_URL:-}"
-else
-    ERP_BILLING_BASE_URL="${ERP_BILLING_BASE_URL:-https://test-ai.yuncyb.com/aicyberp-api}"
+usage() {
+    cat <<'EOF'
+用法：./scripts/deploy.sh <test|production>
+
+  test        部署 origin/test
+  production  部署 origin/main
+
+可选环境变量：
+  DEPLOY_DIR       部署目录，默认 /root/gjp-cyb-mcp
+  SERVICE_NAME     systemd 服务，默认按 APP_MODULE 自动选择
+  APP_MODULE       ASGI 入口，默认 erp_billing.app:app
+  PORT             本机健康检查端口，默认按 APP_MODULE 自动选择
+  UV_INDEX_URL     Python 包镜像，默认阿里云 PyPI
+  UV_HTTP_TIMEOUT  依赖下载超时秒数，默认 60
+EOF
+}
+
+PROFILE="${1:-}"
+case "$PROFILE" in
+    test)
+        TARGET_BRANCH="test"
+        ;;
+    production)
+        TARGET_BRANCH="main"
+        ;;
+    -h|--help)
+        usage
+        exit 0
+        ;;
+    *)
+        usage >&2
+        exit 2
+        ;;
+esac
+
+if [ "$#" -ne 1 ]; then
+    usage >&2
+    exit 2
 fi
 
-# 调试参数仅用于 nohup 部署
-LOG_LEVEL="INFO"
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        --debug)
-            LOG_LEVEL="DEBUG"
-            shift
-            ;;
-        *)
-            echo "未知参数：$1"
-            echo "用法：$0 [--debug]"
-            exit 1
-            ;;
-    esac
+DEPLOY_DIR="${DEPLOY_DIR:-/root/gjp-cyb-mcp}"
+APP_MODULE="${APP_MODULE:-erp_billing.app:app}"
+UV_INDEX_URL="${UV_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}"
+UV_HTTP_TIMEOUT="${UV_HTTP_TIMEOUT:-60}"
+
+if [ "$APP_MODULE" = "erp_billing.workbuddy_app:app" ]; then
+    SERVICE_NAME="${SERVICE_NAME:-erp-billing-workbuddy-mcp}"
+    PORT="${PORT:-8103}"
+else
+    SERVICE_NAME="${SERVICE_NAME:-erp-billing-mcp}"
+    PORT="${PORT:-8102}"
+fi
+
+HEALTH_URL="http://127.0.0.1:${PORT}/healthz"
+
+info() {
+    printf '[INFO] %s\n' "$1"
+}
+
+error() {
+    printf '[ERROR] %s\n' "$1" >&2
+}
+
+require_command() {
+    if ! command -v "$1" >/dev/null 2>&1; then
+        error "缺少命令：$1"
+        exit 1
+    fi
+}
+
+wait_for_health() {
+    local attempt
+    for attempt in $(seq 1 20); do
+        if curl --fail --silent --show-error "$HEALTH_URL" >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 1
+    done
+    return 1
+}
+
+if [ "$(id -u)" -ne 0 ]; then
+    error "请使用 root 执行服务器部署脚本"
+    exit 1
+fi
+
+for command_name in git uv systemctl curl flock; do
+    require_command "$command_name"
 done
 
-# 输出
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
-info()  { echo -e "${GREEN}[INFO]${NC} $1"; }
-warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
-error() { echo -e "${RED}[ERROR]${NC} $1"; }
-
-stop_service() {
-    info "1/5 停止当前服务..."
-    if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
-        systemctl stop "$SERVICE_NAME"
-        info "systemd 服务已停止"
-    else
-        pkill -f -- "$PROCESS_PATTERN" 2>/dev/null || true
-        sleep 1
-        if pgrep -f -- "$PROCESS_PATTERN" >/dev/null 2>&1; then
-            warn "进程仍在运行，强制终止..."
-            pkill -9 -f -- "$PROCESS_PATTERN" || true
-            sleep 1
-        fi
-        info "nohup 进程已停止"
-    fi
-}
-
-pull_code() {
-    info "2/5 拉取最新 $BRANCH 分支代码..."
-    cd "$DEPLOY_DIR"
-    git fetch origin "$BRANCH:refs/remotes/origin/$BRANCH"
-    git reset --hard "origin/$BRANCH"
-    info "当前版本：$(git log --oneline -1)"
-}
-
-sync_deps() {
-    info "3/5 同步项目依赖..."
-    cd "$DEPLOY_DIR"
-    uv sync --extra dev
-    info "依赖同步完成"
-}
-
-start_service() {
-    info "4/5 启动服务..."
-    # 确保日志目录存在
-    mkdir -p "$(dirname "$LOG_FILE")"
-
-    if [ -f "/etc/systemd/system/${SERVICE_NAME}.service" ]; then
-        # systemd 方式：环境变量在 service 文件中配置
-        if [ "$LOG_LEVEL" = "DEBUG" ]; then
-            warn "检测到 systemd 方式，--debug 参数需通过 override 生效"
-            warn "临时调试建议改用 nohup：先停用 systemd 再运行此脚本"
-        fi
-        systemctl daemon-reload
-        systemctl start "$SERVICE_NAME"
-        sleep 2
-        info "systemd 服务已启动"
-    else
-        # nohup 方式：在此设置环境变量
-        cd "$DEPLOY_DIR"
-        export GJP_ENV
-        # 生产模式下 ERP 地址优先级：环境变量 > config/production.env；
-        # 只在非空时 export，空值 export 会覆盖 env 文件里配置的地址
-        if [ -n "$ERP_BILLING_BASE_URL" ]; then
-            export ERP_BILLING_BASE_URL
-            info "ERP 地址来源：环境变量 $ERP_BILLING_BASE_URL"
-        else
-            info "ERP 地址来源：config/$GJP_ENV.env"
-        fi
-        export GJP_LOG_LEVEL="$LOG_LEVEL"
-        # 确保 uv 在 PATH 中
-        export PATH="/usr/local/bin:$PATH"
-
-        nohup uv run uvicorn "$APP_MODULE" \
-            --host "$HOST" --port "$PORT" \
-            >> "$LOG_FILE" 2>&1 &
-        sleep 2
-        local pid
-        pid=$(pgrep -f -- "$PROCESS_PATTERN" | head -1 || true)
-        if [ -n "$pid" ]; then
-            info "nohup 服务已启动 PID=$pid"
-        else
-            error "服务启动失败！最近日志："
-            tail -n 20 "$LOG_FILE" 2>/dev/null
-            exit 1
-        fi
-    fi
-}
-
-verify_service() {
-    info "5/5 验证服务状态..."
-    sleep 1
-
-    # 检查进程
-    if pgrep -f -- "$PROCESS_PATTERN" >/dev/null 2>&1; then
-        info "进程运行中 ✓"
-    else
-        error "进程未运行！"
-        tail -n 20 "$LOG_FILE" 2>/dev/null
-        exit 1
-    fi
-
-    # 检查端口
-    if ss -ltnp 2>/dev/null | grep -q ":$PORT"; then
-        info "端口 $PORT 监听中 ✓"
-    else
-        error "端口 $PORT 未监听！"
-        tail -n 20 "$LOG_FILE" 2>/dev/null
-        exit 1
-    fi
-
-    # 显示最近日志
-    info "最近日志："
-    tail -n 5 "$LOG_FILE" 2>/dev/null || warn "日志文件为空"
-
-    echo ""
-    info "===== 部署完成 ====="
-    info "分支=$BRANCH  环境=$GJP_ENV  入口=$APP_MODULE  日志级别=$LOG_LEVEL  端口=$PORT"
-    if [ "$LOG_LEVEL" = "DEBUG" ]; then
-        info "实时查看日志：tail -f $LOG_FILE"
-    fi
-    if [ "$GJP_ENV" = "production" ]; then
-        local pid
-        pid=$(pgrep -f -- "$PROCESS_PATTERN" | head -1)
-        info "生产验证：PID=$pid 实际生效环境变量："
-        cat "/proc/$pid/environ" | tr '\0' '\n' \
-            | grep -E '^(GJP_ENV|ERP_BILLING_BASE_URL|WORKBUDDY_PUBLIC_BASE_URL|WORKBUDDY_OAUTH_DB_PATH|WORKBUDDY_CONNECTOR_SOURCE)=' \
-            || true
-    fi
-}
-
-# 部署流程
-echo ""
-info "===== ERP 开单 MCP 服务快速部署 ====="
-info "部署目录：$DEPLOY_DIR"
-info "目标分支：$BRANCH"
-info "运行环境：$GJP_ENV"
-info "ASGI 入口：$APP_MODULE"
-info "服务名称：$SERVICE_NAME"
-info "监听地址：$HOST:$PORT"
-info "日志级别：$LOG_LEVEL"
-[ -n "$DUMP_CREDENTIALS" ] && warn "已开启完整 token 转储（仅调试用）"
-echo ""
-
-# 生产环境启动前检查：ERP 地址既无环境变量也无 config/production.env 定义时，
-# 在停止旧服务之前报错退出，避免服务下线后才发现配置缺失
-if [ "$GJP_ENV" = "production" ] && [ -z "$ERP_BILLING_BASE_URL" ]; then
-    if ! grep -qE '^ERP_BILLING_BASE_URL=.+' "$DEPLOY_DIR/config/production.env" 2>/dev/null; then
-        error "生产环境缺少 ERP_BILLING_BASE_URL：请通过环境变量注入，或在 config/production.env 配置"
-        exit 1
-    fi
+if [ ! -d "$DEPLOY_DIR/.git" ]; then
+    error "部署目录不是 Git 仓库：$DEPLOY_DIR"
+    exit 1
 fi
 
-stop_service
-pull_code
-sync_deps
-start_service
-verify_service
+if ! systemctl cat "$SERVICE_NAME" >/dev/null 2>&1; then
+    error "systemd 服务不存在：$SERVICE_NAME；请先按部署文档完成首次安装"
+    exit 1
+fi
+
+exec 9>"/var/lock/${SERVICE_NAME}-deploy.lock"
+if ! flock -n 9; then
+    error "已有部署任务正在运行：$SERVICE_NAME"
+    exit 1
+fi
+
+cd "$DEPLOY_DIR"
+
+if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
+    error "部署目录存在未提交改动，请先处理后再部署"
+    git status --short
+    exit 1
+fi
+
+PREVIOUS_COMMIT="$(git rev-parse HEAD)"
+
+info "部署配置：$PROFILE（origin/$TARGET_BRANCH）"
+info "部署目录：$DEPLOY_DIR"
+info "服务名称：$SERVICE_NAME"
+info "依赖镜像：$UV_INDEX_URL"
+
+info "1/5 拉取远端分支"
+git fetch --prune origin "$TARGET_BRANCH:refs/remotes/origin/$TARGET_BRANCH"
+
+info "2/5 切换并快进到远端提交"
+if git show-ref --verify --quiet "refs/heads/$TARGET_BRANCH"; then
+    git switch "$TARGET_BRANCH"
+else
+    git switch --track -c "$TARGET_BRANCH" "origin/$TARGET_BRANCH"
+fi
+git merge --ff-only "origin/$TARGET_BRANCH"
+
+if [ "$(git rev-parse HEAD)" != "$(git rev-parse "origin/$TARGET_BRANCH")" ]; then
+    error "本地分支与 origin/$TARGET_BRANCH 不一致，已停止部署"
+    exit 1
+fi
+
+info "3/5 使用锁文件同步生产依赖"
+export UV_INDEX_URL UV_HTTP_TIMEOUT
+uv sync --frozen --no-dev
+
+info "4/5 执行启动前导入检查"
+"$DEPLOY_DIR/.venv/bin/python" -c 'import erp_billing.app'
+
+info "5/5 重启并检查健康状态"
+restart_ok=true
+if ! systemctl restart "$SERVICE_NAME"; then
+    restart_ok=false
+elif ! wait_for_health; then
+    restart_ok=false
+fi
+
+if ! "$restart_ok"; then
+    error "新版本健康检查失败，开始回滚到 $PREVIOUS_COMMIT"
+    journalctl -u "$SERVICE_NAME" -n 50 --no-pager >&2 || true
+    if git switch --detach "$PREVIOUS_COMMIT" \
+        && uv sync --frozen --no-dev \
+        && systemctl restart "$SERVICE_NAME" \
+        && wait_for_health; then
+        error "已自动回滚，服务恢复；请检查新版本日志"
+    else
+        error "回滚后健康检查仍失败，请立即检查 systemd 日志"
+    fi
+    exit 1
+fi
+
+info "部署完成：$(git log -1 --oneline)"
+info "服务状态：$(systemctl is-active "$SERVICE_NAME")"
+info "健康检查：$HEALTH_URL"

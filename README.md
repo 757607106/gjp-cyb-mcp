@@ -65,6 +65,17 @@ uv run pytest -q
 uv run ruff check src tests
 ```
 
+服务器首次安装见[部署手册](docs/deployment/server-deploy-runbook.md)。完成首次安装后，
+测试代码与生产代码分别一键更新：
+
+```bash
+./scripts/deploy.sh test
+./scripts/deploy.sh production
+```
+
+`test` 对应 `origin/test`，`production` 对应 `origin/main`；两者默认更新同一个
+`erp-billing-mcp` 服务槽位，不能同时运行。
+
 代码结构：
 
 ```text

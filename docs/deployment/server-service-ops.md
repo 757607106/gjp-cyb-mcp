@@ -57,10 +57,26 @@ uv run pytest -q
 工作区不干净时先确认改动归属，不得直接覆盖。`main`、`test` 更新方式及环境选择见对应
 部署文档。
 
+## 一键更新
+
+直连 MCP 的测试代码与生产代码分别使用：
+
+```bash
+cd /root/gjp-cyb-mcp
+./scripts/deploy.sh test
+./scripts/deploy.sh production
+```
+
+两个命令操作同一个服务槽位：`test` 对应 `origin/test`，`production` 对应
+`origin/main`。脚本只允许 fast-forward，使用锁文件同步生产依赖，重启后检查健康状态；
+健康检查失败时自动回到部署前提交。首次部署与并行环境约束见
+[直连部署手册](server-deploy-runbook.md)。
+
 ## 健康检查
 
 ```bash
 ss -ltnp | grep -E ':(8102|8103)\b'
+curl -i http://127.0.0.1:8102/healthz
 curl -i http://127.0.0.1:8103/healthz
 curl -i http://127.0.0.1:8103/.well-known/oauth-authorization-server
 curl -i -X POST http://127.0.0.1:8103/mcp \

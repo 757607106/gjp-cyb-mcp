@@ -144,9 +144,8 @@ uv run pytest -q
 
 ### 本地启动服务
 
-本地常驻启动复用 `scripts/deploy.sh` 的 nohup 方式，但**不要在本地直接运行
-deploy.sh**：其 `pull_code` 会 `git reset --hard` 丢弃未提交改动，且写死
-`/var/log` 与 Linux `ss` 命令。本地等价命令：
+`scripts/deploy.sh` 只用于服务器 systemd 服务更新，必须显式选择 `test` 或
+`production`，本地不要运行。本地启动使用以下等价命令：
 
 ```bash
 export GJP_ENV=local

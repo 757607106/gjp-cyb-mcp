@@ -172,8 +172,8 @@ access token 绑定当前 `/mcp` resource，以及 ERP Token 不进入日志、�
 执行部署脚本时的临时 shell 变量。日常更新使用专用一键入口：
 
 ```bash
-./scripts/deploy-workbuddy.sh
-BRANCH=test ./scripts/deploy-workbuddy.sh
+./scripts/deploy-workbuddy.sh production
+./scripts/deploy-workbuddy.sh test
 ```
 
 第一条部署 `main`，第二条部署 `test`。包装脚本只选择 WorkBuddy ASGI 入口；服务会自动
