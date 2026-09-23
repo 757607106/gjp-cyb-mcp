@@ -74,8 +74,7 @@ uv run ruff check src tests
 ```
 
 `test` 对应 `origin/test`，`production` 对应 `origin/main`；两者默认更新同一个
-`yuncyb-mcp` 服务槽位，不能同时运行。已部署旧版本首次切换到完整新命名时，先按
-[重命名迁移手册](docs/deployment/yuncyb-rename-migration.md)迁移，之后再使用一键脚本。
+`yuncyb-mcp` 服务槽位，不能同时运行。
 
 代码结构：
 
@@ -96,6 +95,5 @@ integrations/workbuddy/  # WorkBuddy 连接器元数据与云创业版 Skill
 - [部署契约](docs/deployment/yuncyb-mcp-service-deployment.md)
 - [服务器首次部署](docs/deployment/server-deploy-runbook.md)
 - [服务器日常运维](docs/deployment/server-service-ops.md)
-- [完整重命名迁移](docs/deployment/yuncyb-rename-migration.md)
 - [当前工具与提示词契约 ADR](docs/adr/0002-yuncyb-mcp-tool-and-prompt-contract.md)
 - [历史云开单边界 ADR](docs/adr/0001-cloud-yuncyb-mcp-boundary.md)

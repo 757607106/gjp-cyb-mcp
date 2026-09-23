@@ -28,7 +28,7 @@ Bearer payload 读取 `tenantId`、`loginId` 只用于会话隔离，不把它�
 
 ## 会话与权限
 
-- legacy 客户端建议传 `X-Conversation-Id`，避免同账号多对话共享预览；
+- 直连客户端建议传 `X-Conversation-Id`，避免同账号多对话共享预览；
 - ToolSet、预览和幂等结果按会话隔离，商品目录按租户共享；
 - 查询与预览要求 `yuncyb:read`；创建、修改和作废要求 `yuncyb:write`；
 - 写操作还必须关联当前有效预览、用户明确确认和唯一幂等键；

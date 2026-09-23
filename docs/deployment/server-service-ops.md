@@ -3,9 +3,6 @@
 API Key 入口参考 [直连部署](server-deploy-runbook.md)，OAuth 入口参考
 [WorkBuddy 部署](workbuddy-buddy-app.md)。本文只保留部署后的日常操作。
 
-两个入口及其 systemd 服务统一使用 `yuncyb` 命名。仍在运行旧服务名的服务器必须先
-按[完整重命名迁移](yuncyb-rename-migration.md)完成切换，再使用本文命令。
-
 ## 服务清单
 
 | 服务 | systemd | 入口 | 监听 |

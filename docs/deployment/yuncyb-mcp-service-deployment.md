@@ -5,8 +5,7 @@
 WorkBuddy 见 [专用部署文档](workbuddy-buddy-app.md)。
 
 MCP initialize、wheel、Python 包、ASGI 入口、systemd 服务、部署路径、配置变量和
-WorkBuddy connector source 均统一使用 `yuncyb`。从旧部署首次升级必须先执行
-[完整重命名迁移](yuncyb-rename-migration.md)，不能直接运行新版一键部署脚本。
+WorkBuddy connector source 均统一使用 `yuncyb`。
 
 ## 制品
 
@@ -48,8 +47,8 @@ source，详见专用文档。所有系统环境变量优先于 `config/producti
 - ERP URL 只来自部署配置，工具参数和请求头不能覆盖；
 - ERP 401/403 映射为重新授权，不让模型向用户索取账号密码。
 
-legacy 按 `(tenant_id, account_id, session_id)` 隔离 ToolSet、预览与幂等结果；商品目录
-按租户共享。legacy 从 JWT payload 取得的身份字段不等于本地验签，部署必须保证请求
+直连入口按 `(tenant_id, account_id, session_id)` 隔离 ToolSet、预览与幂等结果；商品目录
+按租户共享。直连入口从 JWT payload 取得的身份字段不等于本地验签，部署必须保证请求
 来自已鉴权的可信平台；WorkBuddy 先验证 MCP access token，再按绑定主体解析 ERP
 凭据，MCP token 不透传 ERP。
 

@@ -17,8 +17,8 @@
 
 产品与技术标识统一使用 `yuncyb`：Python 包为 `yuncyb`，核心类型为
 `YunCybToolSet` / `YunCybApiPort`，systemd 服务为 `yuncyb-mcp` 与
-`yuncyb-workbuddy-mcp`，连接器 `source` 为 `yuncyb`。旧标识只允许出现在迁移文档
-和历史 ADR 中，不得重新引入运行时代码或部署配置。
+`yuncyb-workbuddy-mcp`，连接器 `source` 为 `yuncyb`。不得重新引入旧标识对应的
+运行时代码、部署配置或运维文档。
 
 ## 业务场景覆盖
 
@@ -131,11 +131,10 @@ integrations/workbuddy/yuncyb/  # WorkBuddy 连接器元数据与云创业版 Sk
 - `docs/architecture/product-matching-algorithm.md` — 商品匹配算法
 - `docs/architecture/mcp-reliability-update.md` — MCP 可靠性优化、2.0.7 升级与重试边界
 - `docs/deployment/capability-deployment.md` — 鉴权与会话隔离约定
-- `docs/deployment/yuncyb-mcp-service-deployment.md` — 开单服务部署契约
-- `docs/deployment/server-deploy-runbook.md` — legacy 服务首次部署
-- `docs/deployment/server-service-ops.md` — legacy 与 WorkBuddy 日常运维
+- `docs/deployment/yuncyb-mcp-service-deployment.md` — 云创业版 MCP 部署契约
+- `docs/deployment/server-deploy-runbook.md` — 直连 MCP 首次部署与更新
+- `docs/deployment/server-service-ops.md` — 直连 MCP 与 WorkBuddy 日常运维
 - `docs/deployment/workbuddy-buddy-app.md` — WorkBuddy 接入、部署与验收
-- `docs/deployment/yuncyb-rename-migration.md` — 已部署服务的完整重命名迁移与回滚
 
 ## 本地开发
 

@@ -35,8 +35,7 @@ OAuth 2.1、动态客户端注册、PKCE、ERP AI Token 绑定和加密存储。
 更换数据库和 Fernet 密钥，并让用户重新连接。测试与生产长期并行时必须使用不同域名、
 connector source、数据库和密钥。
 
-`source` 已统一为 `yuncyb`。从旧 source 升级时 WorkBuddy 会识别为新连接器，现有
-连接需要重新安装或授权；服务器迁移顺序见[完整重命名迁移](yuncyb-rename-migration.md)。
+`source` 统一为 `yuncyb`。
 
 ## 服务配置
 
@@ -191,7 +190,7 @@ access token 绑定当前 `/mcp` resource，以及 ERP Token 不进入日志、�
 ```
 
 第一条部署 `main`，第二条部署 `test`。包装脚本只选择 WorkBuddy ASGI 入口；服务会自动
-使用 `yuncyb-workbuddy-mcp` 和 8103，不改变 legacy 部署脚本的默认行为。systemd
+使用 `yuncyb-workbuddy-mcp` 和 8103，不改变直连部署脚本的默认行为。systemd
 日志继续通过 `journalctl -u yuncyb-workbuddy-mcp` 查看。
 实际连接测试或生产 ERP 仍由 systemd `EnvironmentFile` 决定。
 
