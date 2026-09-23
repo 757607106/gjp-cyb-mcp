@@ -3,9 +3,9 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
-name = "gjp-erp-billing-mcp"
+name = "yuncyb-mcp"
 version = "0.1.0"
-description = "基于 MCP Python SDK 的 ERP AI 业务 MCP 服务"
+description = "管家婆云创业版销售、采购、库存、资金与报表 MCP 服务"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -28,7 +28,7 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = [
-    "src/erp_billing",
+    "src/yuncyb",
     "src/gjp_common",
 ]
 

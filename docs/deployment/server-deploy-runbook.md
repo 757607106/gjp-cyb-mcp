@@ -1,6 +1,6 @@
-# ERP 直连 MCP 服务器部署与更新
+# 管家婆云创业版直连 MCP 服务器部署与更新
 
-本文记录 `erp_billing.app:app` 的首次部署、Nginx 接入、验收和后续一键更新。
+本文记录 `yuncyb.app:app` 的首次部署、Nginx 接入、验收和后续一键更新。
 三方 MCP 客户端逐请求发送 `Authorization: Bearer <ERP token>` 或
 `X-API-Key`，凭据不写入部署文件、工具参数或日志。
 
@@ -8,14 +8,15 @@
 
 | 项目 | 配置 |
 |---|---|
+| MCP 服务名 | `yuncyb` |
 | 公网 MCP 地址 | `https://new.yuncyb.com/mcp` |
 | 健康检查 | `https://new.yuncyb.com/healthz` |
 | 本机监听 | `127.0.0.1:8102` |
-| systemd 服务 | `erp-billing-mcp` |
-| 部署目录 | `/root/gjp-cyb-mcp` |
-| 服务用户 | `erp-mcp` |
-| 环境文件 | `/etc/erp-billing-mcp.env` |
-| ASGI 入口 | `erp_billing.app:app` |
+| systemd 服务 | `yuncyb-mcp` |
+| 部署目录 | `/root/yuncyb-mcp` |
+| 服务用户 | `yuncyb-mcp` |
+| 环境文件 | `/etc/yuncyb-mcp.env` |
+| ASGI 入口 | `yuncyb.app:app` |
 
 代码分支与运行配置是两件事：
 
@@ -60,25 +61,25 @@ source /etc/profile.d/gjp-mcp-uv.sh
 ### 2. 拉取代码并安装生产依赖
 
 ```bash
-mkdir -p /root/gjp-cyb-mcp
+mkdir -p /root/yuncyb-mcp
 git clone --branch test --single-branch \
   https://github.com/757607106/gjp-cyb-mcp.git \
-  /root/gjp-cyb-mcp
+  /root/yuncyb-mcp
 
-cd /root/gjp-cyb-mcp
+cd /root/yuncyb-mcp
 uv venv --python /usr/bin/python3.11
 uv sync --frozen --no-dev
 ```
 
 ### 3. 创建运行配置
 
-`ERP_BILLING_BASE_URL` 是 ERP API 地址，不是 MCP 工具参数。API Key 和 Bearer Token
+`YUNCYB_BASE_URL` 是 ERP API 地址，不是 MCP 工具参数。API Key 和 Bearer Token
 由 MCP 客户端放在 HTTP Header 中动态发送，不能写入此文件。
 
 ```bash
-cat >/etc/erp-billing-mcp.env <<'EOF'
+cat >/etc/yuncyb-mcp.env <<'EOF'
 GJP_ENV=production
-ERP_BILLING_BASE_URL=https://new.yuncyb.com/aicyberp-api
+YUNCYB_BASE_URL=https://new.yuncyb.com/aicyberp-api
 GJP_MCP_ALLOWED_HOSTS=new.yuncyb.com
 GJP_MCP_ALLOWED_ORIGINS=https://new.yuncyb.com
 GJP_MCP_RATE_LIMIT_REQUESTS=120
@@ -86,44 +87,44 @@ GJP_MCP_RATE_LIMIT_WINDOW_SECONDS=60
 GJP_LOG_LEVEL=INFO
 EOF
 
-chmod 0600 /etc/erp-billing-mcp.env
+chmod 0600 /etc/yuncyb-mcp.env
 ```
 
 ### 4. 创建最小权限服务用户
 
 ```bash
 useradd --system --user-group --create-home \
-  --home-dir /var/lib/erp-mcp \
+  --home-dir /var/lib/yuncyb-mcp \
   --shell /sbin/nologin \
-  erp-mcp
+  yuncyb-mcp
 
-setfacl -m u:erp-mcp:--x /root
-setfacl -R -m u:erp-mcp:rX /root/gjp-cyb-mcp
+setfacl -m u:yuncyb-mcp:--x /root
+setfacl -R -m u:yuncyb-mcp:rX /root/yuncyb-mcp
 ```
 
-`erp-mcp` 只能穿越 `/root` 并读取项目，不能修改代码。通过下面命令验证：
+`yuncyb-mcp` 只能穿越 `/root` 并读取项目，不能修改代码。通过下面命令验证：
 
 ```bash
-runuser -u erp-mcp -- /root/gjp-cyb-mcp/.venv/bin/python --version
+runuser -u yuncyb-mcp -- /root/yuncyb-mcp/.venv/bin/python --version
 ```
 
 ### 5. 创建 systemd 服务
 
 ```ini
-# /etc/systemd/system/erp-billing-mcp.service
+# /etc/systemd/system/yuncyb-mcp.service
 [Unit]
-Description=ERP Billing MCP Service
+Description=YunCYB MCP Service
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=erp-mcp
-Group=erp-mcp
-WorkingDirectory=/root/gjp-cyb-mcp
-EnvironmentFile=/etc/erp-billing-mcp.env
+User=yuncyb-mcp
+Group=yuncyb-mcp
+WorkingDirectory=/root/yuncyb-mcp
+EnvironmentFile=/etc/yuncyb-mcp.env
 Environment=PYTHONDONTWRITEBYTECODE=1
-ExecStart=/root/gjp-cyb-mcp/.venv/bin/uvicorn erp_billing.app:app --host 127.0.0.1 --port 8102
+ExecStart=/root/yuncyb-mcp/.venv/bin/uvicorn yuncyb.app:app --host 127.0.0.1 --port 8102
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30
@@ -141,15 +142,15 @@ WantedBy=multi-user.target
 加载、启动并启用开机自启：
 
 ```bash
-systemd-analyze verify /etc/systemd/system/erp-billing-mcp.service
+systemd-analyze verify /etc/systemd/system/yuncyb-mcp.service
 systemctl daemon-reload
-systemctl enable --now erp-billing-mcp
+systemctl enable --now yuncyb-mcp
 curl -i http://127.0.0.1:8102/healthz
 ```
 
 ### 6. 接入现有 Nginx
 
-新建 `/etc/nginx/snippets/erp-billing-mcp.locations`：
+新建 `/etc/nginx/snippets/yuncyb-mcp.locations`：
 
 ```nginx
 # MCP 服务：new.yuncyb.com/mcp -> 127.0.0.1:8102
@@ -185,7 +186,7 @@ location = /mcp {
 在 `new.yuncyb.com` 的 HTTPS `server` 块内、现有 `location /` 之前加入：
 
 ```nginx
-include /etc/nginx/snippets/erp-billing-mcp.locations;
+include /etc/nginx/snippets/yuncyb-mcp.locations;
 ```
 
 修改前备份原配置，修改后只在语法检查通过时平滑加载：
@@ -202,14 +203,14 @@ systemctl reload nginx
 部署测试代码：
 
 ```bash
-cd /root/gjp-cyb-mcp
+cd /root/yuncyb-mcp
 ./scripts/deploy.sh test
 ```
 
 部署生产代码：
 
 ```bash
-cd /root/gjp-cyb-mcp
+cd /root/yuncyb-mcp
 ./scripts/deploy.sh production
 ```
 
@@ -221,7 +222,7 @@ cd /root/gjp-cyb-mcp
 | 2 | 拉取对应远端分支，只允许 fast-forward |
 | 3 | 使用 `uv.lock`、`--no-dev` 和阿里云镜像同步生产依赖 |
 | 4 | 导入应用，确认代码可以启动 |
-| 5 | 只重启 `erp-billing-mcp` 并检查本机 `/healthz` |
+| 5 | 只重启 `yuncyb-mcp` 并检查本机 `/healthz` |
 | 重启或健康检查失败 | 自动切回部署前提交、恢复依赖并重启服务 |
 
 脚本不会修改 Nginx、环境文件或其他 systemd 服务。部署目录存在未提交改动时直接退出，
@@ -232,7 +233,7 @@ cd /root/gjp-cyb-mcp
 ### 状态与健康检查
 
 ```bash
-systemctl show erp-billing-mcp -p UnitFileState -p ActiveState -p SubState
+systemctl show yuncyb-mcp -p UnitFileState -p ActiveState -p SubState
 curl -i https://new.yuncyb.com/healthz
 ```
 
@@ -269,9 +270,9 @@ unset key
 ## 四、日常运维
 
 ```bash
-systemctl --no-pager --full status erp-billing-mcp
-journalctl -u erp-billing-mcp -n 100 --no-pager
-journalctl -u erp-billing-mcp -f
+systemctl --no-pager --full status yuncyb-mcp
+journalctl -u yuncyb-mcp -n 100 --no-pager
+journalctl -u yuncyb-mcp -f
 ```
 
 凭据不得写入仓库、环境文件、systemd 单元、Nginx 配置或普通日志。测试凭据如果进入

@@ -18,9 +18,9 @@ usage() {
   production  部署 origin/main
 
 可选环境变量：
-  DEPLOY_DIR       部署目录，默认 /root/gjp-cyb-mcp
+  DEPLOY_DIR       部署目录，默认 /root/yuncyb-mcp
   SERVICE_NAME     systemd 服务，默认按 APP_MODULE 自动选择
-  APP_MODULE       ASGI 入口，默认 erp_billing.app:app
+  APP_MODULE       ASGI 入口，默认 yuncyb.app:app
   PORT             本机健康检查端口，默认按 APP_MODULE 自动选择
   UV_INDEX_URL     Python 包镜像，默认阿里云 PyPI
   UV_HTTP_TIMEOUT  依赖下载超时秒数，默认 60
@@ -50,16 +50,16 @@ if [ "$#" -ne 1 ]; then
     exit 2
 fi
 
-DEPLOY_DIR="${DEPLOY_DIR:-/root/gjp-cyb-mcp}"
-APP_MODULE="${APP_MODULE:-erp_billing.app:app}"
+DEPLOY_DIR="${DEPLOY_DIR:-/root/yuncyb-mcp}"
+APP_MODULE="${APP_MODULE:-yuncyb.app:app}"
 UV_INDEX_URL="${UV_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}"
 UV_HTTP_TIMEOUT="${UV_HTTP_TIMEOUT:-60}"
 
-if [ "$APP_MODULE" = "erp_billing.workbuddy_app:app" ]; then
-    SERVICE_NAME="${SERVICE_NAME:-erp-billing-workbuddy-mcp}"
+if [ "$APP_MODULE" = "yuncyb.workbuddy_app:app" ]; then
+    SERVICE_NAME="${SERVICE_NAME:-yuncyb-workbuddy-mcp}"
     PORT="${PORT:-8103}"
 else
-    SERVICE_NAME="${SERVICE_NAME:-erp-billing-mcp}"
+    SERVICE_NAME="${SERVICE_NAME:-yuncyb-mcp}"
     PORT="${PORT:-8102}"
 fi
 
@@ -152,7 +152,7 @@ export UV_INDEX_URL UV_HTTP_TIMEOUT
 uv sync --frozen --no-dev
 
 info "4/5 执行启动前导入检查"
-"$DEPLOY_DIR/.venv/bin/python" -c 'import erp_billing.app'
+"$DEPLOY_DIR/.venv/bin/python" -c 'import yuncyb.app'
 
 info "5/5 重启并检查健康状态"
 restart_ok=true

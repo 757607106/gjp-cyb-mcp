@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "yuncyb": {
+      "type": "streamableHttp",
+      "url": "https://test-mcp-server.yuncyb.com/mcp",
+      "headers": {
+        "X-API-Key": "${ERP_API_KEY}"
+      },
+      "timeout": 30000
+    }
+  }
+}

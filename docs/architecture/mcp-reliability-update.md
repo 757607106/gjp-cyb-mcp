@@ -21,7 +21,7 @@
 
 真实 ERP Bearer 由可信 AI 平台直接传入，使用 `eff` 而不是标准 `exp`，且 ERP 的
 HS256 签名密钥不分发给 MCP。为恢复既有对接契约，legacy 入口取消部署级
-`ERP_BILLING_JWT_SECRET` 和本地签名校验，改为校验 JWT 结构及 `tenantId`、`loginId`
+`YUNCYB_JWT_SECRET` 和本地签名校验，改为校验 JWT 结构及 `tenantId`、`loginId`
 字段后原样透传，由 ERP API 做最终鉴权。相应部署边界改为：legacy `/mcp` 必须通过
 私网、网关访问控制或来源白名单只对已完成鉴权的可信平台开放。
 

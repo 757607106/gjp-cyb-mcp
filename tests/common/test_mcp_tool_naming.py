@@ -11,13 +11,13 @@ from __future__ import annotations
 from gjp_common.mcp import _snake_to_camel
 
 
-def test_snake_to_camel_converts_billing_tools() -> None:
+def test_snake_to_camel_converts_yuncyb_tools() -> None:
     """开单十个工具名必须全部映射为 camelCase。"""
     cases = {
         "sync_products": "syncProducts",
         "list_products": "listProducts",
         "search_products": "searchProducts",
-        "search_billing_references": "searchBillingReferences",
+        "search_business_references": "searchBusinessReferences",
         "preview_sales_order": "previewSalesOrder",
         "submit_sales_order": "submitSalesOrder",
         "get_sales_order": "getSalesOrder",

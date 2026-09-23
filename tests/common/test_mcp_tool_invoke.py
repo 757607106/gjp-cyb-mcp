@@ -32,9 +32,9 @@ def _context() -> InvocationContext:
     return InvocationContext(
         tenant_id="tenant-test",
         subject_id="user-test",
-        account_id="billing-test",
+        account_id="yuncyb-test",
         session_id="session-test",
-        scopes=frozenset({"billing:read"}),
+        scopes=frozenset({"yuncyb:read"}),
     )
 
 

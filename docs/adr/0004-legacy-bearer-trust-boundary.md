@@ -6,10 +6,10 @@
 
 ## 背景
 
-legacy `erp_billing.app:app` 的既有对接契约是 AI 平台逐请求携带当前 ERP JWT，MCP
+legacy `yuncyb.app:app` 的既有对接契约是 AI 平台逐请求携带当前 ERP JWT，MCP
 从 payload 取得 `tenantId`、`loginId` 建立隔离上下文，并把原 Token 交给固定地址的
 ERP API。后续版本在 MCP 内新增 HS256 本地验签，要求部署
-`ERP_BILLING_JWT_SECRET` 和标准 `exp` 字段。
+`YUNCYB_JWT_SECRET` 和标准 `exp` 字段。
 
 真实 ERP Token 使用 `eff` 字段，ERP 也不向 MCP 分发 HS256 签名密钥，导致生产
 legacy 请求在到达 ERP 前即被拒绝。WorkBuddy 使用独立 OAuth 入口和凭据绑定，不受

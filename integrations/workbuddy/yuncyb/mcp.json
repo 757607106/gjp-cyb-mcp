@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "yuncyb": {
+      "type": "streamableHttp",
+      "url": "https://workbuddy-mcp.yuncyb.com/mcp",
+      "timeout": 30000
+    }
+  }
+}

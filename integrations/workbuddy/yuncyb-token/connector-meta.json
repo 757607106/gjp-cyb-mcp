@@ -1,0 +1,23 @@
+{
+  "name": "管家婆云创业版（测试连接）",
+  "name_zh": "管家婆云创业版（测试连接）",
+  "name_en": "YunCYB Test Connection",
+  "description": "使用业务 Token 验证管家婆云创业版 MCP。",
+  "description_zh": "使用业务 Token 验证管家婆云创业版的销售、采购、库存、资金与报表能力。",
+  "description_en": "Test YunCYB sales, purchase, inventory, finance and reporting capabilities with a business token.",
+  "source": "yuncyb-token",
+  "type": "mcp",
+  "version": "0.2.0",
+  "auth_mode": "token",
+  "minWorkbuddyVersion": "4.24.0",
+  "examples_zh": [
+    "查询土豆和牛肉",
+    "给客户甲开一张销售单",
+    "查一下土豆的库存"
+  ],
+  "examples_en": [
+    "Search for potatoes and beef",
+    "Create a sales order for customer A",
+    "Check stock levels for potatoes"
+  ]
+}

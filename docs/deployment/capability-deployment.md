@@ -1,11 +1,11 @@
 # ERP 开单能力安全约定
 
 本文只记录接入方必须遵守的安全与隔离约定。安装、启动、Nginx 和运维命令不在此重复，
-见 [部署契约](billing-mcp-service-deployment.md)。
+见 [部署契约](yuncyb-mcp-service-deployment.md)。
 
 ## 固定业务端点
 
-`ERP_BILLING_BASE_URL` 在进程启动时校验并固定，必须为不含用户信息、query 或 fragment
+`YUNCYB_BASE_URL` 在进程启动时校验并固定，必须为不含用户信息、query 或 fragment
 的 HTTPS 地址。Adapter 只访问源码定义的相对路径，租户会话、MCP Header 和 Tool
 参数均不能改变目标地址。
 
@@ -30,7 +30,7 @@ Bearer payload 读取 `tenantId`、`loginId` 只用于会话隔离，不把它�
 
 - legacy 客户端建议传 `X-Conversation-Id`，避免同账号多对话共享预览；
 - ToolSet、预览和幂等结果按会话隔离，商品目录按租户共享；
-- 查询与预览要求 `billing:read`；创建、修改和作废要求 `billing:write`；
+- 查询与预览要求 `yuncyb:read`；创建、修改和作废要求 `yuncyb:write`；
 - 写操作还必须关联当前有效预览、用户明确确认和唯一幂等键；
 - 多实例必须使用共享 OAuth、会话和幂等存储。
 

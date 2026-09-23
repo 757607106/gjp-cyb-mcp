@@ -1,28 +1,29 @@
-# GJP Agent
+# 管家婆云创业版 MCP
 
-基于 MCP Python SDK 的 ERP AI 业务 MCP 服务，覆盖管家婆云创业版的
-开单、采购、库存、资金往来与报表对话场景。仓库只保留 ERP 业务产品、
-MCP 工具基础设施和通用领域类型。
+基于 MCP Python SDK 的管家婆云创业版 MCP 服务，覆盖开单、采购、库存、资金往来
+与报表对话场景。仓库只保留云创业版业务能力、MCP 工具基础设施和通用领域类型。
 
 ## 服务边界
 
 | 产品 | ToolSet | 业务端口 | MCP 服务名 |
 |---|---|---|---|
-| ERP 业务服务 | `BillingToolSet` | `BillingApiPort` | `erp-billing` |
+| 管家婆云创业版 | `YunCybToolSet` | `YunCybApiPort` | `yuncyb` |
 
 对接模式：
 
 ```text
-ERP 业务产品 → AI 平台智能体 → 绑定 erp-billing MCP → 调用 ERP 业务 API
+管家婆云创业版 → AI 平台智能体 → 绑定 yuncyb MCP → 调用业务 API
 ```
 
-代码命名保持 `erp-billing` / `BillingToolSet` / `BillingApiPort` 历史名称，
-不因业务范围扩展而重命名。
+产品与技术标识统一使用 `yuncyb`：Python 包为 `yuncyb`，核心类型为
+`YunCybToolSet` / `YunCybApiPort`，systemd 服务为 `yuncyb-mcp` 与
+`yuncyb-workbuddy-mcp`，连接器 `source` 为 `yuncyb`。旧标识只允许出现在迁移文档
+和历史 ADR 中，不得重新引入运行时代码或部署配置。
 
 ## 业务场景覆盖
 
 MCP 只覆盖对话式业务场景，按场景组织工具，不镜像 ERP 全部接口。当前共
-59 个工具，由 `BILLING_MCP_TOOL_NAMES` 白名单统一管理，导出为 camelCase。
+59 个工具，由 `YUNCYB_MCP_TOOL_NAMES` 白名单统一管理，导出为 camelCase。
 覆盖范围以 ERP 测试环境 OpenAPI（655 个接口）核对结果为准，分为五个业务域：
 
 | 业务域 | 场景 | 对接 ERP 接口域 |
@@ -51,7 +52,7 @@ MCP 只覆盖对话式业务场景，按场景组织工具，不镜像 ERP 全�
 ### 扩展约定
 
 - **先核对契约再实现**：新增工具前先到 OpenAPI 核对路径、方法、请求/响应结构与
-  `components.schemas` 约束，再定义 `BillingApiPort` 方法与 Adapter 映射。
+  `components.schemas` 约束，再定义 `YunCybApiPort` 方法与 Adapter 映射。
 - **写操作两段式**：所有写单据工具沿用 preview → confirm 确认模式，与现有
   销售单一致；未经确认不得直接写 ERP。
 - **统一过账语义**：单据 `saveType` 统一用 `2`（保存过账）提交，不暴露草稿态
@@ -64,12 +65,12 @@ MCP 只覆盖对话式业务场景，按场景组织工具，不镜像 ERP 全�
 ## 鉴权与安全设计
 
 - **生产禁止账号密码登录**：生产 MCP 支持直连 ERP 长期凭据与 WorkBuddy OAuth 两条独立入口。直连客户端逐请求传 `Authorization: Bearer <ERP token>` 或 `X-API-Key`，由 ERP 最终鉴权；OAuth access token 与服务端绑定的 ERP 凭据分离。
-- **不可混淆两类 Bearer**：`erp_billing.app:app` 收到的 `Authorization: Bearer` 是 ERP 长期业务 Token，必须与 `X-API-Key` 一样在生产动态接收并原样交给 ERP；它不是 MCP OAuth access token，不得因 OAuth 合规改造而禁用或改绑。只有 `erp_billing.workbuddy_app:app` 的 Bearer 才是 MCP OAuth Token。直连接口同时出现两个凭据 Header 时沿用 `Authorization` 优先规则。
-- **鉴权回归底线**：任何认证重构都必须保留生产直连 Bearer、生产直连 `X-API-Key`、WorkBuddy OAuth 三条路径，并通过 `tests/billing/test_app_identity.py` 与 `tests/billing/test_workbuddy_oauth.py`；凭据始终位于 HTTP Header，不进入 Tool Schema、Prompt 或模型消息。
+- **不可混淆两类 Bearer**：`yuncyb.app:app` 收到的 `Authorization: Bearer` 是 ERP 长期业务 Token，必须与 `X-API-Key` 一样在生产动态接收并原样交给 ERP；它不是 MCP OAuth access token，不得因 OAuth 合规改造而禁用或改绑。只有 `yuncyb.workbuddy_app:app` 的 Bearer 才是 MCP OAuth Token。直连接口同时出现两个凭据 Header 时沿用 `Authorization` 优先规则。
+- **鉴权回归底线**：任何认证重构都必须保留生产直连 Bearer、生产直连 `X-API-Key`、WorkBuddy OAuth 三条路径，并通过 `tests/yuncyb/test_app_identity.py` 与 `tests/yuncyb/test_workbuddy_oauth.py`；凭据始终位于 HTTP Header，不进入 Tool Schema、Prompt 或模型消息。
 - **工具参数只含业务数据**：账号、密码、JWT、Cookie 和业务 Token 不进入 MCP 工具 JSON Schema，也不允许模型生成。
-- **对接方处理鉴权**：服务通过 `BillingApiPort` 留出入口，由 Adapter 根据 `InvocationContext` 注入当前账套凭据。
+- **对接方处理鉴权**：服务通过 `YunCybApiPort` 留出入口，由 Adapter 根据 `InvocationContext` 注入当前账套凭据。
 - **身份隔离**：`InvocationContext` 不含凭据，通过 `ContextVar` 绑定当前异步任务，请求结束后恢复。
-- **媒体边界**：生产 MCP 不处理音频、图片、附件、ASR 或 OCR，只接收文本。使用多模态模型（VL）时，Agent 按 `ERP_BILLING_SYSTEM_PROMPT` 第十二章图片识别规则直接读图并组装 `order_text`，无需独立 OCR 步骤；`source` 传 `image` 标记来源。语音仍由前端 ASR 转文本后传入。
+- **媒体边界**：生产 MCP 不处理音频、图片、附件、ASR 或 OCR，只接收文本。使用多模态模型（VL）时，Agent 按 `YUNCYB_SYSTEM_PROMPT` 第十二章图片识别规则直接读图并组装 `order_text`，无需独立 OCR 步骤；`source` 传 `image` 标记来源。语音仍由前端 ASR 转文本后传入。
 
 ## 技术栈
 
@@ -84,16 +85,16 @@ MCP 只覆盖对话式业务场景，按场景组织工具，不镜像 ERP 全�
 
 ```text
 src/
-├── erp_billing/  # ToolSet、Port、Adapter、Prompt、MCP 入口与领域代码
+├── yuncyb/  # ToolSet、Port、Adapter、Prompt、MCP 入口与领域代码
 └── gjp_common/   # 上下文、连接、MCP、配置、路径与日志
-integrations/workbuddy/gjp-erp-billing/  # WorkBuddy 连接器元数据与 erp-billing Skill
+integrations/workbuddy/yuncyb/  # WorkBuddy 连接器元数据与云创业版 Skill
 ```
 
-`Session` 是领域状态容器，不定义工具，不调用远端登录接口。`BillingToolSet`
+`Session` 是领域状态容器，不定义工具，不调用远端登录接口。`YunCybToolSet`
 是 MCP 的唯一工具来源。生产服务不构建模型，通过两个 ASGI 入口发布：
 
-- `erp_billing.app:app` — 生产直连 ERP Bearer Token / `X-API-Key` 入口。
-- `erp_billing.workbuddy_app:app` — 生产 WorkBuddy OAuth 入口，使用 ERP AI Token
+- `yuncyb.app:app` — 生产直连 ERP Bearer Token / `X-API-Key` 入口。
+- `yuncyb.workbuddy_app:app` — 生产 WorkBuddy OAuth 入口，使用 ERP AI Token
   绑定与 HTTP 保护层。
 
 ## 开发规范
@@ -116,7 +117,7 @@ integrations/workbuddy/gjp-erp-billing/  # WorkBuddy 连接器元数据与 erp-b
 
 ### API 与框架参考
 
-- ERP 测试环境 OpenAPI 文档：[API 接口与数据结构](https://test-ai.yuncyb.com/aicyberp-api/v3/api-docs)。后续新增或扩展 MCP 工具时，先核对接口路径、HTTP 方法、请求参数、响应结构及 `components.schemas` 中的数据约束，再实现 `BillingApiPort` 与 Adapter 映射。
+- ERP 测试环境 OpenAPI 文档：[API 接口与数据结构](https://test-ai.yuncyb.com/aicyberp-api/v3/api-docs)。后续新增或扩展 MCP 工具时，先核对接口路径、HTTP 方法、请求参数、响应结构及 `components.schemas` 中的数据约束，再实现 `YunCybApiPort` 与 Adapter 映射。
 - ERP 测试环境业务 API 基地址：`https://test-ai.yuncyb.com/aicyberp-api`；`/v3/api-docs` 是文档地址，不是业务请求基地址。生产地址由部署配置提供。
 - MCP Python SDK 官方仓库：[modelcontextprotocol/python-sdk](https://github.com/modelcontextprotocol/python-sdk)。工具定义、MCPServer 服务组装与传输层以仓库 README 和文档为准，不直接套用其他框架示例。
 - OpenAPI 用于核对契约，不代表所有接口都应发布为 MCP；按「业务场景覆盖」章节约定的范围扩展，凭据继续由服务端注入。
@@ -126,14 +127,15 @@ integrations/workbuddy/gjp-erp-billing/  # WorkBuddy 连接器元数据与 erp-b
 - `docs/architecture/architecture-diagrams.md` — 系统架构图
 - `docs/architecture/business-data-flow.md` — 业务数据与数据流
 - `docs/architecture/saas-mcp-integration.md` — SaaS 对话页与 MCP 租户连接
-- `docs/architecture/ai-billing-tools-api-matching.md` — 工具、ERP API 与商品匹配
+- `docs/architecture/yuncyb-tools-api-matching.md` — 工具、ERP API 与商品匹配
 - `docs/architecture/product-matching-algorithm.md` — 商品匹配算法
 - `docs/architecture/mcp-reliability-update.md` — MCP 可靠性优化、2.0.7 升级与重试边界
 - `docs/deployment/capability-deployment.md` — 鉴权与会话隔离约定
-- `docs/deployment/billing-mcp-service-deployment.md` — 开单服务部署契约
+- `docs/deployment/yuncyb-mcp-service-deployment.md` — 开单服务部署契约
 - `docs/deployment/server-deploy-runbook.md` — legacy 服务首次部署
 - `docs/deployment/server-service-ops.md` — legacy 与 WorkBuddy 日常运维
 - `docs/deployment/workbuddy-buddy-app.md` — WorkBuddy 接入、部署与验收
+- `docs/deployment/yuncyb-rename-migration.md` — 已部署服务的完整重命名迁移与回滚
 
 ## 本地开发
 
@@ -149,21 +151,21 @@ uv run pytest -q
 
 ```bash
 export GJP_ENV=local
-export ERP_BILLING_BASE_URL=https://test-ai.yuncyb.com/aicyberp-api
+export YUNCYB_BASE_URL=https://test-ai.yuncyb.com/aicyberp-api
 export GJP_LOG_LEVEL=INFO   # 调试时改 DEBUG
 
-nohup uv run uvicorn erp_billing.app:app \
+nohup uv run uvicorn yuncyb.app:app \
     --host 127.0.0.1 --port 8102 \
-    >> /tmp/erp-billing-mcp.log 2>&1 &
+    >> /tmp/yuncyb-mcp.log 2>&1 &
 ```
 
 - MCP 端点 `http://127.0.0.1:8102/mcp`（Streamable HTTP），请求头带
   `X-API-Key` 与 `X-Conversation-Id`；就绪检查 `curl http://127.0.0.1:8102/healthz`。
-- 日志 `tail -f /tmp/erp-billing-mcp.log`；停止
-  `pkill -f "uvicorn erp_billing.app:app"`。
+- 日志 `tail -f /tmp/yuncyb-mcp.log`；停止
+  `pkill -f "uvicorn yuncyb.app:app"`。
 - 手动调工具可写临时脚本经 `mcp` 客户端 SDK 连接（initialize 握手后
   `call_tool`），或将端点配置进 MCP 客户端（Qoder 等）。
-- WorkBuddy 入口换 `erp_billing.workbuddy_app:app`、端口 `8103`；本地手测
+- WorkBuddy 入口换 `yuncyb.workbuddy_app:app`、端口 `8103`；本地手测
   优先用直连入口（WorkBuddy 需 OAuth 配置）。
 - `submit*` / `update*` / `void*` 会真实写测试环境 ERP，手测后记得作废。
 
@@ -174,8 +176,8 @@ nohup uv run uvicorn erp_billing.app:app \
 库存与报表全流程（可作废单据末尾作废）：
 
 ```bash
-ERP_BILLING_E2E_API_KEY=<X-API-Key> \
-ERP_BILLING_E2E_BASE_URL=https://test-ai.yuncyb.com/aicyberp-api \
+YUNCYB_E2E_API_KEY=<X-API-Key> \
+YUNCYB_E2E_BASE_URL=https://test-ai.yuncyb.com/aicyberp-api \
 uv run pytest tests/e2e -v
 ```
 
@@ -191,9 +193,9 @@ uv run pytest tests/e2e -v
 `GJP_ENV_FILE` 显式指定文件时优先于上述选择；测试由
 `tests/conftest.py` 隔离项目环境文件，不读取任何真实配置。
 
-生产制品只从 wheel 安装（仅含 `src/erp_billing`、`src/gjp_common`），
+生产制品只从 wheel 安装（仅含 `src/yuncyb`、`src/gjp_common`），
 不包含 `tests/`、`docs/`、`AGENTS.md` 与 `config/local.env`；详见
-`docs/deployment/billing-mcp-service-deployment.md`。
+`docs/deployment/yuncyb-mcp-service-deployment.md`。
 
 ### 分支策略
 

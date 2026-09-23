@@ -1,7 +1,7 @@
 # LLM 工具识别评测（llm_eval）
 
 对 MCP 服务做「LLM 视角」的评测：给真实模型一段用户话术，看它是否
-选对工具、抽对参数、不误触发写工具。与 `tests/billing`（业务逻辑）、
+选对工具、抽对参数、不误触发写工具。与 `tests/yuncyb`（业务逻辑）、
 `tests/e2e`（协议与真实环境）互补，回答的是"接到 Agent/LLM 后真的能用吗"。
 
 本目录按可整体迁移设计：harness 不 import 任何业务代码，场景是纯数据
@@ -44,10 +44,10 @@ uv run python tests/llm_eval/run_eval.py \
 环境变量始终优先于文件值：
 
 ```text
-ERP_BILLING_EVAL_API_KEY=ak_xxx
-ERP_BILLING_EVAL_LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-ERP_BILLING_EVAL_LLM_API_KEY=sk-xxx
-ERP_BILLING_EVAL_LLM_MODEL=qwen-plus
+YUNCYB_EVAL_API_KEY=ak_xxx
+YUNCYB_EVAL_LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+YUNCYB_EVAL_LLM_API_KEY=sk-xxx
+YUNCYB_EVAL_LLM_MODEL=qwen-plus
 ```
 
 补齐后 `uv run pytest tests/llm_eval/test_llm_eval.py -v -s` 无需任何
@@ -68,15 +68,15 @@ export 即可启用 pytest 入口。
 凭据固化在 `config/local.env` 后无需 export；也可临时用环境变量覆盖：
 
 ```bash
-ERP_BILLING_EVAL_API_KEY=<X-API-Key> \
-ERP_BILLING_EVAL_LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1 \
-ERP_BILLING_EVAL_LLM_API_KEY=sk-xxx \
-ERP_BILLING_EVAL_LLM_MODEL=qwen-plus \
+YUNCYB_EVAL_API_KEY=<X-API-Key> \
+YUNCYB_EVAL_LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1 \
+YUNCYB_EVAL_LLM_API_KEY=sk-xxx \
+YUNCYB_EVAL_LLM_MODEL=qwen-plus \
 uv run pytest tests/llm_eval/test_llm_eval.py -v -s
 ```
 
-可选环境变量：`ERP_BILLING_EVAL_MCP_URL`（连已部署服务，跳过本地
-拉起）、`ERP_BILLING_EVAL_TAGS`（标签过滤）、`ERP_BILLING_EVAL_MAX_ROUNDS`。
+可选环境变量：`YUNCYB_EVAL_MCP_URL`（连已部署服务，跳过本地
+拉起）、`YUNCYB_EVAL_TAGS`（标签过滤）、`YUNCYB_EVAL_MAX_ROUNDS`。
 
 ## 场景文件格式
 

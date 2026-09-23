@@ -15,8 +15,8 @@ import jsonschema
 import pytest
 
 from gjp_common.mcp import create_mcp_server
-from tests.billing.test_mcp_tool_export import (
-    _make_billing_toolset,
+from tests.yuncyb.test_mcp_tool_export import (
+    _make_yuncyb_toolset,
     _StaticIdentityResolver,
     _StaticToolSetResolver,
 )
@@ -405,7 +405,7 @@ _METADATA_SCENARIOS = harness.load_scenarios(Path(__file__).parent / "scenarios"
 
 @pytest.fixture(scope="module")
 def published_tools(tmp_path_factory):
-    toolset = _make_billing_toolset(tmp_path_factory.mktemp("metadata-tools"))
+    toolset = _make_yuncyb_toolset(tmp_path_factory.mktemp("metadata-tools"))
     server = create_mcp_server(
         "metadata-test", toolset, _StaticIdentityResolver(None), _StaticToolSetResolver(toolset),
     )

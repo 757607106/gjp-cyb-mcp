@@ -18,7 +18,7 @@ ERP bearer payload
   -> tenant_id / subject_id / account_id
 X-Conversation-Id
   -> session_id
-  -> scopes = [billing:read, billing:write]
+  -> scopes = [yuncyb:read, yuncyb:write]
   -> credential_expires_at
 ```
 
@@ -32,7 +32,7 @@ URL 不在该记录中。Agent 平台直接把 ERP JWT / OAuth2 Bearer 放入 MC
 sequenceDiagram
     participant UI as SaaS 页面
     participant Agent as Agent 平台
-    participant MCP as erp-billing
+    participant MCP as yuncyb
     participant ERP as 固定 URL ERP API
 
     UI->>Agent: 商品与销售单抬头
@@ -48,4 +48,4 @@ sequenceDiagram
 ```
 
 任何修改都必须用完整销售单信息重新调用 `previewSalesOrder`。`submitSalesOrder`
-必须具有 `billing:write`，并传当前 `preview_id`、明确确认标志和幂等键。
+必须具有 `yuncyb:write`，并传当前 `preview_id`、明确确认标志和幂等键。

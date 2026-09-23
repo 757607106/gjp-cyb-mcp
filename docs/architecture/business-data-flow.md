@@ -9,9 +9,9 @@ flowchart LR
     User["业务用户"] --> UI["SaaS 对话页"]
     UI --> Auth["认证与短期会话"]
     Auth --> Context["InvocationContext"]
-    Context --> ToolSet["BillingToolSet"]
-    ToolSet --> Session["ErpBillingSession"]
-    ToolSet --> Port["BillingApiPort"]
+    Context --> ToolSet["YunCybToolSet"]
+    ToolSet --> Session["YunCybSession"]
+    ToolSet --> Port["YunCybApiPort"]
     Port --> ERP["ERP 商品 / 基础资料 / 销售单 API"]
     Session --> Catalog["会话内商品目录"]
     Session --> Preview["不可变销售单预览"]
@@ -31,7 +31,7 @@ flowchart LR
 | `tenant_id` / `account_id` / `session_id` | 否 | 否 | `InvocationContext` |
 | MCP JWT / OAuth2 | 否 | 否 | 网关或认证层 |
 | 云创业版上游 Bearer | 否 | 否 | 服务端连接存储 |
-| ERP Base URL | 否 | 否 | 部署级固定配置 `ERP_BILLING_BASE_URL` |
+| ERP Base URL | 否 | 否 | 部署级固定配置 `YUNCYB_BASE_URL` |
 | 原始语音、附件 | 否 | 否 | 业务方前端 |
 | 原始图片 | VL 模型可见 | 否 | Agent 上下文（VL 模型直接读图，不进入 MCP） |
 | 商品目录 | 否 | 否 | 租户共享 `TenantCatalogState` 内存 |
@@ -43,21 +43,21 @@ flowchart LR
 | `InvocationContext` | 当前租户、主体、账套、会话、请求和 scopes | 单次请求绑定 |
 | `BusinessApiCredential` | 当前会话云创业版 Bearer | 服务端短期会话 |
 | 固定 API URL | 所有会话共用的 ERP API 根地址 | 进程启动到停止 |
-| `BillingProductSnapshot` | Adapter 返回的规范化商品集合 | 单次同步 |
-| `BillingReferenceSnapshot` | 客户、仓库、职员候选集合 | 单次查询 |
+| `YunCybProductSnapshot` | Adapter 返回的规范化商品集合 | 单次同步 |
+| `YunCybReferenceSnapshot` | 客户、仓库、职员候选集合 | 单次查询 |
 | `ProductCatalog` | 租户真实商品、编号、条码和别名索引 | 租户共享，随后台刷新重建 |
 | `OrderLine` | 从完整文本解析的商品、数量、单位和稳定行号 | 单次开单计算 |
 | `DraftLine` | 匹配状态、选中商品与候选商品 | 单次开单计算 |
-| `BillingDraft` | 确认、推荐和未匹配商品的结构化结果 | 单次响应 |
+| `YunCybDraft` | 确认、推荐和未匹配商品的结构化结果 | 单次响应 |
 | 销售单预览 | 已解析基础资料 ID、商品和真实 API Payload | 当前隔离 Session，最多 20 份 |
 | 幂等结果 | 成功写单结果，防止同一 Agent 重试重复开单 | 当前隔离 Session，最多 50 份 |
 
 ## 3. 商品同步
 
 1. MCP 认证层生成 `InvocationContext`。
-2. `McpToolSetResolver` 返回当前会话的 `BillingToolSet`。
-3. `syncProducts` 校验 `billing:read`。
-4. `BillingApiPort.fetch_products(context)` 获取当前账套商品。
+2. `McpToolSetResolver` 返回当前会话的 `YunCybToolSet`。
+3. `syncProducts` 校验 `yuncyb:read`。
+4. `YunCybApiPort.fetch_products(context)` 获取当前账套商品。
 5. Adapter 只调用源码中固定的 ERP 相对路径。
 6. `TenantCatalogState` 原子替换租户共享目录；传 `limit` 时截断结果仅
    作用于当前会话。
@@ -105,12 +105,12 @@ flowchart LR
 两位小数，返回 `line_amount`；全部商品都有价格时再返回 `total_amount`，避免用
 不完整价格生成误导性合计。
 
-`searchBillingReferences` 默认每页 5 条，返回 `page`、`page_size`、`total`、
+`searchBusinessReferences` 默认每页 5 条，返回 `page`、`page_size`、`total`、
 `has_more` 和候选。候选已按精确匹配、默认项、名称相关度排序，对外只返回名称和
 默认标记，内部 ID 与排序依据均不暴露。
 
 `submitSalesOrder(preview_id, idempotency_key, confirmed_by_user)` 的 idempotency_key 可省略，默认使用 preview_id；工具校验
-`billing:write`。只有 `confirmed_by_user=true` 才调用 `POST /sales/orders`；成功后
+`yuncyb:write`。只有 `confirmed_by_user=true` 才调用 `POST /sales/orders`；成功后
 同一会话复用幂等结果，且预览一次性消费，换新幂等键重放同一预览会被拒绝。
 `save_type` 映射为草稿 `0`、预收 `1`、正式 `2`。`updateSalesOrder` 的经手人、
 客户、出库仓库参数接受内部 ID 或名称，纯数字视为内部 ID，名称须唯一匹配。
@@ -122,6 +122,6 @@ flowchart LR
 - Session、预览和 ToolSet 按租户、账套、会话隔离；商品目录按租户共享，会话淘汰不丢目录。
 - 业务 API 地址固定配置，必须为 HTTPS，且不能包含用户信息、query 或 fragment。
 - 上游返回 401/403 时要求业务后端重新授权，不允许 Agent 索要凭据。
-- 写单必须同时满足 `billing:write`、当前预览、用户明确确认和幂等键。
+- 写单必须同时满足 `yuncyb:write`、当前预览、用户明确确认和幂等键。
 - 当前幂等记录是会话内防重；生产多副本部署应将幂等键落到共享存储或由 ERP
   网关提供强幂等保证。

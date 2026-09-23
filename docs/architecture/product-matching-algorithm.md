@@ -3,8 +3,8 @@
 最后更新：2026-08-04
 
 本文单独梳理 ERP 开单服务商品匹配链路中的**算法逻辑与计算公式**，聚焦
-`erp_billing/matcher.py` 与 `erp_billing/catalog.py`。业务边界与工具契约见
-[ai-billing-tools-api-matching.md](./ai-billing-tools-api-matching.md)，本文只讲“怎么算”。
+`yuncyb/matcher.py` 与 `yuncyb/catalog.py`。业务边界与工具契约见
+[yuncyb-tools-api-matching.md](./yuncyb-tools-api-matching.md)，本文只讲“怎么算”。
 
 匹配层是**纯确定性算法组合**（图 + 规则级联 + 编辑距离类相似度），不含任何统计
 学习或向量运算。全部计算在 MCP 服务内的 `ProductMatcher` 完成，无外部模型依赖。
@@ -115,7 +115,7 @@ $$
 \end{cases}
 $$
 
-`recommendation_score` 来自 `ErpBillingSettings`，是模糊推荐的准入门槛。
+`recommendation_score` 来自 `YunCybSettings`，是模糊推荐的准入门槛。
 
 ## 4. 同义词组：无向图连通分量
 

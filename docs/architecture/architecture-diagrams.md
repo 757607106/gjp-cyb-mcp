@@ -1,4 +1,4 @@
-# GJP ERP AI 业务架构图
+# 管家婆云创业版 MCP 架构图
 
 最后更新：2026-09-20
 
@@ -16,15 +16,15 @@ flowchart LR
         WorkBuddy["WorkBuddy"]
     end
 
-    subgraph Billing["ERP 业务部署单元"]
-        App["erp_billing.app / workbuddy_app"]
-        MCP["erp-billing /mcp"]
+    subgraph YunCyb["管家婆云创业版业务部署单元"]
+        App["yuncyb.app / workbuddy_app"]
+        MCP["yuncyb /mcp"]
         Identity["McpIdentityResolver"]
         Resolver["McpToolSetResolver"]
-        Tools["BillingToolSet"]
+        Tools["YunCybToolSet"]
         Catalog["会话内 ProductCatalog"]
         Matcher["ProductMatcher"]
-        Port["BillingApiPort"]
+        Port["YunCybApiPort"]
     end
 
     Agent --> App
@@ -33,7 +33,7 @@ flowchart LR
     App --> MCP
     MCP --> Identity --> Resolver --> Tools
     Tools --> Catalog --> Matcher
-    FixedUrl["固定 ERP_BILLING_BASE_URL"] --> Port
+    FixedUrl["固定 YUNCYB_BASE_URL"] --> Port
     Tools --> Port --> ERP["ERP 商品 / 基础资料 / 各业务域单据与报表 API"]
 ```
 
@@ -45,11 +45,11 @@ flowchart LR
 
 ```mermaid
 flowchart TB
-    Service["erp_billing/mcp_service.py"] --> MCP["gjp_common/mcp.py"]
+    Service["yuncyb/mcp_service.py"] --> MCP["gjp_common/mcp.py"]
     MCP --> Context["InvocationContext / ContextVar"]
-    MCP --> ToolSet["BillingToolSet"]
-    ToolSet --> Session["ErpBillingSession"]
-    ToolSet --> Port["BillingApiPort"]
+    MCP --> ToolSet["YunCybToolSet"]
+    ToolSet --> Session["YunCybSession"]
+    ToolSet --> Port["YunCybApiPort"]
     Port --> Adapter["服务端 Adapter"]
     FixedUrl["固定 ERP API URL"] --> Adapter
     Adapter --> Credential["BusinessApiCredentialProvider"]
@@ -59,11 +59,11 @@ flowchart TB
 
 | 层 | 职责 |
 |---|---|
-| `erp_billing.mcp_service` | 创建只发布 `BillingToolSet` 的 MCP 应用 |
+| `yuncyb.mcp_service` | 创建只发布 `YunCybToolSet` 的 MCP 应用 |
 | `gjp_common.mcp` | 基于 MCP Python SDK 组装服务，按调用绑定身份和 ToolSet |
 | `gjp_common.context` | 保存无凭据的租户、账号、会话和 scopes |
 | `gjp_common.connections` | 校验固定 ERP 地址，并按会话解析 Bearer |
-| `erp_billing` | 资料查询、商品匹配、各业务域单据预览和写入 |
+| `yuncyb` | 资料查询、商品匹配、各业务域单据预览和写入 |
 
 ## 3. MCP 单次调用
 
@@ -71,11 +71,11 @@ flowchart TB
 sequenceDiagram
     autonumber
     participant Agent as Agent 平台
-    participant MCP as 开单 MCP
+    participant MCP as yuncyb MCP
     participant Identity as IdentityResolver
     participant Resolver as ToolSetResolver
-    participant Tool as BillingToolSet
-    participant Adapter as Billing Adapter
+    participant Tool as YunCybToolSet
+    participant Adapter as YunCyb Adapter
     participant ERP as 固定 URL ERP API
 
     Agent->>MCP: tools/call + Authorization
@@ -88,7 +88,7 @@ sequenceDiagram
         Tool->>Adapter: fetch_products(context)
         Adapter->>ERP: 固定路径 + 服务端凭据
         ERP-->>Adapter: 当前账套商品
-        Adapter-->>Tool: BillingProductSnapshot
+        Adapter-->>Tool: YunCybProductSnapshot
     end
     Tool-->>Agent: content 中文 Markdown + structuredContent JSON
 ```
@@ -116,7 +116,7 @@ flowchart TB
 采购单、调拨单与其他出入库单复用同一商品匹配与两段式提交链路；退货单走
 快捷退货预填（quick-return 回读源单），收款单/付款单解析结算账户与往来单位。
 全部 59 个工具覆盖销售、采购、库存、资金往来与报表五个业务域，清单见
-`AGENTS.md`「业务场景覆盖」；只有写工具在满足 `billing:write` 和明确确认后
+`AGENTS.md`「业务场景覆盖」；只有写工具在满足 `yuncyb:write` 和明确确认后
 写入 ERP，新增单据还必须使用当前预览和幂等键。
 
 ## 5. 隔离规则

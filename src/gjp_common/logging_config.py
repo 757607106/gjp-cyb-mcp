@@ -13,7 +13,7 @@ from .config import _read_local_env
 
 LOGGER_NAME = "gjp_common"
 # 统一挂载 handler 的包命名空间；只含本项目业务包，不接管第三方 SDK 的协议层日志
-PACKAGE_LOGGERS = ("gjp_common", "erp_billing")
+PACKAGE_LOGGERS = ("gjp_common", "yuncyb")
 # 单条日志中业务参数与响应体的最大字符数，避免长文本淹没终端
 LOG_TEXT_LIMIT = 2000
 TRUE_VALUES = {"1", "true", "yes", "on", "enable", "enabled"}

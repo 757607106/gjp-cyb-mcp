@@ -662,7 +662,7 @@ class SpawnedService:
         self,
         *,
         project_root: Path,
-        app: str = "erp_billing.app:app",
+        app: str = "yuncyb.app:app",
         erp_base_url: str,
         env_extras: dict[str, str] | None = None,
         ready_timeout: float = 30.0,
@@ -680,7 +680,7 @@ class SpawnedService:
         port = free_port()
         env = os.environ.copy()
         env.update(self._env_extras)
-        env["ERP_BILLING_BASE_URL"] = self._erp_base_url
+        env["YUNCYB_BASE_URL"] = self._erp_base_url
         env["GJP_ENV"] = "local"
         log_file = tempfile.NamedTemporaryFile(
             prefix="eval-uvicorn-", suffix=".log", delete=False

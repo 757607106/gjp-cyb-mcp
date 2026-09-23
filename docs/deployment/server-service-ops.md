@@ -3,26 +3,29 @@
 API Key 入口参考 [直连部署](server-deploy-runbook.md)，OAuth 入口参考
 [WorkBuddy 部署](workbuddy-buddy-app.md)。本文只保留部署后的日常操作。
 
+两个入口及其 systemd 服务统一使用 `yuncyb` 命名。仍在运行旧服务名的服务器必须先
+按[完整重命名迁移](yuncyb-rename-migration.md)完成切换，再使用本文命令。
+
 ## 服务清单
 
 | 服务 | systemd | 入口 | 监听 |
 |---|---|---|---|
-| API Key MCP | `erp-billing-mcp` | `erp_billing.app:app` | `127.0.0.1:8102` |
-| WorkBuddy MCP | `erp-billing-workbuddy-mcp` | `erp_billing.workbuddy_app:app` | `127.0.0.1:8103` |
+| API Key MCP | `yuncyb-mcp` | `yuncyb.app:app` | `127.0.0.1:8102` |
+| WorkBuddy MCP | `yuncyb-workbuddy-mcp` | `yuncyb.workbuddy_app:app` | `127.0.0.1:8103` |
 
 ## 状态与日志
 
 ```bash
-systemctl --no-pager --full status erp-billing-mcp
-systemctl --no-pager --full status erp-billing-workbuddy-mcp
-journalctl -u erp-billing-mcp -n 100 --no-pager
-journalctl -u erp-billing-workbuddy-mcp -n 100 --no-pager
+systemctl --no-pager --full status yuncyb-mcp
+systemctl --no-pager --full status yuncyb-workbuddy-mcp
+journalctl -u yuncyb-mcp -n 100 --no-pager
+journalctl -u yuncyb-workbuddy-mcp -n 100 --no-pager
 ```
 
 持续跟踪日志：
 
 ```bash
-journalctl -u erp-billing-workbuddy-mcp -f
+journalctl -u yuncyb-workbuddy-mcp -f
 ```
 
 日志只允许记录脱敏后的请求摘要；服务不提供任何输出完整凭据的调试开关。
@@ -31,23 +34,23 @@ DEBUG 只应短时使用，完成后必须重启回 INFO 并处理调试日志�
 ## 启停与重启
 
 ```bash
-systemctl restart erp-billing-workbuddy-mcp
-systemctl stop erp-billing-workbuddy-mcp
-systemctl start erp-billing-workbuddy-mcp
+systemctl restart yuncyb-workbuddy-mcp
+systemctl stop yuncyb-workbuddy-mcp
+systemctl start yuncyb-workbuddy-mcp
 ```
 
 不要用模糊 `pkill uvicorn`，它会同时终止 8102 和 8103。只有历史 nohup 进程才按完整
 入口名处理：
 
 ```bash
-pgrep -af 'uvicorn erp_billing.app:app'
-pgrep -af 'uvicorn erp_billing.workbuddy_app:app'
+pgrep -af 'uvicorn yuncyb.app:app'
+pgrep -af 'uvicorn yuncyb.workbuddy_app:app'
 ```
 
 ## 更新前检查
 
 ```bash
-cd /root/gjp-cyb-mcp
+cd /root/yuncyb-mcp
 git status --short --branch
 git fetch origin
 uv run ruff check src tests
@@ -62,7 +65,7 @@ uv run pytest -q
 直连 MCP 的测试代码与生产代码分别使用：
 
 ```bash
-cd /root/gjp-cyb-mcp
+cd /root/yuncyb-mcp
 ./scripts/deploy.sh test
 ./scripts/deploy.sh production
 ```

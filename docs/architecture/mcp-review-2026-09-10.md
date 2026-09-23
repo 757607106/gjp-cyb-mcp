@@ -9,14 +9,14 @@
 - [ERP OpenAPI](https://test-ai.yuncyb.com/aicyberp-api/v3/api-docs)：本次成功获取，重点核对 paths 与 components.schemas；没有调用真实开单、修改或作废 API。
 - [AgentScope 2.0.5 官方文档](https://docs.agentscope.io/versions/2.0.5/zh)：核对框架定位；FunctionTool、ToolBase、权限与执行细节另以本地 2.0.5 源码核实。
 
-本次只修改文档，不修改运行时代码。工作区原有 tests/e2e/test_real_billing_mcp.py 改动以及两个未跟踪测试文件保持原样；缺陷测试的结果属于当前工作区，不代表已提交分支或 CI 的状态。
+本次只修改文档，不修改运行时代码。工作区原有 tests/e2e/test_real_yuncyb_mcp.py 改动以及两个未跟踪测试文件保持原样；缺陷测试的结果属于当前工作区，不代表已提交分支或 CI 的状态。
 
 ## 各环节判断
 
 | 环节 | 判断 | 依据与最小调整 |
 |---|---|---|
-| 装配与产品边界 | 合理 | app.py 只装配身份、ToolSet、HTTP Adapter；生产不构建模型。src 中没有实际 ErpBillingAgent，AGENTS 的 Agent 名称属于文档遗留，不应据此另造 Agent |
-| 工具定义 | 基本合理 | BillingToolSet 统一提供 AgentScope FunctionTool 与 MCP schema；维持业务任务粒度，无需把全部 ERP API 一对一发布 |
+| 装配与产品边界 | 合理 | app.py 只装配身份、ToolSet、HTTP Adapter；生产不构建模型。src 中没有实际 ErpYunCybAgent，AGENTS 的 Agent 名称属于文档遗留，不应据此另造 Agent |
+| 工具定义 | 基本合理 | YunCybToolSet 统一提供 AgentScope FunctionTool 与 MCP schema；维持业务任务粒度，无需把全部 ERP API 一对一发布 |
 | MCP 传输 | 基本合理 | Streamable HTTP 使用 stateless=True；业务预览仍有状态。SSE 仅在确有旧客户端时保留；HTTP 无状态不等于可随意多进程部署 |
 | 身份和凭据 | 必须修正 | ContextVar 绑定/恢复正确，但 API Key 被写入 tenant_id 等身份字段，破坏了“不含凭据”的约定 |
 | 权限 | 有边界条件 | 解析器统一授予 read/write；ERP 必须继续校验实际数据权限。confirmed_by_user 由模型填写，只能表达调用契约，不能证明真人点击确认 |
@@ -36,7 +36,7 @@
 
 ### 1. API Key 在普通日志中泄漏（高）
 
-位置：erp_billing/app.py 的 ApiKeyIdentityResolver.resolve；gjp_common/mcp.py 的 call_tool 日志。
+位置：yuncyb/app.py 的 ApiKeyIdentityResolver.resolve；gjp_common/mcp.py 的 call_tool 日志。
 
 API Key 原文被赋给 tenant_id、subject_id、account_id。MCP 的 INFO 日志直接输出 tenant/account，异常与大结果日志也输出 tenant；因此即使关闭 DEBUG 凭据转储仍然会泄漏。使用合成测试 Key 已验证身份字段等于原始 Key。
 
@@ -67,7 +67,7 @@ POST 已在 ERP 落库但响应超时，客户端会得到 business_upstream_una
 - JWT 验证会检查存在的 exp，但没有 require exp；用合法签名、没有 exp 的合成 JWT 已验证可通过。
 - tenantId/loginId 缺失时落到 unknown，可能让不同身份共用缓存键；应拒绝缺失或不合法的关键 claim。
 - GJP_ENV 拼写错误回退 local，从而选择不验签的解析器。应对非法环境值报配置错误；显式 local 仍可服务本地测试。
-- billing:read/write 当前是固定赋值，不能当作已实现 ERP 用户细粒度授权。发行者/受众是否需要校验应按 ERP 真实令牌约定决定，不能凭空增加不兼容要求。
+- yuncyb:read/write 当前是固定赋值，不能当作已实现 ERP 用户细粒度授权。发行者/受众是否需要校验应按 ERP 真实令牌约定决定，不能凭空增加不兼容要求。
 
 ### 5. 预览版本、数量和价格约束不一致（中高）
 

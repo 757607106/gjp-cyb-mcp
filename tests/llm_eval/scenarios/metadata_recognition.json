@@ -63,7 +63,7 @@
     "scenario_id": "meta-references",
     "domain": "基础资料",
     "utterance": "查找名称包含兴旺的供应商。",
-    "expected_tool": "searchBillingReferences",
+    "expected_tool": "searchBusinessReferences",
     "expected_params": {
       "reference_type": "supplier",
       "keyword": "兴旺"
@@ -72,7 +72,7 @@
       "metadata_only"
     ],
     "mock_results": {
-      "searchBillingReferences": {
+      "searchBusinessReferences": {
         "ok": true,
         "reference_type": "supplier",
         "keyword": "兴旺",
